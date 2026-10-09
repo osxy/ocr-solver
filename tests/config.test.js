@@ -102,6 +102,9 @@ test('the built-in defaults match DESIGN 4.13 value by value', () => {
   assert.equal(config.reply.strategy, 'note-push');
   assert.equal(config.reply.title, 'Antwoord');
   assert.equal(config.reply.prefix, '');
+  assert.equal(config.reply.unresolved_title, 'Puzzel niet opgelost');
+  assert.match(config.reply.unresolved_text, /niet automatisch worden opgelost/);
+  assert.match(config.reply.unresolved_text, /could not be solved automatically/);
   assert.equal(config.reply.require_confidence, true);
   assert.equal(config.reply.min_interval_sec, 3);
   assert.equal(config.reply.max_per_hour, 20);
@@ -230,6 +233,8 @@ test('a real TOML file overrides the defaults', (t) => {
       '[reply]',
       'enabled = false',
       'title = "Puzzelantwoord"',
+      'unresolved_title = "Niet gelukt"',
+      'unresolved_text = "Kon de puzzel niet lezen."',
       '',
       '[ocr]',
       'variants = ["adaptive_15_020_x6"]',
@@ -243,6 +248,8 @@ test('a real TOML file overrides the defaults', (t) => {
   assert.equal(loaded.config.pushbullet.history_mode, 'watermark');
   assert.equal(loaded.config.reply.enabled, false);
   assert.equal(loaded.config.reply.title, 'Puzzelantwoord');
+  assert.equal(loaded.config.reply.unresolved_title, 'Niet gelukt');
+  assert.equal(loaded.config.reply.unresolved_text, 'Kon de puzzel niet lezen.');
   assert.deepEqual(loaded.config.ocr.variants, ['adaptive_15_020_x6']);
   // Untouched keys keep their defaults.
   assert.equal(loaded.config.reply.max_per_hour, 20);
@@ -288,6 +295,21 @@ test('an unknown reply strategy names the key', () => {
   assert.throws(
     () => validateConfig({ reply: { strategy: 'carrier-pigeon' } }),
     (err) => err instanceof ConfigError && /reply\.strategy/.test(err.message)
+  );
+});
+
+test('an empty or non-string unresolved reply value is rejected and names the key', () => {
+  assert.throws(
+    () => validateConfig({ reply: { unresolved_text: '' } }),
+    (err) => err instanceof ConfigError && /reply\.unresolved_text/.test(err.message)
+  );
+  assert.throws(
+    () => validateConfig({ reply: { unresolved_text: 42 } }),
+    (err) => err instanceof ConfigError && /reply\.unresolved_text/.test(err.message)
+  );
+  assert.throws(
+    () => validateConfig({ reply: { unresolved_title: '' } }),
+    (err) => err instanceof ConfigError && /reply\.unresolved_title/.test(err.message)
   );
 });
 

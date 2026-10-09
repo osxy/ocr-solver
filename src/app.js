@@ -330,6 +330,8 @@ export async function createApp({
       store,
       title: config.reply.title,
       prefix: config.reply.prefix,
+      unresolvedTitle: config.reply.unresolved_title,
+      unresolvedText: config.reply.unresolved_text,
       requireConfidence: config.reply.require_confidence,
       minIntervalMs: config.reply.min_interval_sec * 1000,
       maxPerHour: config.reply.max_per_hour,
@@ -359,12 +361,17 @@ export async function createApp({
     handlerStore?.setPushStatus(push.iden, solved ? 'solved' : 'unresolved');
 
     // An unresolved puzzle is the one outcome worth a toast: a solved one needs no
-    // attention, and a wrong answer is never sent (DESIGN 7). Headless mode passes
-    // no notifier, so it stays completely silent.
+    // attention, and a wrong answer is never sent (DESIGN 7). The wording tracks what
+    // actually went out - since #29 an unresolved puzzle gets an acknowledgement, so
+    // "nothing sent" would be a lie. Headless mode passes no notifier, so it stays
+    // completely silent.
     if (!solved && config.ui.notify_on_unresolved && notificationSink) {
+      const acknowledged = response?.sent === true && response?.unresolved === true;
       await notificationSink.notify?.({
         title: 'PuzzleSolver: unresolved',
-        message: `${basename(image.path)} - no corroborated answer, nothing sent`,
+        message: `${basename(image.path)} - no corroborated answer, ${
+          acknowledged ? 'acknowledgement sent' : 'nothing sent'
+        }`,
       });
     }
     return { image, result, response };

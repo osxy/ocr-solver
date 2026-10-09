@@ -17,8 +17,8 @@ account needed. It is off by default and locked to loopback with a bearer token 
 
 It does **not** type the answer into a form, does not solve image-grid ("select all
 bicycles") captchas, and never sends an answer it could not validate. A puzzle it
-cannot answer with confidence sends **nothing** (see
-[What happens to a puzzle](#what-happens-to-a-puzzle)).
+cannot answer is acknowledged with a configurable "could not solve" reply, never with a
+guess (see [What happens to a puzzle](#what-happens-to-a-puzzle)).
 
 ## Status
 
@@ -90,6 +90,10 @@ breaker_cooldown_sec = 600
 enabled = true
 require_confidence = true       # only send answers every tier agreed on
 title = "Antwoord"
+unresolved_title = "Puzzel niet opgelost"
+unresolved_text = """
+Deze puzzel kon niet automatisch worden opgelost, dus er is geen antwoord gegeven.
+This puzzle could not be solved automatically, so no answer is given."""
 min_interval_sec = 3
 max_per_hour = 20
 [storage]
@@ -249,7 +253,9 @@ curl -sS -X POST http://127.0.0.1:8765/v1/solve \
 
 **Status codes are honest, not approximate.** `200` is a validated answer; `422` is a
 puzzle that could not be solved (the body has `"answer": null` and a `reason` - nothing
-is guessed); `401` is a missing or wrong bearer token; `400`/`413`/`415` is a bad, too
+is guessed). A `422` also carries `unresolvedReply` with the configured human wording
+when one is set, so a caller can relay it; the structured fields are never replaced by
+prose. `401` is a missing or wrong bearer token; `400`/`413`/`415` is a bad, too
 large, or non-image body; `429` is the rate limit; `504` means the solve passed
 `timeout_ms`. A model-escalated solve says so in `cost.escalated`, because it
 bills your provider credits.
@@ -293,16 +299,19 @@ offline or model, must pass the validator for its class, and model answers are
 *opinions* needing a strict majority. The validated answer is posted back as a note
 push, subject to rate and idempotency guards.
 
-### Why no reply can arrive
+### Why a reply may be missing, or is not an answer
 
-A missing reply is usually deliberate, not a bug:
+A reply that is not a solution is deliberate, not a bug:
 
-- **Unresolved sends nothing.** If no tier produces a valid, corroborated answer, the
-  puzzle is reported unresolved locally and Pushbullet stays silent.
-- **`reply.require_confidence = true` (the default)** also suppresses an answer that
-  passed validation but was never corroborated — for example an offline count whose
-  word list contained an unreadable entry. Setting it to `false` trades accuracy for
-  coverage.
+- **Unresolved is acknowledged, never answered.** If no tier produces a valid answer, the
+  puzzle is reported unresolved locally and the configured acknowledgement
+  (`reply.unresolved_title` / `reply.unresolved_text`) is sent. It has a distinct title and
+  a sentence body, so it cannot be read as a solution; no answer is ever guessed.
+- **`reply.require_confidence = true` (the default)** additionally suppresses a reply for an
+  answer that passed validation but was never corroborated — for example an offline count
+  whose word list contained an unreadable entry. That case stays silent (no answer and no
+  acknowledgement), because a candidate exists but no tier confirmed it. Setting it to
+  `false` sends the answer and trades accuracy for coverage.
 - **`reply.enabled = false`** means the app still solves locally but never replies.
 - **`history_mode = "ignore"` (the default)** ignores pushes that existed before the
   app started. Set `"watermark"` to answer from a stored mark.
@@ -316,17 +325,18 @@ and no `systray2`), or set `ui.tray = false`. The error itself names `--headless
 **The HTTP ingress will not start.** With `[http] enabled = true` and no token the app
 refuses to start, naming `HTTP_AUTH_TOKEN` and `http_auth_token`. A `401` from a running
 server means the `Authorization: Bearer ...` header is missing or does not match. A
-`422` is not an error: the puzzle was read but no tier produced a validated,
-corroborated answer, so nothing was returned - the same invariant as the Pushbullet path.
+`422` is not an error: the puzzle was read but no tier produced a validated answer, so
+no answer is returned - the same invariant as the Pushbullet path. The response carries
+`answer: null`, plus the configured `unresolvedReply` wording when replies are enabled.
 
 **No replies at all.** Check, in order: (1) a Pushbullet token is present
 (`PUSHBULLET_TOKEN`, `--token`, or `credentials.json`) — without it the service refuses
 to start; (2) `reply.enabled` is `true` and `reply.require_confidence` is not
 suppressing a merely validated answer; (3) the log and the listener state — a **grey
 tray icon** means the listener has been quiet for 10 minutes, and the stream reconnects
-with backoff while the 60 s poll is the second path; (4) the puzzle is not simply
-**unresolved** — a model tier needs a key, and `offline_only = true` disables the model
-tiers entirely.
+with backoff while the 60 s poll is the second path; (4) the hourly cap (`max_per_hour`)
+has not been reached — a burst of unsolvable puzzles can exhaust it; (5) a model tier
+needs a key, and `offline_only = true` disables the model tiers entirely.
 
 **Where things live.**
 

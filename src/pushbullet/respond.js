@@ -20,6 +20,21 @@ import { createHash } from 'node:crypto';
 import { redactPushbullet } from './client.js';
 
 export const DEFAULT_TITLE = 'Antwoord';
+// Unresolved replies are their own message, with their own title, so nobody can read
+// one as a solution. Dutch first because the puzzle itself arrives in Dutch and the
+// sender is the reader; the English line covers an operator or recipient who cannot
+// read Dutch. The whole value is replaceable through `reply.unresolved_text`.
+export const DEFAULT_UNRESOLVED_TITLE = 'Puzzel niet opgelost';
+export const DEFAULT_UNRESOLVED_TEXT =
+  'Deze puzzel kon niet automatisch worden opgelost, dus er is geen antwoord gegeven.\n' +
+  'This puzzle could not be solved automatically, so no answer is given.';
+// The outbox is keyed on (push_iden, answer_hash). An unresolved reply has no answer,
+// so it must never claim a null/empty hash - that is meaningless and can collide with
+// another row. This literal marker cannot be produced by answerHash() (32 hex chars),
+// is independent of the message text (editing the text does not re-acknowledge an old
+// push), and gives exactly one acknowledgement per push across restarts and duplicate
+// tickles.
+export const UNRESOLVED_MARKER = 'unresolved';
 export const DEFAULT_MIN_INTERVAL_MS = 3_000;
 export const DEFAULT_MAX_PER_HOUR = 20;
 
@@ -75,6 +90,8 @@ export function createResponder({
   title = DEFAULT_TITLE,
   prefix = '',
   bold = false,
+  unresolvedTitle = DEFAULT_UNRESOLVED_TITLE,
+  unresolvedText = DEFAULT_UNRESOLVED_TEXT,
   requireConfidence = true,
   minIntervalMs = DEFAULT_MIN_INTERVAL_MS,
   maxPerHour = DEFAULT_MAX_PER_HOUR,
@@ -107,27 +124,52 @@ export function createResponder({
       return outcome;
     };
 
-    if (reply == null || String(reply).trim() === '') {
-      return finish({ sent: false, reason: 'unresolved' });
-    }
-    if (requireConfidence && result?.confident !== true) {
-      // The answer passed the class validator but no tier corroborated it. This is
-      // the case the design singles out: `confident: false` must have a consequence.
+    const hasAnswer = reply != null && String(reply).trim() !== '';
+    // Two distinct no-answer cases, deliberately treated differently:
+    //  - unresolved: no tier produced a valid answer, so the sender gets the
+    //    configured acknowledgement instead of the old silence;
+    //  - unconfirmed: an answer passed the class validator but no tier corroborated
+    //    it. That stays silent. `require_confidence` withholds an unconfirmed result
+    //    by design, and a "could not solve it" note would misdescribe a candidate the
+    //    app actually has (DESIGN 4.11 and 7).
+    if (hasAnswer && requireConfidence && result?.confident !== true) {
       return finish({ sent: false, reason: 'unconfirmed' });
+    }
+
+    const outgoing = hasAnswer
+      ? {
+          hash: answerHash(reply),
+          title,
+          body: formatAnswer(reply, { prefix, bold }),
+          answer: String(reply),
+          unresolved: false,
+        }
+      : {
+          hash: UNRESOLVED_MARKER,
+          title: unresolvedTitle,
+          body: String(unresolvedText ?? ''),
+          answer: null,
+          unresolved: true,
+        };
+
+    // `unresolved_text` is non-empty by config validation; a hand-built responder can
+    // still pass "", and an empty acknowledgement is worse than silence.
+    if (outgoing.unresolved && outgoing.body.trim() === '') {
+      return finish({ sent: false, reason: 'unresolved' });
     }
     if (!push?.iden) {
       return finish({ sent: false, reason: 'no-push-iden' });
     }
 
-    const hash = answerHash(reply);
+    const hash = outgoing.hash;
     if (store?.getOutbox(push.iden, hash)) {
-      return finish({ sent: false, reason: 'duplicate' });
+      return finish({ sent: false, reason: 'duplicate', unresolved: outgoing.unresolved });
     }
 
     // Rate limits are checked before the claim so a refused send can still happen
     // later; a claimed-but-refused note would be lost forever.
     if (store && store.countSentSince(now() - 3_600) >= maxPerHour) {
-      return finish({ sent: false, reason: 'rate-limited' });
+      return finish({ sent: false, reason: 'rate-limited', unresolved: outgoing.unresolved });
     }
     if (store && minIntervalMs > 0) {
       const last = store.lastSentAt();
@@ -138,21 +180,21 @@ export function createResponder({
     }
 
     // Idempotency, insert-before-send. Nothing below may run twice for one
-    // (push, answer) pair, even across a process restart.
+    // (push, answer) pair, even across a process restart. The unresolved case uses
+    // UNRESOLVED_MARKER in place of a hash, so it dedupes the same way.
     const claimed = store ? store.claimOutbox(push.iden, hash) : true;
     if (!claimed) {
-      return finish({ sent: false, reason: 'duplicate' });
+      return finish({ sent: false, reason: 'duplicate', unresolved: outgoing.unresolved });
     }
 
-    const body = formatAnswer(reply, { prefix, bold });
     const context = {
       client,
       store,
       push,
       result,
-      answer: String(reply),
-      body,
-      title,
+      answer: outgoing.answer,
+      body: outgoing.body,
+      title: outgoing.title,
       deviceIden: push.source_device_iden ?? push.target_device_iden ?? push.device_iden ?? null,
     };
 
@@ -160,16 +202,25 @@ export function createResponder({
       const outcome = await chosen.deliver(context);
       if (outcome?.ok === false) {
         store?.noteOutboxError(push.iden, hash, outcome.reason ?? 'strategy refused');
-        return finish({ sent: false, reason: outcome.reason ?? 'refused', strategy: chosen.name });
+        return finish({ sent: false, reason: outcome.reason ?? 'refused', strategy: chosen.name, unresolved: outgoing.unresolved });
       }
       store?.markOutboxSent(push.iden, hash, { response: outcome?.response ?? null });
-      logger?.info?.(`answered push ${push.iden} with ${chosen.name}: ${body}`);
-      return finish({ sent: true, reason: 'sent', strategy: chosen.name, answer: body, response: outcome?.response ?? null });
+      logger?.info?.(
+        `${outgoing.unresolved ? 'acknowledged' : 'answered'} push ${push.iden} with ${chosen.name}: ${outgoing.body}`
+      );
+      return finish({
+        sent: true,
+        reason: 'sent',
+        strategy: chosen.name,
+        answer: outgoing.unresolved ? null : outgoing.body,
+        unresolved: outgoing.unresolved,
+        response: outcome?.response ?? null,
+      });
     } catch (err) {
       const message = redactPushbullet(String(err?.message ?? err));
       store?.noteOutboxError(push.iden, hash, message);
       logger?.warn?.(`could not answer push ${push.iden} via ${chosen.name}: ${message}`);
-      return finish({ sent: false, reason: 'error', error: message, strategy: chosen.name });
+      return finish({ sent: false, reason: 'error', error: message, strategy: chosen.name, unresolved: outgoing.unresolved });
     }
   }
 
@@ -177,6 +228,8 @@ export function createResponder({
     respond,
     strategy: chosen.name,
     title,
+    unresolvedTitle,
+    unresolvedText,
     requireConfidence,
     minIntervalMs,
     maxPerHour,

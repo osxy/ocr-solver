@@ -34,7 +34,14 @@ import {
   sniffImage,
   ImageFetchError,
 } from '../src/pushbullet/files.js';
-import { createResponder, answerHash } from '../src/pushbullet/respond.js';
+import {
+  createResponder,
+  answerHash,
+  DEFAULT_TITLE,
+  DEFAULT_UNRESOLVED_TITLE,
+  DEFAULT_UNRESOLVED_TEXT,
+  UNRESOLVED_MARKER,
+} from '../src/pushbullet/respond.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const corpusImage = join(here, '..', 'corpus', '001-count-kleuren.png');
@@ -87,6 +94,8 @@ async function makeHarness(t, options = {}) {
     title: options.title ?? 'Antwoord',
     prefix: options.prefix ?? '',
     bold: options.bold ?? false,
+    unresolvedTitle: options.unresolvedTitle,
+    unresolvedText: options.unresolvedText,
     minIntervalMs: options.minIntervalMs ?? 3_000,
   });
 
@@ -667,7 +676,7 @@ test('require_confidence suppresses an unconfirmed answer and allows it when fal
   assert.equal(loose.fake.notePushes[0].body, '2');
 });
 
-test('an unresolved puzzle is never sent, even with require_confidence false', async (t) => {
+test('an unresolved puzzle gets the acknowledgement, even with require_confidence false', async (t) => {
   const { fake, listener, outcome } = await makeHarness(t, {
     solve: scriptedSolve({ answer: null, confident: true }),
     requireConfidence: false,
@@ -677,8 +686,147 @@ test('an unresolved puzzle is never sent, even with require_confidence false', a
   fake.pushImage({ data: await makePng() });
   await listener.poll();
 
+  assert.equal(fake.notePushes.length, 1, 'an unresolved puzzle is acknowledged, not ignored');
+  assert.equal(fake.notePushes[0].title, DEFAULT_UNRESOLVED_TITLE);
+  assert.equal(fake.notePushes[0].body, DEFAULT_UNRESOLVED_TEXT);
+  assert.equal(outcome.replies[0].response.sent, true);
+  assert.equal(outcome.replies[0].response.unresolved, true);
+});
+
+// ---------------------------------------------------------------------------
+// The unresolved acknowledgement (issue #29)
+// ---------------------------------------------------------------------------
+
+test('the unresolved acknowledgement uses the default title and text when unset', async (t) => {
+  const { fake, responder } = await makeHarness(t);
+  const push = fake.pushImage({ data: await makePng() });
+
+  const outcome = await responder.respond(push, { answer: null, confident: true });
+
+  assert.equal(outcome.sent, true);
+  assert.equal(outcome.unresolved, true);
+  assert.equal(fake.notePushes[0].title, DEFAULT_UNRESOLVED_TITLE);
+  assert.equal(fake.notePushes[0].body, DEFAULT_UNRESOLVED_TEXT);
+  // It cannot be mistaken for a solution: a distinct title and a sentence body, not a
+  // bare number or word.
+  assert.notEqual(DEFAULT_UNRESOLVED_TITLE, DEFAULT_TITLE);
+  assert.ok(DEFAULT_UNRESOLVED_TEXT.trim().length > 10);
+  assert.doesNotMatch(DEFAULT_UNRESOLVED_TEXT.trim(), /^\d+$/);
+});
+
+test('a custom unresolved title and text replace the default', async (t) => {
+  const { fake, responder } = await makeHarness(t, {
+    unresolvedTitle: 'Geen antwoord',
+    unresolvedText: 'Deze puzzel kon ik niet lezen.',
+  });
+  const push = fake.pushImage({ data: await makePng() });
+
+  await responder.respond(push, { answer: null, confident: true });
+
+  assert.equal(fake.notePushes[0].title, 'Geen antwoord');
+  assert.equal(fake.notePushes[0].body, 'Deze puzzel kon ik niet lezen.');
+});
+
+test('a solved puzzle sends the answer and never the acknowledgement', async (t) => {
+  const { fake, responder, store } = await makeHarness(t);
+  const push = fake.pushImage({ data: await makePng() });
+
+  const outcome = await responder.respond(push, { answer: '2', confident: true });
+
+  assert.equal(outcome.sent, true);
+  assert.equal(outcome.unresolved, false);
+  assert.equal(fake.notePushes.length, 1);
+  assert.equal(fake.notePushes[0].body, '2');
+  assert.equal(fake.notePushes[0].title, DEFAULT_TITLE);
+  assert.equal(store.getOutbox(push.iden, UNRESOLVED_MARKER), null, 'a solved puzzle never claims the marker');
+});
+
+test('a duplicate tickle does not send a second acknowledgement', async (t) => {
+  const { fake, responder } = await makeHarness(t);
+  const push = fake.pushImage({ data: await makePng() });
+
+  const first = await responder.respond(push, { answer: null, confident: true });
+  assert.equal(first.sent, true);
+
+  const second = await responder.respond(push, { answer: null, confident: true });
+  assert.equal(second.sent, false);
+  assert.equal(second.reason, 'duplicate');
+  assert.equal(fake.notePushes.length, 1, 'one acknowledgement per push, not one per tickle');
+});
+
+test('a restart does not send the acknowledgement twice', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'puzzlesolver-state-'));
+  const fake = await startFakePushbullet();
+  t.after(async () => {
+    await fake.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const push = fake.pushImage({ data: await makePng() });
+  const statePath = join(dir, 'state.db');
+
+  const firstStore = openStore({ path: statePath });
+  const first = createResponder({
+    client: createPushbulletClient({ token: fake.token, baseUrl: fake.baseUrl }),
+    store: firstStore,
+    now: fake.clock.now,
+    minIntervalMs: 0,
+  });
+  const firstOutcome = await first.respond(push, { answer: null, confident: true });
+  assert.equal(firstOutcome.sent, true);
+  firstStore.close();
+
+  const secondStore = openStore({ path: statePath });
+  const second = createResponder({
+    client: createPushbulletClient({ token: fake.token, baseUrl: fake.baseUrl }),
+    store: secondStore,
+    now: fake.clock.now,
+    minIntervalMs: 0,
+  });
+  const secondOutcome = await second.respond(push, { answer: null, confident: true });
+  assert.equal(secondOutcome.sent, false);
+  assert.equal(secondOutcome.reason, 'duplicate');
+  assert.equal(fake.notePushes.length, 1, 'the marker survives a restart and still dedupes');
+  secondStore.close();
+});
+
+test('the unresolved marker never collides with a real answer row', async (t) => {
+  const { fake, responder, store } = await makeHarness(t);
+  const push = fake.pushImage({ data: await makePng() });
+
+  const ack = await responder.respond(push, { answer: null, confident: true });
+  assert.equal(ack.sent, true);
+  assert.ok(store.getOutbox(push.iden, UNRESOLVED_MARKER), 'the acknowledgement is claimed under the marker');
+  assert.notEqual(UNRESOLVED_MARKER, answerHash('2'));
+
+  // The same push later yields a real answer: a distinct key, so it still sends.
+  const answer = await responder.respond(push, { answer: '2', confident: true });
+  assert.equal(answer.sent, true);
+  assert.ok(store.getOutbox(push.iden, answerHash('2')), 'the answer has its own outbox row');
+  assert.equal(fake.notePushes.length, 2, 'the answer is delivered after the acknowledgement');
+});
+
+test('an uncorroborated answer stays silent and is not acknowledged as unresolved', async (t) => {
+  const { fake, responder, store } = await makeHarness(t, { requireConfidence: true });
+  const push = fake.pushImage({ data: await makePng() });
+
+  const outcome = await responder.respond(push, { answer: '2', confident: false });
+
+  assert.equal(outcome.sent, false);
+  assert.equal(outcome.reason, 'unconfirmed');
+  assert.equal(fake.notePushes.length, 0, 'an unconfirmed answer is withheld, and so is the acknowledgement');
+  assert.equal(store.getOutbox(push.iden, UNRESOLVED_MARKER), null, 'nothing is claimed for a withheld answer');
+});
+
+test('an empty unresolved text falls back to silence rather than an empty note', async (t) => {
+  const { fake, responder } = await makeHarness(t, { unresolvedText: '' });
+  const push = fake.pushImage({ data: await makePng() });
+
+  const outcome = await responder.respond(push, { answer: null, confident: true });
+
+  assert.equal(outcome.sent, false);
+  assert.equal(outcome.reason, 'unresolved');
   assert.equal(fake.notePushes.length, 0);
-  assert.equal(outcome.replies[0].response.reason, 'unresolved');
 });
 
 // ---------------------------------------------------------------------------

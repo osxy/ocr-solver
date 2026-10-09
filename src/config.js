@@ -24,7 +24,7 @@ import { join } from 'node:path';
 import { parse as parseToml } from 'smol-toml';
 import { VARIANTS } from './imaging/preprocess.js';
 import { HISTORY_MODES } from './pushbullet/listener.js';
-import { STRATEGIES } from './pushbullet/respond.js';
+import { STRATEGIES, DEFAULT_UNRESOLVED_TITLE, DEFAULT_UNRESOLVED_TEXT } from './pushbullet/respond.js';
 import {
   DEFAULT_HTTP_BIND,
   DEFAULT_HTTP_PORT,
@@ -80,6 +80,11 @@ export const DEFAULTS = {
     strategy: 'note-push',
     title: 'Antwoord',
     prefix: '',
+    // The acknowledgement sent when no tier produced a valid answer. Its own title
+    // and body keep it from reading as a solution (issue #29); an empty value is
+    // rejected because `reply.enabled = false` is the way to turn replies off.
+    unresolved_title: DEFAULT_UNRESOLVED_TITLE,
+    unresolved_text: DEFAULT_UNRESOLVED_TEXT,
     require_confidence: true,
     min_interval_sec: 3,
     max_per_hour: 20,
@@ -294,6 +299,8 @@ export function validateConfig(raw = {}) {
   requireEnum(config, 'reply', 'strategy', Object.keys(STRATEGIES));
   requireString(config, 'reply', 'title');
   requireString(config, 'reply', 'prefix', { allowEmpty: true });
+  requireString(config, 'reply', 'unresolved_title');
+  requireString(config, 'reply', 'unresolved_text');
   requireBoolean(config, 'reply', 'require_confidence');
   requireNumber(config, 'reply', 'min_interval_sec', { min: 0 });
   requireNumber(config, 'reply', 'max_per_hour', { min: 0, integer: true });
