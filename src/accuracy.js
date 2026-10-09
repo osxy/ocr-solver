@@ -311,6 +311,10 @@ export function storeRecentSolves(store, { limit = 5 } = {}) {
       // solves have no responder row, so `null` means "not recorded", not "not sent".
       sent: row.respond ? row.respond.sent === true : null,
       respondReason: row.respond?.reason ?? null,
+      // The stored review copy's row id, if the operator enabled `storage.keep_images`
+      // (#100). The page turns this into a thumbnail through the gated `/images/:id`
+      // route; `null` means no image was stored for this solve.
+      imageId: row.image_id == null ? null : Number(row.image_id),
     };
   });
 }

@@ -55,6 +55,51 @@ const V030 = Object.freeze([
   'ui.stats_recent_solves',
 ]);
 
+/** The v0.4.0 additions, in the offer's security-first order. Both are optional. */
+const V040 = Object.freeze(['storage.keep_images', 'storage.max_images']);
+
+/**
+ * What an install last reviewed at v0.2.0 is offered now: the v0.3.0 security
+ * settings first, then every non-security addition from v0.3.0 and v0.4.0 in
+ * registry order. Spelled out so a reordering of the registry is caught.
+ */
+const SINCE_020 = Object.freeze([
+  'http.allow_image_url',
+  'http.image_url_hosts',
+  'web_ui.bind',
+  'web_ui.port',
+  'web_ui.allowed_cidrs',
+  'web_ui.allowed_hosts',
+  'web_ui.password',
+  'storage.keep_images',
+  'storage.max_images',
+  'solver.cost_tier',
+  'solver.allowed_models',
+  'solver.excluded_models',
+  'ui.stats_recent_solves',
+]);
+
+/**
+ * The same set in *registry* order. The editor and `config list` walk `SETTINGS` in
+ * declaration order and mark the new ones, so their output is registry order, not the
+ * security-first order the offer uses.
+ */
+const SINCE_020_REGISTRY = Object.freeze([
+  'storage.keep_images',
+  'storage.max_images',
+  'http.allow_image_url',
+  'http.image_url_hosts',
+  'web_ui.bind',
+  'web_ui.port',
+  'web_ui.allowed_cidrs',
+  'web_ui.allowed_hosts',
+  'web_ui.password',
+  'solver.cost_tier',
+  'solver.allowed_models',
+  'solver.excluded_models',
+  'ui.stats_recent_solves',
+]);
+
 /** The v0.2.0 additions, established from the v0.2.0 tag's DEFAULTS. */
 const V020 = Object.freeze([
   'reply.unresolved_title',
@@ -151,7 +196,11 @@ test('#67: the offer is exactly the settings introduced since the reviewed versi
   // The precise assertion the issue asks for: the set, not "something was offered".
   // Revert the per-setting `since` comparison (e.g. compare releases only) and this
   // fails on the skipped-release test below; revert a `since` and it fails here.
-  assert.deepEqual(newSettingsSince('0.2.0').map((setting) => setting.id), [...V030]);
+  assert.deepEqual(newSettingsSince('0.2.0').map((setting) => setting.id), SINCE_020);
+});
+
+test('#67: the v0.4.0 additions are offered after a v0.3.0 review', () => {
+  assert.deepEqual(newSettingsSince('0.3.0').map((setting) => setting.id), [...V040]);
 });
 
 test('#67: a skipped version includes both releases additions', () => {
@@ -199,7 +248,7 @@ test('#67: a second start does not re-offer (idempotent)', () => {
 
   const first = planStartupReview({ store, configLoaded: true, logger });
   assert.ok(first, 'the first start offers');
-  assert.deepEqual(first.newSettings.map((setting) => setting.id), [...V030]);
+  assert.deepEqual(first.newSettings.map((setting) => setting.id), SINCE_020);
   assert.equal(logger.logs.filter((entry) => entry.text.includes('new setting')).length, 1);
   assert.equal(store.get(PROMPTED_VERSION_KEY), APP_VERSION, 'the offered baseline advances');
 
@@ -237,7 +286,7 @@ test('#67: a dismissal suppresses the prompt but leaves the editor badges', () =
 
   const review = computeSettingsReview({ store });
   assert.deepEqual(review.promptedSettings, [], 'the prompt is silenced');
-  assert.deepEqual(review.newSettings.map((setting) => setting.id), [...V030], 'the settings stay visible as new');
+  assert.deepEqual(review.newSettings.map((setting) => setting.id), SINCE_020, 'the settings stay visible as new');
 });
 
 // ---------------------------------------------------------------------------
@@ -324,7 +373,7 @@ test('#67: startup offers the new settings, logs them, and leaves config.toml un
 
   const { app, configPath } = await makeReviewApp(t, { configText: original, store, logger });
 
-  assert.deepEqual(app.settingsReview?.newSettings?.map((setting) => setting.id), [...V030]);
+  assert.deepEqual(app.settingsReview?.newSettings?.map((setting) => setting.id), SINCE_020);
   assert.match(logger.logs.map((entry) => entry.text).join('\n'), /new setting\(s\) since 0\.2\.0/);
   assert.match(logger.logs.map((entry) => entry.text).join('\n'), /http\.allow_image_url/);
   // The offer is a notification, not a write. A save still has to go through the
@@ -349,7 +398,7 @@ test('#67: reviewing through the editor clears the badges and records the versio
 
   const outcome = await app.openSettings();
   assert.equal(outcome.cancelled, true);
-  assert.deepEqual(seenNew, [...V030], 'the editor is shown exactly the new settings');
+  assert.deepEqual(seenNew, SINCE_020_REGISTRY, 'the editor is shown exactly the new settings');
   assert.equal(store.get(REVIEWED_VERSION_KEY), APP_VERSION, 'the reviewed version is app state in kv');
   assert.deepEqual(app.settingsReview.newSettings, [], 'the badges are cleared after the review');
 });
@@ -383,7 +432,7 @@ test('#87: a web UI that is never fetched keeps the badges but silences the prom
   assert.equal(store.get(PROMPTED_VERSION_KEY), APP_VERSION, 'the prompt baseline stays advanced');
   assert.deepEqual(
     app.settingsReview.newSettings.map((setting) => setting.id),
-    [...V030],
+    SINCE_020,
     'the settings are still offered as new'
   );
 });
@@ -434,7 +483,7 @@ test('#67: headless startup opens no browser and no dialog, but logs and exposes
   assert.equal(dialogCalls, 0, 'the offer does not auto-open the editor');
   assert.equal(setupCalls, 0);
   assert.match(logger.logs.map((entry) => entry.text).join('\n'), /config review/);
-  assert.equal(app.settingsReview.newSettings.length, V030.length, 'the same set is inspectable headlessly');
+  assert.equal(app.settingsReview.newSettings.length, SINCE_020.length, 'the same set is inspectable headlessly');
 });
 
 test('#67: config review --dismiss suppresses the prompt and keeps the badges', async (t) => {
@@ -476,7 +525,7 @@ test('#67: config review --dismiss suppresses the prompt and keeps the badges', 
     homedir: () => join(dir, 'home'),
   });
   assert.equal(code2, 0, stderr.text);
-  assert.deepEqual(JSON.parse(listed.text).map((item) => item.id), [...V030]);
+  assert.deepEqual(JSON.parse(listed.text).map((item) => item.id), SINCE_020_REGISTRY);
 });
 
 // ---------------------------------------------------------------------------
@@ -496,7 +545,7 @@ test('#67: the reviewed version is stored in the state kv table, surviving reope
   assert.equal(reopened.get(REVIEWED_VERSION_KEY), '0.2.0');
   assert.deepEqual(
     computeSettingsReview({ store: reopened }).newSettings.map((setting) => setting.id),
-    [...V030]
+    SINCE_020
   );
 });
 
@@ -527,7 +576,7 @@ test('#67: config review --json prints exactly the new set and records the revie
   });
   assert.equal(code, 0, stderr.text);
   const items = JSON.parse(stdout.text);
-  assert.deepEqual(items.map((item) => item.id), [...V030]);
+  assert.deepEqual(items.map((item) => item.id), SINCE_020_REGISTRY);
   assert.ok(items.every((item) => item.isNew === true));
   assert.equal(readFileSync(configPath, 'utf8'), original, 'reviewing does not modify the config file');
 
@@ -562,7 +611,7 @@ test('#67: config review presents the new set to the editor, security first', as
     },
   });
   assert.equal(code, 0, stderr.text);
-  assert.deepEqual(seenNew, [...V030]);
+  assert.deepEqual(seenNew, SINCE_020_REGISTRY);
   assert.match(stdout.text, /New settings since 0\.2\.0/);
 
   const after = openStore({ path: join(dataDir, 'puzzlesolver', 'state.db') });

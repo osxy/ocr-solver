@@ -121,6 +121,15 @@ export const DEFAULTS = {
     // records a durable reference to the retained image, and only for puzzles that
     // ended unresolved, so a failure can be looked at later (DESIGN 8).
     log_images: false,
+    // #100: store a bounded review copy of EVERY solve's image, so the recent-solves
+    // page can show what was solved. This is the only setting that persists user
+    // content to disk. Off by default for the same reason `log_images` is: retention
+    // is an explicit act, and the project fails closed on anything that keeps data.
+    keep_images: false,
+    // Count cap on stored images. Enforced on every save and at startup prune; a
+    // bounded copy plus a count cap is the disk bound. The age policy is the shared
+    // `retain_days` window, so images cannot outlive the attempts that reference them.
+    max_images: 200,
   },
   ui: {
     tray: true,
@@ -430,6 +439,8 @@ export function validateConfig(raw = {}) {
 
   requireNumber(config, 'storage', 'retain_days', { min: 0 });
   requireBoolean(config, 'storage', 'log_images');
+  requireBoolean(config, 'storage', 'keep_images');
+  requireNumber(config, 'storage', 'max_images', { min: 1, integer: true, max: 100_000 });
 
   requireBoolean(config, 'ui', 'tray');
   requireBoolean(config, 'ui', 'notify_on_unresolved');

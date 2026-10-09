@@ -93,6 +93,11 @@ export async function solveImage(worker, image, options = {}) {
     // `storage.log_images`: image bytes are never stored, but when this is on a
     // reference to the retained file is recorded for UNRESOLVED puzzles only.
     logImages = false,
+    // `storage.keep_images` (#100): when on, a bounded review copy of the image is
+    // stored for EVERY solve through `imageStore`. Storage must never break a solve;
+    // a failure here is logged and swallowed.
+    keepImages = false,
+    imageStore = null,
     // Second layer behind the image gate: `sharp` refuses to decode an input above
     // this many pixels, so a pixel bomb cannot reach the pipeline even if a future
     // ingress forgets `validateImageBuffer`.
@@ -271,6 +276,9 @@ export async function solveImage(worker, image, options = {}) {
       ms: Date.now() - startedAt,
     });
   }
+  // Captured immediately after the validate row, before any other `record` call (the
+  // image-ref row below) can move it. An image is tied to the solve it belongs to.
+  const solveAttemptId = store ? store.lastAttemptId() : null;
 
   // Image-byte policy: bytes are never written to the store or the log. The opt-in
   // records only a path, and only when the puzzle is still unresolved - a resolved
@@ -282,6 +290,18 @@ export async function solveImage(worker, image, options = {}) {
       variant: 'source',
       payload: { path: String(image) },
     });
+  }
+
+  // Review copy (#100). This is the one place user content is persisted, so it runs
+  // last and cannot affect `answer`: the validate row already exists and the reply is
+  // decided. A failed store is a log line and nothing more - the same shape as the
+  // rule that a validator rejection never produces a sent answer.
+  if (store && imageStore && keepImages) {
+    try {
+      await imageStore.save({ subject, attemptId: solveAttemptId, imagePath: image });
+    } catch (err) {
+      logger?.warn?.(`keep_images: storing the image failed: ${err?.message ?? err}`);
+    }
   }
 
   return {

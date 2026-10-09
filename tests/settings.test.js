@@ -509,6 +509,7 @@ test('only settings the running process re-reads are marked live', () => {
     'ocr.min_confidence',
     'ocr.variants',
     'solver.tier0',
+    'storage.keep_images',
     'storage.log_images',
     'ui.notify_on_unresolved',
   ]);
