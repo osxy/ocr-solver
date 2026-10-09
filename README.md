@@ -10,6 +10,11 @@ olifant aap?"* (answer `2`) or *"Wat is acht min een?"* (answer `7`). Most are s
 locally and offline; a language model is consulted only when the offline lexicon and
 arithmetic cannot answer.
 
+The same solver can also be called over HTTP (`POST /v1/solve`), so any script or
+service can send a puzzle and get the validated answer in the response - no Pushbullet
+account needed. It is off by default and locked to loopback with a bearer token (see
+[Solve over HTTP](#solve-over-http-no-pushbullet-needed)).
+
 It does **not** type the answer into a form, does not solve image-grid ("select all
 bicycles") captchas, and never sends an answer it could not validate. A puzzle it
 cannot answer with confidence sends **nothing** (see
@@ -90,6 +95,13 @@ max_per_hour = 20
 [storage]
 retain_days = 7
 log_images = false              # opt-in reference to an UNRESOLVED image only
+[http]
+enabled = false                 # an HTTP endpoint that solves captchas is an oracle
+bind = "127.0.0.1"             # never 0.0.0.0 unless you mean it; it warns if you do
+port = 8765
+rate_limit_per_min = 20         # 0 disables the limit
+timeout_ms = 30000      # a solve past this is a 504; nothing is sent
+max_body_bytes = 5242880        # 5 MiB, the same cap as a Pushbullet image
 ```
 
 `DEFAULTS` in [`src/config.js`](./src/config.js) is the full schema; `DESIGN.md` §4.13
@@ -114,13 +126,26 @@ Windows or `${XDG_CONFIG_HOME:-~/.config}/puzzlesolver/credentials.json` elsewhe
 { "pushbullet_token": "o.xxxxxxxx", "llm_api_key": "sk-xxxxxxxx" }
 ```
 
-The Pushbullet token is required. In tray mode a missing token opens the first-run
-prompt (token, optional model key, **Test connection**) and stores what you enter in the
-credential store; cancel it and nothing starts. `--headless` has no prompt, so a missing
-token exits non-zero naming both `PUSHBULLET_TOKEN` and the credential-store file. The
-model key is optional: with none, the app runs offline-only (Tier 0). On Windows the
-Credential Manager is tried before the file, but its provider is **unverified** (see
+The Pushbullet token is required *unless* the HTTP ingress is enabled, in which case
+the app can run without a Pushbullet account at all. In tray mode a missing Pushbullet
+token opens the first-run prompt (token, optional model key, **Test connection**) and
+stores what you enter in the credential store; cancel it and nothing starts.
+`--headless` has no prompt, so a missing token exits non-zero naming both
+`PUSHBULLET_TOKEN` and the credential-store file. The model key is optional: with none,
+the app runs offline-only (Tier 0). On Windows the Credential Manager is tried before
+the file, but its provider is **unverified** (see
 [Known limitations](#known-limitations)); the file store is the tested fallback.
+
+When `[http] enabled = true`, a second secret is required: the bearer token for the
+HTTP endpoint. Set `HTTP_AUTH_TOKEN` in the environment, or add `http_auth_token` to the
+same `credentials.json`:
+
+```json
+{ "pushbullet_token": "o.xxxxxxxx", "llm_api_key": "sk-xxxxxxxx", "http_auth_token": "a-long-random-string" }
+```
+
+There is **no anonymous mode**: with `enabled = true` and no token the service refuses
+to start rather than listen unprotected.
 
 ## Run
 
@@ -173,6 +198,76 @@ Each solved image prints its OCR transcript and the winning tier; e.g.
 With the packaged app, replace `node src/cli.js` with
 `%LOCALAPPDATA%\Programs\PuzzleSolver\node.exe %LOCALAPPDATA%\Programs\PuzzleSolver\app\src\cli.js`.
 
+### Solve over HTTP (no Pushbullet needed)
+
+The HTTP ingress is a second way in: post a puzzle image and get the answer in the
+response. It needs no Pushbullet account, which is also what makes the whole solve path
+verifiable end to end.
+
+Turn it on in `config.toml` and provide a token:
+
+```toml
+[http]
+enabled = true
+bind = "127.0.0.1"      # loopback only; see the warning below before changing this
+port = 8765
+```
+
+```powershell
+$env:HTTP_AUTH_TOKEN = "a-long-random-string"
+```
+
+Start the service (`listen --headless` is the usual unattended form) and post an image:
+
+```bash
+curl -sS -X POST http://127.0.0.1:8765/v1/solve \
+  -H "Authorization: Bearer $HTTP_AUTH_TOKEN" \
+  -H 'Content-Type: image/png' \
+  --data-binary @puzzle.png
+```
+
+```json
+{
+  "status": "solved",
+  "answer": "2",
+  "method": "tier0:count",
+  "confident": true,
+  "puzzleClass": "count",
+  "transcript": "hoeveel kleuren in lijst wit ...",
+  "cost": { "escalated": false, "tier": "tier0", "model": null }
+}
+```
+
+Accepted bodies: `image/*` (raw bytes, as above), `multipart/form-data` with a file
+field, or JSON with `image_base64` (a data URL is fine) or `image_url`:
+
+```bash
+curl -sS -X POST http://127.0.0.1:8765/v1/solve \
+  -H "Authorization: Bearer $HTTP_AUTH_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"image_base64":"'"$(base64 -w0 puzzle.png)"'"}'
+```
+
+**Status codes are honest, not approximate.** `200` is a validated answer; `422` is a
+puzzle that could not be solved (the body has `"answer": null` and a `reason` - nothing
+is guessed); `401` is a missing or wrong bearer token; `400`/`413`/`415` is a bad, too
+large, or non-image body; `429` is the rate limit; `504` means the solve passed
+`timeout_ms`. A model-escalated solve says so in `cost.escalated`, because it
+bills your provider credits.
+
+**It is synchronous.** An offline solve is ~1 s and a vision escalation can pass 10 s,
+so the answer is returned in the same request and `timeout_ms` (default 30 s)
+bounds it; there is no job id and no polling. If the budget is exceeded the request gets
+the `504` and the abandoned solve is discarded - nothing is delivered later.
+
+It coexists with the Pushbullet listener in one process (two ingresses, one solve core).
+To exercise the *note-push* path without a real Pushbullet push, add `"deliver":
+"pushbullet"` to a JSON body; the response then also reports `delivery`.
+
+> **Binding beyond loopback.** `bind = "0.0.0.0"` exposes a CAPTCHA solver to your
+> network. The token is still required, but anyone who has it can spend your provider
+> credits. The app logs a warning when the bind is not loopback. Keep it on
+> `127.0.0.1` unless you have a specific reason.
+
 ### Check accuracy, and read the caveat
 
 `node src/cli.js accuracy` runs the committed corpus through real OCR plus whatever
@@ -186,9 +281,10 @@ corpus and recorded traffic into one line (a known follow-up).
 
 ## What happens to a puzzle
 
-A file push arrives over the Pushbullet stream (a 60 s poll is the fallback). The image
-is downloaded, cleaned (adaptive threshold → denoise → upscale), read by offline
-Tesseract in Dutch, repaired, and parsed into a puzzle class. **Tier 0** answers offline
+A file push arrives over the Pushbullet stream (a 60 s poll is the fallback), or an
+image arrives in an HTTP request body. Either way the image is verified (size, magic
+bytes, a real decode, a sane height), cleaned (adaptive threshold → denoise → upscale),
+read by offline Tesseract in Dutch, repaired, and parsed into a puzzle class. **Tier 0** answers offline
 for the classes the lexicon and arithmetic cover; anything else escalates to a **text
 model**, then a **vision model** over the image itself if OCR failed. Every answer,
 offline or model, must pass the validator for its class, and model answers are
@@ -214,6 +310,12 @@ A missing reply is usually deliberate, not a bug:
 **The tray does not start.** Run `listen --headless` (the fallback that needs no display
 and no `systray2`), or set `ui.tray = false`. The error itself names `--headless` when
 `systray2` cannot be loaded.
+
+**The HTTP ingress will not start.** With `[http] enabled = true` and no token the app
+refuses to start, naming `HTTP_AUTH_TOKEN` and `http_auth_token`. A `401` from a running
+server means the `Authorization: Bearer ...` header is missing or does not match. A
+`422` is not an error: the puzzle was read but no tier produced a validated,
+corroborated answer, so nothing was returned - the same invariant as the Pushbullet path.
 
 **No replies at all.** Check, in order: (1) a Pushbullet token is present
 (`PUSHBULLET_TOKEN`, `--token`, or `credentials.json`) — without it the service refuses

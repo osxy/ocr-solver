@@ -26,12 +26,16 @@ import { dirname, join } from 'node:path';
 export const SECRET_ENV = {
   pushbullet: 'PUSHBULLET_TOKEN',
   llm: 'LLM_API_KEY',
+  // Bearer token for the HTTP ingress (#15). A distinct secret from the Pushbullet
+  // token: the two credentials guard different listeners and can be rotated apart.
+  http: 'HTTP_AUTH_TOKEN',
 };
 
 /** Key names inside the file credential store. */
 export const FILE_SECRET_KEYS = {
   pushbullet: 'pushbullet_token',
   llm: 'llm_api_key',
+  http: 'http_auth_token',
 };
 
 export const SECRET_NAMES = Object.keys(SECRET_ENV);

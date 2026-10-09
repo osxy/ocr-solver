@@ -26,6 +26,20 @@ const home = () => '/home/andre';
 test('the environment variable names are the ones the CLI and live tests use', () => {
   assert.equal(SECRET_ENV.pushbullet, 'PUSHBULLET_TOKEN');
   assert.equal(SECRET_ENV.llm, 'LLM_API_KEY');
+  assert.equal(SECRET_ENV.http, 'HTTP_AUTH_TOKEN');
+  assert.equal(FILE_SECRET_KEYS.http, 'http_auth_token');
+});
+
+test('the HTTP bearer token resolves through the same provider interface', async () => {
+  const store = { name: 'fake-store', get: async (name) => (name === 'http' ? 'http-from-store' : null) };
+  assert.deepEqual(await resolveSecret('http', { env: { HTTP_AUTH_TOKEN: 'http-from-env' }, providers: [store] }), {
+    value: 'http-from-env',
+    source: 'env',
+  });
+  assert.deepEqual(await resolveSecret('http', { env: {}, providers: [store] }), {
+    value: 'http-from-store',
+    source: 'fake-store',
+  });
 });
 
 // ---------------------------------------------------------------------------

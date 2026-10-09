@@ -141,6 +141,53 @@ test('the resilience and privacy knobs have defaults and reject bad values', () 
   );
 });
 
+test('the HTTP ingress is off, loopback and token-gated by default', () => {
+  const { config } = validateConfig({});
+  assert.deepEqual(config.http, {
+    enabled: false,
+    bind: '127.0.0.1',
+    port: 8765,
+    rate_limit_per_min: 20,
+    timeout_ms: 30_000,
+    max_body_bytes: 5 * 1024 * 1024,
+  });
+});
+
+test('the HTTP ingress rejects a bad port, cap or interval by name', () => {
+  assert.throws(
+    () => validateConfig({ http: { port: 70_000 } }),
+    (err) => err instanceof ConfigError && /http\.port/.test(err.message)
+  );
+  assert.throws(
+    () => validateConfig({ http: { rate_limit_per_min: -1 } }),
+    (err) => err instanceof ConfigError && /http\.rate_limit_per_min/.test(err.message)
+  );
+  assert.throws(
+    () => validateConfig({ http: { max_body_bytes: 0 } }),
+    (err) => err instanceof ConfigError && /http\.max_body_bytes/.test(err.message)
+  );
+  assert.throws(
+    () => validateConfig({ http: { enabled: 'yes' } }),
+    (err) => err instanceof ConfigError && /http\.enabled/.test(err.message)
+  );
+  assert.throws(
+    () => validateConfig({ http: { timeout_ms: 1.5 } }),
+    (err) => err instanceof ConfigError && /http\.timeout_ms/.test(err.message)
+  );
+});
+
+test('a config may tune the HTTP bind and limits', () => {
+  const { config } = validateConfig({
+    http: { enabled: true, bind: '0.0.0.0', port: 0, rate_limit_per_min: 0, timeout_ms: 60_000, max_body_bytes: 100 },
+  });
+  assert.equal(config.http.enabled, true);
+  assert.equal(config.http.bind, '0.0.0.0');
+  assert.equal(config.http.port, 0);
+  assert.equal(config.http.rate_limit_per_min, 0);
+  assert.equal(config.http.timeout_ms, 60_000);
+  assert.equal(config.http.max_body_bytes, 100);
+});
+
 test('a config may tune the breaker and turn image logging on', () => {
   const { config } = validateConfig({
     solver: { breaker_threshold: 5, breaker_cooldown_sec: 30 },

@@ -130,6 +130,22 @@ sent; it escalates instead. A wrong answer on a rate-limited form is worse than 
 puzzles serially. Volume is low, serial processing keeps logs and state ordered, and
 `node:sqlite` then has exactly one writer.
 
+**The ingress seam (issue #15, v2).** The diagram above is Pushbullet-shaped, but the
+transport is not the architecture. The solve-and-validate path from "adaptive threshold"
+to "Validator gate" is transport-agnostic and now lives behind `src/solver/core.js`:
+
+| Concern | Pushbullet ingress | HTTP ingress |
+|---|---|---|
+| **ingress** supplies | a file push (`fetchImage`) | a request body (`validateImageBuffer`) |
+| **core** runs | `createSolveCore().solve(path)` | the same `solve(path)` |
+| **egress** delivers | a note push (`respond.js`) | a JSON response body (`http/server.js`) |
+
+The two ingresses coexist in one process and either can be absent: with no Pushbullet
+token and `[http] enabled = true` the app runs HTTP-only. The tray's "solve last
+image" and the CLI already call the same core, so there is one place where the pipeline
+options are wired. Grids (#9) and Playwright (#12) each add another ingress/egress pair,
+which is why the seam was built once here rather than as a second special case.
+
 ---
 
 ## 4. Component design
@@ -502,6 +518,40 @@ record passes through both existing redactors (`redact` and `redactPushbullet`) 
 third copy, and a file sink that fails disables itself instead of throwing, matching the attempts
 store's rule that logging must never break solving.
 
+### 4.15 HTTP ingress — `src/http/server.js` ✅ v2 (#15)
+
+`POST /v1/solve`, response body as egress. The choices, each with the reason it was made:
+
+- **Versioned from the start (`/v1`).** The response schema and the `200`/`422` contract
+  are an interface; versioning is free now and avoids a flag day later. There is no second
+  version yet.
+- **Synchronous, with a documented budget.** Offline solves are ~1 s (measured ~0.8 s end
+  to end over HTTP, including Tesseract cold start) and a vision escalation can pass 10 s.
+  An async `202` + job id would add a store of in-flight jobs, a poll endpoint and a GC for
+  results a caller may never collect; the common case is a script that wants the answer now.
+  `http.timeout_ms` (default 30 s) bounds a request. If it is exceeded the caller gets a
+  `504` and the abandoned solve keeps running on the worker but its result is discarded -
+  nothing is delivered later, so a timeout can never produce an answer out of band.
+- **Two ingresses, one core, in one process.** `createApp` starts the Pushbullet listener
+  and the HTTP server independently; requiring both would make the "no Pushbullet account"
+  path impossible. The shared worker serialises solves through a promise queue, exactly as
+  the listener does, because a Tesseract worker is not safe to drive concurrently.
+- **Pushbullet egress is an opt-in extra.** A JSON body may set `"deliver":"pushbullet"`
+  to run the solved result through the existing responder with a synthetic push iden
+  (`http-<sha256 of the image>`), so the note-push path can be exercised end to end without
+  a real push. It is off by default: the response body is the honest HTTP egress, and a
+  second delivery per request would double the failure modes (a `200` answer plus a
+  suppressed or failed note push).
+- **Fixed-window rate limit** (`http.rate_limit_per_min`, default 20; `0` disables). The
+  Pushbullet responder's rate limit guards *sending*; this guard is on *spending* - a
+  model-escalated request costs provider credits even though it sends nothing.
+- **Cost is labelled, not hidden.** Every response carries `cost: { escalated, tier,
+  model }`; a model tier is named in the same payload as the answer.
+
+**Reuse, not reimplementation.** `validateImageBuffer` in `src/pushbullet/files.js` is the
+one size-cap/magic-byte/decode/height gate; `downloadImage` and the HTTP resolver both call
+it. The HTTP body cap is enforced while streaming before that gate runs.
+
 ---
 
 ## 5. End-to-end flow
@@ -549,7 +599,11 @@ rather than guessing. A one-against-one split deliberately sends nothing.
 **Measured latency:** ~0.3–1.4 s per image offline, including OCR and worker startup
 (see the corpus test timings). A text-tier sample adds roughly 1–3 s and a vision sample
 rather more, so a fully escalated puzzle lands well inside the 10 s budget — and the common
-case, where the lexicon already knows the answer, pays nothing at all.
+case, where the lexicon already knows the answer, pays nothing at all. The HTTP ingress
+measures the whole path end to end (real loopback server, real request, real OCR over a
+corpus image) at **~0.8 s**, which is the same offline cost plus the HTTP and image-gate
+overhead; this is the end-to-end evidence the Pushbullet path could not provide without an
+account.
 
 ---
 
@@ -654,6 +708,31 @@ reference, only for puzzles that ended unresolved — a resolved puzzle has no d
 no reasoner are constructed at all, so there is no object through which an image or transcript
 could leave. The test replaces `fetch` with one that throws and runs the real preprocessing, OCR
 and offline solver over a corpus image, asserting zero outbound requests.
+
+**HTTP ingress threat model (v2, #15).** An endpoint that solves CAPTCHAs is an oracle: its
+value is the answer, and its cost is paid in provider credits. The controls, in order of
+execution:
+
+| Control | What it stops | Where |
+|---|---|---|
+| Bind `127.0.0.1` by default; loud warning otherwise | reachability from the network | `config.http.bind`, `createHttpServer.start` |
+| Mandatory `Authorization: Bearer`, compared with `timingSafeEqual` | anonymous use, token guessing | `tokenMatches` |
+| Streaming body cap (default 5 MiB) | memory exhaustion | `readBodyCapped` |
+| Shared magic-byte/decode/height gate | a body that is not a real image | `validateImageBuffer` |
+| Fixed-window rate limit | credit burn from a loop | `createRateLimiter` |
+| `http.timeout_ms` -> `504` | a stuck solve holding a request open | `withTimeout` |
+
+The token is resolved through the existing `src/secrets.js` provider interface as a fourth
+secret (`HTTP_AUTH_TOKEN` / `http_auth_token`), not a second mechanism. The response never
+echoes the image, a key or an upstream error body: image errors are reported by reason tag
+(`magic`/`decode`/`height`/`size`), and an unexpected error is a generic `500` with a random
+id while the redacted detail goes to the log.
+
+**Known residual (documented, not fixed).** A JSON body may name `image_url`, which makes the
+server fetch a URL. The scheme is restricted to `http`/`https`, and the caller is already
+authenticated and local, but a leaked token on an exposed server would turn it into an SSRF
+pivot (e.g. cloud metadata). The mitigation is the bind/token pair; disabling `image_url`
+entirely is the next step if the endpoint is ever bound beyond loopback.
 
 ## 9. Layout
 
@@ -858,15 +937,11 @@ Deferred deliberately. Each is tracked as an issue under the
 [v2 milestone](https://github.com/osxy/ocr-solver/milestone/6); none is scheduled, because each
 needs a design decision before it becomes work.
 
-- **HTTP ingress** — [issue #15](https://github.com/osxy/ocr-solver/issues/15): accept a puzzle over
-  HTTP and return the answer in the response, instead of arriving as a Pushbullet push. Worth
-  prioritising over the rest of v2 for a non-obvious reason: it provides a **genuine end-to-end
-  path with no Pushbullet account**, which is the one M2 claim that cannot otherwise be verified.
-  The real architectural point is that it is an *ingress seam*, not a second listener — ingress
-  supplies an image, the unchanged core solves and validates it, egress delivers the answer
-  (note push or response body). Building that seam once is cheaper than the three special cases
-  that grids (#9) and Playwright (#12) would otherwise each need. Security is the risk: a CAPTCHA
-  solver on a network is an oracle, so localhost-only and mandatory auth.
+- **HTTP ingress** — [issue #15](https://github.com/osxy/ocr-solver/issues/15): **✅ built (v2).** See
+  [§4.15](#415-http-ingress--srchttpserverjs--v2-15). It provides a genuine end-to-end path with no
+  Pushbullet account and established the ingress seam (`src/solver/core.js`) that grids (#9) and
+  Playwright (#12) will reuse. Security, as designed: loopback by default, mandatory bearer token,
+  shared image gate, rate limit, synchronous timeout.
 - **Image-grid CAPTCHAs** ("select all bicycles") — [issue #9](https://github.com/osxy/ocr-solver/issues/9):
   grid splitter, vision model with grounding output (`[[0,2,5]]`), and a click/applier backend.
   A different responder entirely — do not fold into v1.
@@ -916,6 +991,18 @@ Decisions taken during M4:
 | M4-4 | Metric definitions | `validRate` = accepted answers / seen (works without ground truth); `accuracy` = correct / gradeable (needs known answers). Pending recorded failures count in the denominator of `validRate` only. |
 | M4-5 | Checked-in corpus | Text fixtures and 36 synthetic images are committed (~0.9 MB total), so `npm test` stays offline, deterministic and credential-free. The full OCR accuracy run is `npm run accuracy`, not the default suite. |
 | M4-6 | Trays vs. corpus | The tray never re-runs OCR: it reads the cached corpus report plus a live store query. The packaged app ships `src/` but not `corpus/` or `scripts/`, so with no corpus it degrades to the recorded-traffic number. |
+
+Decisions taken for the v2 HTTP ingress (#15):
+
+| # | Decision | Choice |
+|---|---|---|
+| v2-1 | Solve model | **Synchronous** with `http.timeout_ms` (default 30 s); a breach is a `504` and the result is discarded |
+| v2-2 | Process model | Two ingresses (Pushbullet + HTTP), one `createSolveCore`; either can be absent |
+| v2-3 | Path versioning | **`/v1/solve`** from the start |
+| v2-4 | Pushbullet egress from HTTP | **Opt-in** via `"deliver":"pushbullet"`, using the existing responder and a synthetic iden |
+| v2-5 | Auth | **Mandatory** bearer token via the `secrets.js` provider, constant-time compared |
+| v2-6 | Bind | **`127.0.0.1`** default; any other bind logs a loud warning |
+| v2-7 | Image gate | **Shared** `validateImageBuffer`, not a second copy |
 
 ## 14. Milestones
 
