@@ -17,6 +17,7 @@ import assert from 'node:assert/strict';
 
 import { validateConfig } from '../src/config.js';
 import { createSettingsEditor, SETTINGS } from '../src/ui/settings.js';
+import { memoryStore } from '../src/state/db.js';
 import {
   createWebSettingsServer,
   normalizeTheme,
@@ -140,18 +141,33 @@ test('an unknown cookie is ignored and never echoed into the page', async (t) =>
   assert.equal(html.includes('<script>'), false, 'the cookie must never reach the document');
 });
 
-test('?theme=dark sets the cookie and renders dark; ?theme=auto clears it', async (t) => {
-  const server = await startUi(t);
-  // The launch URL both opens the session and carries the theme choice.
-  const dark = await fetch(`${server.url}&theme=dark`);
-  const darkHtml = await dark.text();
-  assert.match(dark.headers.get('set-cookie'), /^theme=dark;/, 'the toggle must persist the choice');
-  assert.match(darkHtml, /<html lang="en" data-theme="dark">/);
+// Every route whose response renders the page shell (and so the Light/Dark/Auto
+// toggle). Enumerated rather than spot-checked: #112 was a single route that dropped
+// the Set-Cookie, and checking one or two routes by hand is how it was missed. The
+// server now persists `?theme=` on the response itself (see `handle`), so a later
+// route inherits it; this list fails loudly if one stops carrying it.
+const THEMED_ROUTES = ['/', '/solve', '/stats', '/login'];
 
-  const session = sessionFrom(darkHtml);
-  const auto = await fetch(`http://127.0.0.1:${server.port}/?session=${session}&theme=auto`);
-  assert.equal(auto.headers.get('set-cookie').includes('Max-Age=0'), true, 'auto clears the cookie');
-  assert.match(await auto.text(), /<html lang="en">/, 'auto follows the OS again');
+test('every page that renders the toggle persists an explicit ?theme= choice', async (t) => {
+  // A store is needed so `/stats` renders the real page (with its toggle) rather than
+  // the "not available" message page.
+  const server = await startUi(t, { store: memoryStore() });
+  // The launch URL both opens the session and carries the initial choice.
+  const launched = await fetch(`${server.url}&theme=dark`);
+  const session = sessionFrom(await launched.text());
+  const base = `http://127.0.0.1:${server.port}`;
+
+  for (const route of THEMED_ROUTES) {
+    const dark = await fetch(`${base}${route}?session=${encodeURIComponent(session)}&theme=dark`);
+    assert.match(dark.headers.get('set-cookie') ?? '', /^theme=dark;/, `${route} must persist the dark choice`);
+    const darkHtml = await dark.text();
+    assert.match(darkHtml, /<html lang="en" data-theme="dark">/, `${route} must render dark`);
+    assert.match(darkHtml, /class="theme"/, `${route} must render the toggle`);
+
+    const auto = await fetch(`${base}${route}?session=${encodeURIComponent(session)}&theme=auto`);
+    assert.match(auto.headers.get('set-cookie') ?? '', /Max-Age=0/, `${route} must clear the choice on auto`);
+    assert.match(await auto.text(), /<html lang="en">/, `${route} must follow the OS again`);
+  }
 });
 
 test('the toggle is on every page and carries the current session', () => {

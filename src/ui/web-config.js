@@ -1193,7 +1193,13 @@ export function createWebSettingsServer({
       'cache-control': 'no-store',
       'x-content-type-options': 'nosniff',
       'referrer-policy': 'no-referrer',
-      'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'",
+      // `img-src 'self'` is the minimal widening for the statistics page's review
+      // copies (#100/#111). `img-src` falls back to `default-src` when absent, so
+      // without it the `default-src 'none'` above is `img-src 'none'` and every
+      // same-origin `/images/<id>` thumbnail is refused. `'self'` is enough because
+      // the route is same-origin, session-gated and addresses rows by id; `data:`
+      // (the old screenshot trick) and any external host remain refused.
+      'content-security-policy': "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'",
       ...headers,
     });
     res.end(buffer);
@@ -1425,10 +1431,14 @@ export function createWebSettingsServer({
       // so the cookie and the `data-theme` attribute are never caller-supplied text.
       const themeChoice = themeFromParam(url.searchParams.get('theme'));
       const theme = themeChoice === 'auto' ? null : (themeChoice ?? cookieTheme);
-      const pageHeaders = themeChoice ? { 'set-cookie': themeCookieHeader(themeChoice) } : {};
+      // Persist the choice on the response itself, not by threading a header into
+      // each `send()` call: a route that forgets the argument (`/stats`, before this
+      // fix) silently drops the cookie. `writeHead` merges with headers set here, so
+      // every response for a `?theme=` request carries it (#112).
+      if (themeChoice) res.setHeader('set-cookie', themeCookieHeader(themeChoice));
 
       if (method === 'GET' && url.pathname === '/login') {
-        return send(res, 200, renderLoginPage({ theme, configPath, credentialPath }), pageHeaders);
+        return send(res, 200, renderLoginPage({ theme, configPath, credentialPath }));
       }
       if (method === 'POST' && url.pathname === '/login') {
         return handleLogin(req, res, remote, theme);
@@ -1439,7 +1449,7 @@ export function createWebSettingsServer({
           // An existing session may revisit the editor (the theme toggle does): the
           // launch token is single-use, so a second GET with it is still refused.
           if (sessionValid(url.searchParams.get('session') ?? '', remote)) {
-            return send(res, 200, renderSettingsPage({ ...view(theme), session: sessionToken }), pageHeaders);
+            return send(res, 200, renderSettingsPage({ ...view(theme), session: sessionToken }));
           }
           // Loopback keeps #56's behaviour: the one-time launch token is enough.
           const provided = url.searchParams.get('token') ?? '';
@@ -1455,23 +1465,23 @@ export function createWebSettingsServer({
           }
           launchToken.used = true;
           openSession(remote);
-          return send(res, 200, renderSettingsPage({ ...view(theme), session: sessionToken }), pageHeaders);
+          return send(res, 200, renderSettingsPage({ ...view(theme), session: sessionToken }));
         }
         // Non-loopback already authenticated (session in the query) gets the page;
         // otherwise it must log in. The launch token is not enough there.
         if (sessionValid(url.searchParams.get('session') ?? '', remote)) {
-          return send(res, 200, renderSettingsPage({ ...view(theme), session: sessionToken }), pageHeaders);
+          return send(res, 200, renderSettingsPage({ ...view(theme), session: sessionToken }));
         }
-        return send(res, 200, renderLoginPage({ theme, configPath, credentialPath }), pageHeaders);
+        return send(res, 200, renderLoginPage({ theme, configPath, credentialPath }));
       }
 
       if (method === 'GET' && url.pathname === '/solve') {
         if (!sessionValid(url.searchParams.get('session') ?? '', remote)) {
           return loopbackClient
             ? send(res, 403, messagePage('Session expired', 'Reopen Settings to get a fresh session.', { theme: cookieTheme }))
-            : send(res, 200, renderLoginPage({ theme, configPath, credentialPath }), pageHeaders);
+            : send(res, 200, renderLoginPage({ theme, configPath, credentialPath }));
         }
-        return send(res, 200, renderSolvePage({ session: sessionToken, theme, configPath, credentialPath }), pageHeaders);
+        return send(res, 200, renderSolvePage({ session: sessionToken, theme, configPath, credentialPath }));
       }
 
       if (method === 'POST' && url.pathname === '/solve') {
@@ -1488,7 +1498,7 @@ export function createWebSettingsServer({
         if (!sessionValid(url.searchParams.get('session') ?? '', remote)) {
           return loopbackClient
             ? send(res, 403, messagePage('Session expired', 'Reopen Settings to get a fresh session.', { theme: cookieTheme }))
-            : send(res, 200, renderLoginPage({ theme, configPath, credentialPath }), pageHeaders);
+            : send(res, 200, renderLoginPage({ theme, configPath, credentialPath }));
         }
         return handleStats(res, theme);
       }
@@ -1503,7 +1513,7 @@ export function createWebSettingsServer({
         if (!sessionValid(url.searchParams.get('session') ?? '', remote)) {
           return loopbackClient
             ? send(res, 403, messagePage('Session expired', 'Reopen Settings to get a fresh session.', { theme: cookieTheme }))
-            : send(res, 200, renderLoginPage({ theme, configPath, credentialPath }), pageHeaders);
+            : send(res, 200, renderLoginPage({ theme, configPath, credentialPath }));
         }
         if (!imageStore) {
           return send(res, 404, messagePage('Not found', 'Stored images are not available from this web UI.', { theme: cookieTheme }));

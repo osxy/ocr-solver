@@ -181,7 +181,7 @@ test('every page is self-contained: no script, no external asset', () => {
   assertSelfContained(renderLoginPage({}), 'the login page');
 });
 
-test('the served CSP is unchanged and forbids scripts', async (t) => {
+test('the served CSP forbids scripts and allows only the same-origin image route', async (t) => {
   const controller = {
     list: () => [],
     set: () => {},
@@ -193,8 +193,15 @@ test('the served CSP is unchanged and forbids scripts', async (t) => {
   t.after(() => server.stop());
   const res = await fetch(server.url);
   const csp = res.headers.get('content-security-policy');
-  assert.equal(csp, "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'");
+  // #111: `img-src` must be present and must allow `'self'`. Absent, it falls back
+  // to `default-src 'none'` and the statistics page's thumbnails never render.
+  assert.match(csp, /(?:^|;\s*)img-src 'self'(?:;|$)/, 'the served CSP must allow same-origin images');
+  assert.equal(
+    csp,
+    "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'"
+  );
   assert.equal(csp.includes('script-src'), false, 'the CSP must not be relaxed to allow a script');
+  assert.equal(csp.includes('data:'), false, 'images must come from the gated route, not an inline data URL');
   assertSelfContained(await res.text(), 'the served settings page');
 });
 

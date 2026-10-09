@@ -680,7 +680,11 @@ GUI. First-run uses the same descriptors through `createSetupSettingsController`
 drift either.
 
 **The theme is a cookie plus a server-side render, and CSS owns the OS default (issue #99).**
-The served CSP is `default-src 'none'; style-src 'unsafe-inline'` — it forbids scripts. A
+The served CSP is `default-src 'none'; img-src 'self'; style-src 'unsafe-inline'` — it
+forbids scripts and external assets. (`img-src 'self'` is the minimal widening for the
+statistics page's review copies: `img-src` falls back to `default-src`, so without the
+directive the `default-src 'none'` forbade every same-origin `/images/<id>` thumbnail,
+which is exactly what #111 was. `data:` and external hosts stay refused.) A
 `localStorage` + inline-script toggle would have to relax that with `script-src
 'unsafe-inline'`, and a JS-off visitor would silently get the default. The cookie approach
 needs neither: the server validates `?theme=light|dark|auto` against an allowlist, sets a
@@ -711,7 +715,23 @@ paragraphs. There is no client-side loading state to design: every page is serve
 there is no script; the only asynchronous paint is a lazy thumbnail, which uses a sized
 panel-coloured placeholder so it does not reflow. `prefers-reduced-motion` collapses the
 transitions to nothing. The token layer could not be a build step: there is no bundler, and the
-CSP (`default-src 'none'`) still forbids scripts and external assets.
+CSP (`default-src 'none'; img-src 'self'`) still forbids scripts and external assets.
+
+**Screenshots are captured over HTTP, with the real CSP in force (issue #111).**
+`scripts/screenshots.mjs` used to write the fetched HTML to a `file://` document and inline
+the thumbnails as `data:` URLs. A `file://` document carries no CSP header, so the render
+bypassed the policy and the committed statistics images showed thumbnails that a real
+browser refused. That is a verification path that cannot catch the class of bug
+it exists for: when the policy forbids images, the screenshot does not notice. It now
+drives Firefox through its built-in WebDriver BiDi endpoint and captures the **live loopback
+URLs**, so the served policy applies and Firefox enforces it. The script waits for every
+`<img>` and refuses to write a page whose images did not render (`naturalWidth === 0`), so a
+reintroduced `img-src` regression fails the screenshot build rather than producing a
+flattering image. BiDi is used (Node's built-in `WebSocket`, no new dependency) because the
+thumbnails are `loading="lazy"` and the one-shot `firefox --headless --screenshot` captures
+before a lazy image has painted. The solve page is the one page whose result only exists
+after a `POST`; its captured response body *and* headers are replayed over loopback HTTP, so
+it is still a real HTTP document rather than a `file://` one.
 
 **The upgrade review registry (issue #67).** A new release can add a setting an existing install
 silently never sees. The enabling change is a `since` field on each descriptor in
