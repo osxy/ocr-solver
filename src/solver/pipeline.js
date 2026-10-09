@@ -86,6 +86,10 @@ export async function solveImage(worker, image, options = {}) {
     store = null,
     subject = String(image),
     logger = null,
+    // `solver.tier0 = false` means the model must answer even when the lexicon
+    // can. The offline parse is still computed because the transcript feeds the
+    // text tier; only its answer is withheld as an opinion.
+    useTier0 = true,
   } = options;
 
   const built = await buildVariants(image, variants);
@@ -107,7 +111,8 @@ export async function solveImage(worker, image, options = {}) {
   }
 
   const candidates = ranked.map(makeCandidate);
-  const offline = pickOfflineAnswer(candidates);
+  const bestOffline = pickOfflineAnswer(candidates);
+  const offline = useTier0 ? bestOffline : null;
 
   if (store && offline) {
     store.record({
@@ -126,8 +131,8 @@ export async function solveImage(worker, image, options = {}) {
     });
   }
 
-  const transcript = offline?.normalized.text ?? ranked[0]?.text ?? '';
-  const parsed = offline?.parsed ?? candidates[0]?.parsed ?? parsePuzzle('');
+  const transcript = bestOffline?.normalized.text ?? ranked[0]?.text ?? '';
+  const parsed = bestOffline?.parsed ?? candidates[0]?.parsed ?? parsePuzzle('');
 
   /** Opinions about the answer, from every tier that produced one. */
   const opinions = [];

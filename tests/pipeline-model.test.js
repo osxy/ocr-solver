@@ -182,3 +182,20 @@ test('records the model stages and the final verdict', async () => {
   assert.equal(verdict.payload.answer, '2');
   store.close();
 });
+
+test('useTier0=false withholds the offline answer and forces the model', async () => {
+  // The lexicon would confidently answer 2; `solver.tier0 = false` must ignore that
+  // and let the model answer instead, without reimplementing the solve path.
+  const client = createFakeClient({ responses: [{ answer: '3', puzzle_class: 'count', confidence: 0.95 }] });
+  const reasoner = createReasoner({ client });
+  const result = await solveImage(
+    fakeWorker('Hoeveel kleuren in lijst wit kiwi hoofd paars olifant aap?', 95),
+    IMAGE,
+    { reasoner, useTier0: false }
+  );
+
+  assert.equal(result.solved, null, 'the offline answer is not surfaced as a tier0 solve');
+  assert.equal(result.answer, '3');
+  assert.equal(result.method, 'model:text');
+  assert.equal(client.calls.length > 0, true, 'the model is consulted even though tier0 could answer');
+});
