@@ -708,6 +708,13 @@ and a notification must not rewrite it. Two keys, deliberately:
   the startup offer: dismissing the prompt silences it, but the settings stay marked `[new]` in
   the terminal editor, the web page and `config list`, so a user who dismisses can still find them.
 
+That distinction is enforced, not just documented (#87). A web UI that times out, or whose URL is
+printed to a terminal nobody reads, resolves with `sessionOpened === false`; `openSettings` (and the
+GUI branch of `config review`) then calls `recordDismissal`, advancing only
+`settings_prompted_version`. The `[new]` badges stay, so the settings that motivated the review -
+including the `web_ui.*` security settings - are still offered on the next look instead of being
+cleared by a page that never rendered.
+
 The offer is a startup log line and the badged editor; it **never opens a browser on its own** and
 never blocks startup. `planStartupReview` catches its own store errors and returns `null`, so a
 store that cannot be read leaves the app running on defaults. A fresh install (no config file)
@@ -719,15 +726,19 @@ the review when it finishes.
 **The security is the point, because this endpoint writes the config *and* the secrets.** Non-negotiables,
 each enforced in code and in a test:
 
-- It binds `127.0.0.1` on port 0 and the bind is **not configurable**; the tests assert the bound
-  address and family.
+- It binds `127.0.0.1` by default on an ephemeral port (`web_ui.port`, default `0`); the
+  bind and the port are configurable since #65 and #85. The loopback tests assert the bound
+  address and family, and that a configured `web_ui.port` is the port that listens.
 - The URL the app opens carries a **one-time launch token**: 32 random bytes, single-use, and valid
   for 5 minutes. It is redeemed for a per-session token embedded in the page, so the launch token is
   not replayed by the form posts and does not have to survive in browser state. A reused or expired
   token is a `403` naming the reason; the token is compared in constant time.
-- The `Host` header is checked against the loopback address and the bound port before anything else.
-  A DNS-rebinding page makes the browser send the attacker's hostname while the connection lands on
-  127.0.0.1; rejecting a non-loopback `Host` is the control that stops it.
+- The `Host` header is matched against the enumerated names before anything else. A
+  DNS-rebinding page makes the browser send the attacker's hostname while the connection
+  lands on 127.0.0.1; rejecting a non-loopback `Host` is the control that stops it. The
+  **name** is what is compared, not the port (#85): a proxy forwarding `Host:
+  ui.example.com` or `ui.example.com:443` to a different internal port is admitted, while a
+  foreign name is still refused. `isAllowedHostHeader` never degrades to "any host".
 - Every response (page, save, `404`, `403`, `500`) carries `Cache-Control: no-store`, plus a
   `Content-Security-Policy` that forbids scripts and outside resources.
 - A secret value is never rendered — presence and source only, exactly as `config list` does. The
@@ -746,19 +757,32 @@ because it compared a string prefix) cannot recur in a CIDR. It folds `::ffff:19
 `192.168.1.5` and a mapped CIDR to its IPv4 form, so a client cannot bypass an IPv4 allowlist by
 connecting through the mapped spelling. `0.0.0.0/0` and `::/0` are refused at config load with a
 message that points at an authenticated reverse proxy; a range wider than loopback is warned about at
-the same time.
+the same time. The refusal is about **effective coverage**, not the literal `/0` (#89): two half-space
+ranges (`0.0.0.0/1` + `128.0.0.0/1`, or `::/1` + `8000::/1`) cover the same space and are refused
+too, via `cidrsCoverAddressSpace`, which merges the configured ranges as intervals and asks whether
+any family is fully covered. It is a guard against "reachable from everywhere", not a width ceiling:
+a single wide-but-partial range is allowed, because the operator asked for it and the configured
+credential is the control that actually protects the UI.
 
 **Widening the bind does not loosen the `Host` check.** A session is scoped to a hostname, so a page
 that resolves its own name to the UI's address would have the browser send that name (and any cookie)
 to it. The legitimate names therefore stay **explicitly enumerated** - the bound address, the loopback
 names, and `web_ui.allowed_hosts` (default deny) - and a wildcard bind contributes no name at all; the
-operator must list the name they actually type. This is the opposite of "accept any `Host` once the
+operator must list the name they actually type. The port is deliberately not part of the comparison:
+a reverse proxy legitimately forwards the public name on a different port than it connects to
+(`Host: ui.example.com` or `:443` versus an internal `127.0.0.1:8443`), and it is the name that a DNS
+rebinding page would have to forge. This is the opposite of "accept any `Host` once the
 bind is non-loopback", which would reopen the DNS-rebinding attack the check exists to stop.
 
 **Remote access requires a credential configured outside `config.toml`.** Loopback keeps the one-time
 token. A non-loopback range additionally requires a **salt + `scrypt` verifier** in the credential
 store (`web_ui_password_hash`); the app **refuses to start** if a range is admitted without one, naming
-`web_ui.password`. The verifier is created by `hashWebUiPassword` (the editor's `prepare` hook, so the
+`web_ui.password`. **It also refuses to start a non-loopback range when `web_ui.port` is `0`** (#85):
+an ephemeral port is fine on loopback, where the app opens the URL itself, but a remote client or a
+reverse proxy has no stable port to reach, so the error names `web_ui.port` rather than exposing an
+unreachable UI. The `Host` comparison is name-only (above), which is exactly what lets the documented
+topology work: the proxy connects to the fixed `web_ui.port` and forwards the public `Host` name.
+The verifier is created by `hashWebUiPassword` (the editor's `prepare` hook, so the
 password itself never reaches a store) and checked by `verifyWebUiPassword` in constant time via
 `node:crypto`. Failed logins reuse the #47 backoff, a success clears the record, and the refusal is the
 same generic message whether the verifier is malformed or the password is wrong. An authenticated

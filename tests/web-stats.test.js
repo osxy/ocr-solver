@@ -8,7 +8,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { request as httpRequest } from 'node:http';
+import { request as httpRequest, createServer as createHttpServer } from 'node:http';
 
 import { validateConfig } from '../src/config.js';
 import { openStore } from '../src/state/db.js';
@@ -28,14 +28,31 @@ function sessionFrom(html) {
 
 async function startUi(t, options = {}) {
   const state = { remote: options.remote ?? '127.0.0.1' };
+  // #85: a non-loopback range now needs a stable port; allocate a real free one.
+  let webUi = options.webUi ?? null;
+  if (webUi && Array.isArray(webUi.allowed_cidrs) && webUi.allowed_cidrs.length > 0 && webUi.port == null) {
+    webUi = { ...webUi, port: await freePort() };
+  }
   const server = createWebSettingsServer({
     controller: fakeController(),
     ...options,
+    webUi,
     getRemoteAddress: () => state.remote,
   });
   await server.start();
   t.after(() => server.stop());
   return { server, state };
+}
+
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const probe = createHttpServer();
+    probe.once('error', reject);
+    probe.listen(0, '127.0.0.1', () => {
+      const { port } = probe.address();
+      probe.close(() => resolve(port));
+    });
+  });
 }
 
 async function openSession(server) {

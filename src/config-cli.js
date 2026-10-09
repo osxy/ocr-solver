@@ -280,12 +280,15 @@ export async function runConfig(
           : { input: stdin, output: stdout }),
       });
       // The settings were presented, so they are no longer new. A failed start did
-      // not present them, so the badges stay and the review can be offered again.
-      if (!outcome?.failed) recordReview(ensureReviewStore(), APP_VERSION);
+      // not present them, and a web UI whose page was never fetched (#87:
+      // `sessionOpened === false`, e.g. it timed out) advances only the prompt
+      // baseline so the startup offer does not nag while the `[new]` badges stay.
       if (outcome?.failed) {
         stderr.write(`${outcome.detail ?? 'the settings editor failed'}\n`);
         return 1;
       }
+      if (outcome?.sessionOpened === false) recordDismissal(ensureReviewStore(), APP_VERSION);
+      else recordReview(ensureReviewStore(), APP_VERSION);
       if (!outcome?.saved) {
         if (opts.json) stdout.write(`${JSON.stringify({ saved: false, cancelled: Boolean(outcome?.cancelled) })}\n`);
         return 0;

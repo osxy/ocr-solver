@@ -29,6 +29,7 @@ import { HISTORY_MODES } from './pushbullet/listener.js';
 import { STRATEGIES, DEFAULT_UNRESOLVED_TITLE, DEFAULT_UNRESOLVED_TEXT } from './pushbullet/respond.js';
 import {
   WEB_UI_CREDENTIAL_SETTING,
+  cidrsCoverAddressSpace,
   isCatchAllCidr,
   isLoopbackAddress,
   normalizeHostEntry,
@@ -144,8 +145,13 @@ export const DEFAULTS = {
   // the app refuses to start rather than expose an unauthenticated oracle.
   web_ui: {
     bind: '127.0.0.1',
-    // Loopback is always admitted; these are added on top of it. `0.0.0.0/0` and
-    // `::/0` are refused at load (see `requireCidrList`).
+    // The settings UI's port. `0` is the ephemeral loopback case (#56); a value is
+    // required before a remote client or a TLS reverse proxy can be pointed at it,
+    // because an ephemeral port is unknowable in advance (#85).
+    port: 0,
+    // Loopback is always admitted; these are added on top of it. The catch-all is
+    // refused at load, including a set of ranges that only *together* cover the
+    // space (see `requireCidrList`).
     allowed_cidrs: [],
     // Extra Host-header names accepted when the bind is non-loopback or a hostname
     // is used to reach it (a LAN name or a reverse-proxy vhost). Default deny; the
@@ -321,13 +327,19 @@ function requireHostList(config, section, key) {
 /**
  * One CIDR range per entry, with the catch-all refused.
  *
- * `0.0.0.0/0` and `::/0` are not a mistake to accept: a UI that writes secrets and
- * spends provider credits, reachable from every address, has no legitimate use. The
- * error names the alternative - a reverse proxy - so the operator is not left to
- * discover it. The network address is what is stored (host bits masked).
+ * A UI that writes secrets and spends provider credits, reachable from every
+ * address, has no legitimate use, so `0.0.0.0/0` and `::/0` are not accepted. #89:
+ * the refusal is about *effective* coverage, not the literal `/0` - two half-space
+ * ranges (`0.0.0.0/1` + `128.0.0.0/1`, or `::/1` + `8000::/1`) cover the same space
+ * and are refused too. It is a guard against "reachable from everywhere", not a
+ * ceiling: a single wide-but-partial range is allowed because the operator asked for
+ * it explicitly and the configured credential is the control that actually
+ * protects the UI. The error names the reverse-proxy alternative so the operator is
+ * not left to discover it. The network address is what is stored (host bits masked).
  */
 function requireCidrList(config, section, key) {
   requireStringArray(config, section, key);
+  const parsed = [];
   for (const entry of config[section][key]) {
     const cidr = parseCidr(entry);
     if (!cidr) {
@@ -341,6 +353,13 @@ function requireCidrList(config, section, key) {
           'refuse it and put the UI behind an authenticated TLS reverse proxy if it must be reachable from everywhere'
       );
     }
+    parsed.push(cidr);
+  }
+  if (cidrsCoverAddressSpace(parsed)) {
+    throw new ConfigError(
+      `${section}.${key} entries together cover every address, which is the same exposure as a catch-all; ` +
+        'refuse them and put the UI behind an authenticated TLS reverse proxy if it must be reachable from everywhere'
+    );
   }
 }
 
@@ -419,6 +438,7 @@ export function validateConfig(raw = {}) {
   requireString(config, 'web_ui', 'bind');
   const bindProblem = imageUrlHostProblem(config.web_ui.bind);
   if (bindProblem) throw new ConfigError(`web_ui.bind ${bindProblem}`);
+  requireNumber(config, 'web_ui', 'port', { min: 0, max: 65_535, integer: true });
   requireCidrList(config, 'web_ui', 'allowed_cidrs');
   requireHostList(config, 'web_ui', 'allowed_hosts');
 
@@ -444,7 +464,8 @@ export function validateConfig(raw = {}) {
   if (webUiAdmitsNonLoopback(config.web_ui)) {
     warnings.push(
       'web_ui.allowed_cidrs admits addresses beyond loopback; the web UI can write the config and solve images, ' +
-        `and a non-loopback range requires a configured ${WEB_UI_CREDENTIAL_SETTING} credential or startup is refused`
+        `and a non-loopback range requires a configured ${WEB_UI_CREDENTIAL_SETTING} credential or startup is refused. ` +
+        'Set web_ui.port to a fixed non-zero port so a remote client or reverse proxy can reach it.'
     );
   }
   if (!bindIsLoopback) {
