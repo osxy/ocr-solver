@@ -33,6 +33,7 @@ import { createOcrWorker } from './ocr/recognize.js';
 import { solveImage } from './solver/pipeline.js';
 import { createNotifier } from './ui/notifications.js';
 import { resolveTrayMode } from './ui/mode.js';
+import { storeReport, loadReportCache, defaultAccuracyCachePath } from './accuracy.js';
 
 /**
  * Build one reasoner from config, or `null` when the model tiers are off.
@@ -424,12 +425,21 @@ export async function runApp(options = {}) {
     // Imported lazily so a machine without `systray2` (and every non-tray run) never
     // loads it. `TrayUnavailableError` carries the actionable `--headless` message.
     const { startTray } = await import('./ui/tray-systray.js');
+    // The tray shows the live store metric plus the cached offline-corpus report.
+    // The cache is written by `scripts/accuracy.js`; without it the tray still
+    // reports real traffic. Never throws: a bad cache is simply no corpus number.
+    const accuracyCachePath = options.accuracyCachePath ?? defaultAccuracyCachePath(app.store.path);
+    const accuracyProvider = () => ({
+      corpus: loadReportCache(accuracyCachePath)?.corpus ?? null,
+      store: storeReport(app.store),
+    });
     tray = await startTray({
       app,
       logger: app.logger,
       quietMs: options.quietMs,
       openPath: options.openPath,
       solveLastImage: options.solveLastImage ?? app.solveLastImage,
+      accuracyProvider,
       quit: () => shutdown('tray'),
     });
     app.logger?.info?.('tray started');

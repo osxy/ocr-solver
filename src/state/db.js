@@ -90,6 +90,7 @@ export function openStore({ path = ':memory:', now = () => Date.now() / 1000 } =
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const selectAttempts = db.prepare('SELECT * FROM attempts WHERE subject = ? ORDER BY id');
+  const selectSubjects = db.prepare('SELECT DISTINCT subject FROM attempts ORDER BY subject');
 
   const current = db.prepare('SELECT v FROM kv WHERE k = ?');
   const upsert = db.prepare(
@@ -182,6 +183,11 @@ export function openStore({ path = ':memory:', now = () => Date.now() / 1000 } =
         payload: row.payload ? safeParse(row.payload) : null,
         ok: row.ok == null ? null : row.ok === 1,
       }));
+    },
+
+    /** Every subject with at least one recorded attempt, for accuracy reporting. */
+    subjects() {
+      return selectSubjects.all().map((row) => row.subject);
     },
 
     get(k, fallback = null) {

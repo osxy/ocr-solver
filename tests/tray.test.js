@@ -28,13 +28,14 @@ function fakeListener(overrides = {}) {
   };
 }
 
-test('the menu is the six documented actions, in order', () => {
+test('the menu is the seven documented actions, in order', () => {
   assert.deepEqual(
     TRAY_MENU.map((i) => i.id),
-    ['status', 'pause', 'solve-last', 'open-log', 'open-config', 'quit']
+    ['status', 'accuracy', 'pause', 'solve-last', 'open-log', 'open-config', 'quit']
   );
   assert.deepEqual(TRAY_MENU.map((i) => i.title), [
     'Status',
+    'Accuracy',
     'Pause',
     'Solve last image',
     'Open log',
@@ -201,4 +202,60 @@ test('a paused listener is never greyed out', async () => {
   const result = c.poll();
   assert.equal(result.paused, true);
   assert.equal(result.icon, 'normal', 'paused is explicit; grey must mean "silently dead"');
+});
+
+// ---------------------------------------------------------------------------
+// Accuracy in the tray (M4)
+// ---------------------------------------------------------------------------
+
+const accuracyBundle = {
+  version: 1,
+  corpus: { overall: { accuracy: 0.9, validRate: 0.91, seen: 10, valid: 9, correct: 9, gradeable: 10, confident: 9 } },
+  store: { overall: { accuracy: null, validRate: 0.8, seen: 10, valid: 8, correct: 0, gradeable: 0, confident: 7 } },
+};
+
+test('the accuracy provider is surfaced in status text and tooltip', () => {
+  const c = createTrayController({
+    listener: fakeListener(),
+    watchdog: createWatchdog(),
+    accuracyProvider: () => accuracyBundle,
+  });
+  c.poll();
+  assert.match(c.statusText(), /corpus 90\.0%/);
+  assert.match(c.statusText(), /traffic 80\.0%/);
+  assert.match(c.tooltip(), /corpus 90\.0%/);
+});
+
+test('the Accuracy action refreshes and reports, even when paused', async () => {
+  let calls = 0;
+  const c = createTrayController({
+    listener: fakeListener(),
+    watchdog: createWatchdog(),
+    accuracyProvider: () => { calls += 1; return accuracyBundle; },
+  });
+  const result = await c.handleClick('accuracy');
+  assert.equal(result.id, 'accuracy');
+  assert.match(result.text, /corpus 90\.0%/);
+  assert.equal(calls, 1);
+  await c.handleClick('pause');
+  assert.match(c.statusText(), /paused/);
+  assert.match(c.statusText(), /corpus 90\.0%/, 'accuracy stays visible while paused');
+});
+
+test('a throwing accuracy provider cannot take the tray down', () => {
+  const c = createTrayController({
+    listener: fakeListener(),
+    watchdog: createWatchdog(),
+    accuracyProvider: () => { throw new Error('db locked'); },
+  });
+  const result = c.poll();
+  assert.equal(result.accuracy, null);
+  assert.equal(c.statusText(), 'PuzzleSolver: listening (stream connected)');
+});
+
+test('with no provider the tray behaves exactly as before', () => {
+  const c = createTrayController({ listener: fakeListener(), watchdog: createWatchdog() });
+  c.poll();
+  assert.equal(c.accuracy, null);
+  assert.equal(c.statusText(), 'PuzzleSolver: listening (stream connected)');
 });

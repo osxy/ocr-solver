@@ -70,7 +70,7 @@ test('the adapter renders the controller menu and forwards clicks back by id', a
   const instance = FakeSysTray.last;
   assert.deepEqual(
     instance.conf.menu.items.map((i) => i.tooltip),
-    ['status', 'pause', 'solve-last', 'open-log', 'open-config', 'quit']
+    ['status', 'accuracy', 'pause', 'solve-last', 'open-log', 'open-config', 'quit']
   );
   assert.equal(instance.conf.menu.title, 'PuzzleSolver');
   assert.ok(instance.conf.menu.icon.length > 0, 'an icon payload is required');

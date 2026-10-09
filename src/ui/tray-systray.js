@@ -38,6 +38,7 @@ export async function startTray({
   openPath = openPathImpl,
   notify = null,
   quit = null,
+  accuracyProvider = null,
   loadSystray = () => import('systray2'),
   pollIntervalMs = DEFAULT_POLL_MS,
 } = {}) {
@@ -68,6 +69,7 @@ export async function startTray({
     openPath,
     quit,
     notify: (options) => notifier?.notify?.(options),
+    accuracyProvider,
     logger,
   });
 
@@ -110,7 +112,7 @@ export async function startTray({
   function refreshIcon() {
     const { icon } = controller.poll();
     try {
-      tray.sendAction({ type: 'update-menu', menu: { icon: trayIcon(icon), title: 'PuzzleSolver', tooltip: 'PuzzleSolver', items } });
+      tray.sendAction({ type: 'update-menu', menu: { icon: trayIcon(icon), title: 'PuzzleSolver', tooltip: controller.tooltip(), items } });
     } catch {
       // same: an icon that fails to repaint is not a reason to crash
     }

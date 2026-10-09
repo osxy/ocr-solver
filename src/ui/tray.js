@@ -13,10 +13,12 @@
  * a silently dead one, and greying it out would teach the user to distrust grey.
  */
 import { iconState } from './watchdog.js';
+import { formatTray } from '../accuracy.js';
 
-/** The six documented actions, in order (DESIGN 4.14). */
+/** The seven documented actions, in order (DESIGN 4.14). */
 export const TRAY_MENU = Object.freeze([
   Object.freeze({ id: 'status', title: 'Status' }),
+  Object.freeze({ id: 'accuracy', title: 'Accuracy' }),
   Object.freeze({ id: 'pause', title: 'Pause' }),
   Object.freeze({ id: 'solve-last', title: 'Solve last image' }),
   Object.freeze({ id: 'open-log', title: 'Open log' }),
@@ -33,13 +35,39 @@ export function createTrayController({
   quit = null,
   notify = null,
   logger = null,
+  // Returns `{ corpus, store }` - the cached offline report plus the live store
+  // report. Injected so the controller stays free of file and database access and
+  // can be exercised with a plain fake in tests.
+  accuracyProvider = null,
   now = () => Date.now(),
 } = {}) {
   let paused = false;
+  let accuracy = null;
 
   /** A fresh array; the adapter mutates its own copy and must not see ours change. */
   function menu() {
     return TRAY_MENU.map((item) => (item.id === 'pause' ? { ...item, title: paused ? 'Resume' : 'Pause' } : { ...item }));
+  }
+
+  /**
+   * Refresh the cached accuracy snapshot. The provider is synchronous by design:
+   * a cached file read plus one SQLite query, cheap enough for the 30 s poll. A
+   * provider that throws must never take the tray down - the metric is decoration
+   * next to a listener that is still working.
+   */
+  function refreshAccuracy() {
+    if (!accuracyProvider) return accuracy;
+    try {
+      accuracy = accuracyProvider();
+    } catch (err) {
+      logger?.warn?.(`accuracy refresh failed: ${err?.message ?? err}`);
+      accuracy = null;
+    }
+    return accuracy;
+  }
+
+  function accuracyText() {
+    return formatTray(accuracy);
   }
 
   function snapshot() {
@@ -52,15 +80,23 @@ export function createTrayController({
       watermark: status.watermark ?? null,
       reasoner: status.reasoner ?? null,
       reply: status.reply ?? null,
+      accuracy,
     };
   }
 
   function statusText() {
     const s = snapshot();
-    if (s.paused) return 'PuzzleSolver: paused';
+    const acc = accuracyText();
+    const suffix = acc ? ` · ${acc}` : '';
+    if (s.paused) return `PuzzleSolver: paused${suffix}`;
     const link = s.connected ? 'stream connected' : 'stream reconnecting';
     const quiet = s.quiet ? ', listener quiet' : '';
-    return `PuzzleSolver: listening (${link}${quiet})`;
+    return `PuzzleSolver: listening (${link}${quiet})${suffix}`;
+  }
+
+  /** The tray tooltip: status plus the one-line accuracy summary. */
+  function tooltip() {
+    return `PuzzleSolver — ${statusText()}`;
   }
 
   async function togglePause() {
@@ -92,6 +128,12 @@ export function createTrayController({
         const text = statusText();
         logger?.info?.(`tray: ${text}`);
         return { id, text };
+      }
+      case 'accuracy': {
+        const bundle = refreshAccuracy();
+        const text = accuracyText() ?? 'no accuracy data yet (run `puzzlesolver accuracy`)';
+        logger?.info?.(`tray: accuracy ${text}`);
+        return { id, text, accuracy: bundle };
       }
       case 'pause':
         return { id, ...(await togglePause()), text: statusText() };
@@ -142,16 +184,22 @@ export function createTrayController({
     const last = listener?.status?.()?.lastActivityAt ?? null;
     if (Number.isFinite(last)) watchdog?.noteActivity(last * 1000);
     watchdog?.check();
+    refreshAccuracy();
     const quiet = Boolean(watchdog?.quiet) && !paused;
-    return { icon: iconState(quiet), quiet, paused };
+    return { icon: iconState(quiet), quiet, paused, accuracy };
   }
 
   return {
     menu,
     handleClick,
     statusText,
+    tooltip,
     snapshot,
     poll,
+    refreshAccuracy,
+    get accuracy() {
+      return accuracy;
+    },
     get paused() {
       return paused;
     },

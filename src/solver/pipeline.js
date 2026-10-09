@@ -245,6 +245,11 @@ export async function solveImage(worker, image, options = {}) {
       payload: {
         answer,
         method,
+        // Class and confidence are stored so the accuracy report can break real
+        // traffic down without re-reading logs or re-running anything.
+        class: offline?.parsed.class ?? textResult?.puzzleClass ?? visionResult?.puzzleClass ?? null,
+        confident,
+        needsModel: !offline,
         opinionCount: opinions.length,
         opinions: opinions.map((o) => `${o.source}=${o.answer}`),
         agreement: agreement ? `${agreement.votes}/${agreement.of}` : null,

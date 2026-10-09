@@ -47,6 +47,32 @@ export const CATEGORIES = {
     'achttien', 'negentien', 'twintig', 'dertig', 'veertig', 'vijftig', 'zestig',
     'zeventig', 'tachtig', 'negentig', 'honderd', 'duizend',
   ],
+  // The four categories below convert puzzles that were previously `unknown` into
+  // free offline Tier 0 solves (M4). They were added together with text-level
+  // fixtures that exercise them, and the before/after offline rate was measured
+  // rather than assumed (DESIGN 14).
+  kleding: [
+    'shirt', 'broek', 'trui', 'jurk', 'rok', 'sok', 'sokken', 'schoen', 'schoenen',
+    'jas', 'muts', 'das', 'riem', 'handschoen', 'handschoenen', 'pet', 'hoed',
+    'zwembroek', 'pyjama', 'vest', 'blouse', 'laars', 'laarzen', 'sjaal', 'bril',
+    'regenjas', 'kous', 'kousen', 'overhemd',
+  ],
+  meubel: [
+    'stoel', 'stoelen', 'tafel', 'tafels', 'bed', 'bedden', 'bank', 'kast', 'kasten',
+    'lamp', 'lampen', 'bureau', 'kruk', 'sofa', 'dressoir', 'boekenkast', 'spiegel',
+    'tapijt', 'matras', 'fauteuil', 'salontafel', 'nachtkastje',
+  ],
+  beroep: [
+    'dokter', 'leraar', 'lerares', 'kok', 'bakker', 'boer', 'agent', 'politieagent',
+    'brandweerman', 'verpleegkundige', 'timmerman', 'loodgieter', 'schilder', 'piloot',
+    'kapitein', 'advocaat', 'rechter', 'kapper', 'ober', 'muzikant', 'schrijver',
+    'wetenschapper', 'conducteur', 'postbode', 'winkelier', 'architect', 'ingenieur',
+  ],
+  vervoer: [
+    'auto', 'fiets', 'trein', 'bus', 'tram', 'metro', 'vliegtuig', 'boot', 'schip',
+    'motor', 'scooter', 'taxi', 'vrachtwagen', 'tractor', 'helikopter', 'raket', 'step',
+    'skelter', 'veerboot', 'onderzeeboot',
+  ],
 };
 
 /** Singular/plural category names as they appear in the question text. */
@@ -58,6 +84,12 @@ export const CATEGORY_ALIASES = {
   groente: 'groente', groenten: 'groente',
   getal: 'getal', getallen: 'getal', cijfer: 'getal', cijfers: 'getal',
   nummer: 'getal', nummers: 'getal',
+  kleding: 'kleding', kledingstuk: 'kleding', kledingstukken: 'kleding', kleren: 'kleding',
+  meubel: 'meubel', meubels: 'meubel', meubelen: 'meubel', meubilair: 'meubel',
+  meubelstuk: 'meubel', meubelstukken: 'meubel',
+  beroep: 'beroep', beroepen: 'beroep',
+  vervoer: 'vervoer', vervoermiddel: 'vervoer', vervoermiddelen: 'vervoer',
+  voertuig: 'vervoer', voertuigen: 'vervoer',
 };
 
 /** Question scaffolding and operators. These are the tokens worth repairing. */
