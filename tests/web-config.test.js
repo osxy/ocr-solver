@@ -86,6 +86,18 @@ function formBody(fields) {
   return new URLSearchParams(fields).toString();
 }
 
+/** A concrete free loopback port, so a test can assert a *stable* `web_ui.port` (#85). */
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const probe = createHttpServer();
+    probe.once('error', reject);
+    probe.listen(0, '127.0.0.1', () => {
+      const { port } = probe.address();
+      probe.close(() => resolve(port));
+    });
+  });
+}
+
 function sessionFrom(html) {
   const match = /name="session" value="([^"]+)"/.exec(html);
   assert.ok(match, 'the page must carry a session token');
@@ -108,15 +120,20 @@ function rowFor(html, id) {
 // Host validation
 // ---------------------------------------------------------------------------
 
-test('the Host header must be loopback on the bound port', () => {
-  assert.equal(isAllowedHostHeader('127.0.0.1:43871', 43871), true);
-  assert.equal(isAllowedHostHeader('localhost:43871', 43871), true);
-  assert.equal(isAllowedHostHeader('[::1]:43871', 43871), true);
-  assert.equal(isAllowedHostHeader('127.0.0.1:1', 43871), false, 'a different port is not this server');
-  assert.equal(isAllowedHostHeader('evil.example:43871', 43871), false, 'DNS rebinding sends the attacker hostname');
-  assert.equal(isAllowedHostHeader('127.0.0.1', 43871), false, 'a missing port cannot be matched');
-  assert.equal(isAllowedHostHeader('', 43871), false);
-  assert.equal(isAllowedHostHeader(undefined, 43871), false);
+test('the Host header is matched by name; the port plays no part (#85)', () => {
+  assert.equal(isAllowedHostHeader('127.0.0.1:43871'), true);
+  assert.equal(isAllowedHostHeader('localhost:43871'), true);
+  assert.equal(isAllowedHostHeader('[::1]:43871'), true);
+  // The port is not the security-relevant part: a proxy forwards `:443` (or no port)
+  // while connecting to a different internal port, and the name is what DNS rebinding
+  // attacks. The rule stays exact on the name, so this is not "any Host".
+  assert.equal(isAllowedHostHeader('127.0.0.1:1'), true);
+  assert.equal(isAllowedHostHeader('127.0.0.1'), true, 'a portless Host is a valid name');
+  assert.equal(isAllowedHostHeader('evil.example:43871'), false, 'DNS rebinding sends the attacker hostname');
+  assert.equal(isAllowedHostHeader('evil.example'), false);
+  assert.equal(isAllowedHostHeader('evil.example:443'), false);
+  assert.equal(isAllowedHostHeader(''), false);
+  assert.equal(isAllowedHostHeader(undefined), false);
 });
 
 test('a wrong Host is refused before the launch token is even considered', async (t) => {
@@ -125,8 +142,48 @@ test('a wrong Host is refused before the launch token is even considered', async
   // The token is real, so only the Host check can refuse this.
   const res = await request(server.url, { headers: { host: 'attacker.example' } });
   assert.equal(res.status, 403);
-  assert.match(res.text, /loopback/i);
+  assert.match(res.text, /allowed hostname/i);
   assert.equal(res.headers['cache-control'], 'no-store');
+});
+
+test('#85: a reverse-proxy Host for an enumerated name is admitted, a foreign name is refused', async (t) => {
+  const { editor } = makeEditor(t);
+  // The proxy connects to this ephemeral upstream but forwards the public name. The
+  // public port (`:443`) and the internal one differ; only the name is enumerated.
+  const server = await startUi(t, { controller: editor, webUi: { allowed_hosts: ['ui.example.com'] } });
+  // `/login` is behind the same access and Host checks but does not consume the
+  // one-time launch token, so the same server can answer more than one probe.
+  const loginUrl = `http://127.0.0.1:${server.port}/login`;
+  for (const host of ['ui.example.com', 'ui.example.com:443', `ui.example.com:${server.port}`]) {
+    const admitted = await request(loginUrl, { headers: { host } });
+    assert.equal(admitted.status, 200, `${host} must be admitted: ${admitted.text}`);
+    assert.match(admitted.text, /Sign in/i);
+  }
+  const refused = await request(loginUrl, { headers: { host: 'other.example.com' } });
+  assert.equal(refused.status, 403, 'an unenumerated name is still refused');
+});
+
+test('#85: web_ui.port is the stable port the listener binds, not an ephemeral one', async (t) => {
+  const { editor } = makeEditor(t);
+  const port = await freePort();
+  const server = await startUi(t, { controller: editor, webUi: { port } });
+  assert.equal(server.port, port, 'the configured port is the one that listens');
+  const page = await request(server.url);
+  assert.equal(page.status, 200);
+});
+
+test('#85: a non-loopback range with an ephemeral port refuses to start, naming web_ui.port', async (t) => {
+  const { editor } = makeEditor(t);
+  assert.throws(
+    () =>
+      createWebSettingsServer({
+        controller: editor,
+        webUi: { bind: '127.0.0.1', port: 0, allowed_cidrs: ['192.168.1.0/24'] },
+        credentialVerifier: 'scrypt$1$1$1$AA$AA',
+      }),
+    (err) => /web_ui\.port/.test(err.message) && /ephemeral|stable/i.test(err.message),
+    'the operator must be told the port is missing, not handed an unreachable UI'
+  );
 });
 
 // ---------------------------------------------------------------------------

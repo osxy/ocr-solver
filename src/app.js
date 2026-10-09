@@ -39,7 +39,7 @@ import { resolveTrayMode } from './ui/mode.js';
 import { createSetup } from './ui/setup.js';
 import { applyLiveSettings, createSettingsEditor } from './ui/settings.js';
 import { APP_VERSION } from './version.js';
-import { computeSettingsReview, planStartupReview, recordReview } from './ui/settings-review.js';
+import { computeSettingsReview, planStartupReview, recordDismissal, recordReview } from './ui/settings-review.js';
 import { defaultWebSettingsDialog, defaultWebSetupDialog } from './ui/web-config.js';
 import { WEB_UI_CREDENTIAL_SETTING, webUiAdmitsNonLoopback } from './ui/access.js';
 import { storeReport, loadReportCache, defaultAccuracyCachePath } from './accuracy.js';
@@ -675,11 +675,16 @@ export async function createApp({
         corpusReport: loadReportCache(accuracyCachePath ?? defaultAccuracyCachePath(store.path))?.corpus ?? null,
       });
       // The editor presented the settings, so they are no longer "new". A dialog that
-      // never came up (`failed`) did not present them, so the badges stay. Recording is
-      // best-effort: a store failure must not turn a successful save into an error.
+      // never came up (`failed`) did not present them, and a web UI whose page was never
+      // fetched (`sessionOpened === false`: timed out, or the link was printed where
+      // nobody could click it) did not either. #87: the timed-out case still advances the
+      // *prompt* baseline so it does not nag next start, but leaves the `[new]` badges.
+      // Recording is best-effort: a store failure must not turn a successful save into
+      // an error.
       if (outcome && !outcome.failed) {
         try {
-          recordReview(store, APP_VERSION);
+          if (outcome.sessionOpened === false) recordDismissal(store, APP_VERSION);
+          else recordReview(store, APP_VERSION);
         } catch (err) {
           logger.warn?.(`could not record the settings review: ${err?.message ?? err}`);
         }

@@ -14,6 +14,7 @@ import {
   addressAllowed,
   cidrContains,
   cidrIsWithinLoopback,
+  cidrsCoverAddressSpace,
   hashWebUiPassword,
   isAllowedHostHeader,
   isCatchAllCidr,
@@ -139,6 +140,36 @@ test('the catch-all is detected and refused at config load, naming the reverse p
   }
 });
 
+test('#89: a set of ranges that only together cover the address space is refused too', () => {
+  // The reproduction: each half passes the literal `/0` check, together they are a catch-all.
+  const halves = parseAllowedCidrs(['0.0.0.0/1', '128.0.0.0/1']);
+  assert.equal(halves.every((c) => !isCatchAllCidr(c)), true, 'neither half is a literal catch-all');
+  assert.equal(cidrsCoverAddressSpace(halves), true, 'together they cover every IPv4 address');
+  assert.equal(
+    ['8.8.8.8', '203.0.113.9', '10.1.2.3'].every((a) => addressAllowed(a, halves)),
+    true,
+    'which is the exposure the refusal exists to stop'
+  );
+  assert.throws(
+    () => validateConfig({ web_ui: { allowed_cidrs: ['0.0.0.0/1', '128.0.0.0/1'] } }),
+    (err) => err instanceof ConfigError && /cover every address/.test(err.message),
+    'the pair must be refused at config load'
+  );
+  // The IPv6 equivalent.
+  assert.equal(cidrsCoverAddressSpace(parseAllowedCidrs(['::/1', '8000::/1'])), true);
+  assert.throws(
+    () => validateConfig({ web_ui: { allowed_cidrs: ['::/1', '8000::/1'] } }),
+    (err) => err instanceof ConfigError && /cover every address/.test(err.message)
+  );
+  // A guard against "reachable from everywhere", not a width ceiling: one wide half
+  // stays allowed, and a gap stays a gap.
+  assert.equal(cidrsCoverAddressSpace(parseAllowedCidrs(['0.0.0.0/1'])), false);
+  assert.equal(cidrsCoverAddressSpace(parseAllowedCidrs(['10.0.0.0/8', '192.168.0.0/16'])), false);
+  assert.doesNotThrow(() => validateConfig({ web_ui: { allowed_cidrs: ['0.0.0.0/1'] } }));
+  // Overlapping ranges that still leave a hole are not refused.
+  assert.equal(cidrsCoverAddressSpace(parseAllowedCidrs(['0.0.0.0/1', '192.0.0.0/2'])), false);
+});
+
 test('a range wider than loopback is detected and warned about', () => {
   assert.equal(cidrIsWithinLoopback(p('127.0.0.0/8')), true);
   assert.equal(cidrIsWithinLoopback(p('127.0.0.1/32')), true);
@@ -165,22 +196,27 @@ test('a range wider than loopback is detected and warned about', () => {
 
 test('a widened bind enumerates its Host names and still refuses anything else', () => {
   const bound = '192.168.1.5';
-  assert.equal(isAllowedHostHeader('192.168.1.5:43871', 43871, { boundAddress: bound }), true);
-  assert.equal(isAllowedHostHeader('127.0.0.1:43871', 43871, { boundAddress: bound }), true);
-  assert.equal(isAllowedHostHeader('localhost:43871', 43871, { boundAddress: bound }), true);
-  assert.equal(isAllowedHostHeader('evil.example:43871', 43871, { boundAddress: bound }), false);
-  assert.equal(isAllowedHostHeader('192.168.1.5:1', 43871, { boundAddress: bound }), false);
+  assert.equal(isAllowedHostHeader('192.168.1.5:43871', { boundAddress: bound }), true);
+  assert.equal(isAllowedHostHeader('127.0.0.1:43871', { boundAddress: bound }), true);
+  assert.equal(isAllowedHostHeader('localhost:43871', { boundAddress: bound }), true);
+  assert.equal(isAllowedHostHeader('evil.example:43871', { boundAddress: bound }), false);
+  // #85: the name is the security-relevant part, not the port.
+  assert.equal(isAllowedHostHeader('192.168.1.5:1', { boundAddress: bound }), true);
+  assert.equal(isAllowedHostHeader('192.168.1.5', { boundAddress: bound }), true, 'the portless form is a valid name');
 
-  // A configured name (a LAN hostname or reverse-proxy vhost) is admitted.
+  // A configured name (a LAN hostname or reverse-proxy vhost) is admitted, with or
+  // without the public port the proxy forwarded.
   assert.equal(
-    isAllowedHostHeader('ui.lan:43871', 43871, { boundAddress: bound, allowedHosts: ['ui.lan'] }),
+    isAllowedHostHeader('ui.lan:43871', { boundAddress: bound, allowedHosts: ['ui.lan'] }),
     true
   );
-  assert.equal(isAllowedHostHeader('other.lan:43871', 43871, { boundAddress: bound, allowedHosts: ['ui.lan'] }), false);
+  assert.equal(isAllowedHostHeader('ui.lan:443', { boundAddress: bound, allowedHosts: ['ui.lan'] }), true);
+  assert.equal(isAllowedHostHeader('ui.lan', { boundAddress: bound, allowedHosts: ['ui.lan'] }), true);
+  assert.equal(isAllowedHostHeader('other.lan:43871', { boundAddress: bound, allowedHosts: ['ui.lan'] }), false);
 
   // A wildcard bind is not itself a Host anyone types.
-  assert.equal(isAllowedHostHeader('0.0.0.0:43871', 43871, { boundAddress: '0.0.0.0' }), false);
-  assert.equal(isAllowedHostHeader('192.168.1.5:43871', 43871, { boundAddress: '0.0.0.0', allowedHosts: ['192.168.1.5'] }), true);
+  assert.equal(isAllowedHostHeader('0.0.0.0:43871', { boundAddress: '0.0.0.0' }), false);
+  assert.equal(isAllowedHostHeader('192.168.1.5:43871', { boundAddress: '0.0.0.0', allowedHosts: ['192.168.1.5'] }), true);
 });
 
 // ---------------------------------------------------------------------------

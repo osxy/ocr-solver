@@ -324,7 +324,8 @@ every change, and routes it to the right store. On a desktop session it opens as
 **loopback web UI in the default browser** (`config edit --gui` opens the same UI from a
 console); this is what makes configuration possible on the shipped Windows install, where
 the tray runs with the window hidden and has no console for a terminal prompt. The web UI
-binds `127.0.0.1` on an ephemeral port, requires a single-use link token, validates the
+binds `127.0.0.1` on an ephemeral port (`web_ui.port`, default `0`; set it for remote
+access — see below), requires a single-use link token, validates the
 `Host` header, serves every response with `Cache-Control: no-store`, never renders a secret
 value, and closes its listener when you save or cancel. `--headless` has the same editor
 behind a command, so an unattended machine is not a second-class mode:
@@ -385,15 +386,26 @@ configured together, in `config.toml`:
 ```toml
 [web_ui]
 bind = "0.0.0.0"                 # or a specific LAN address
+port = 8443                      # required for remote access; 0 = ephemeral (loopback only)
 allowed_cidrs = ["192.168.1.0/24"]
 allowed_hosts = ["puzzle.lan"]    # every Host name you will type, default deny
 ```
 
 The access rule is a **single control for every page** (settings and solve alike): the
 socket's remote address must be loopback or fall inside one of `allowed_cidrs`.
-`X-Forwarded-For` is ignored — it is caller-supplied. `0.0.0.0/0` and `::/0` are refused
-at load; if the UI must be reachable from everywhere, put it behind your own
-authenticated reverse proxy. A range wider than loopback also **requires a credential**:
+`X-Forwarded-For` is ignored — it is caller-supplied. Any set of ranges that **together**
+covers the whole IPv4 or IPv6 address space is refused at load, not only the literal
+`0.0.0.0/0`/`::/0`: `0.0.0.0/1` plus `128.0.0.0/1` is refused too. That refusal is a guard
+against "reachable from everywhere", not a width ceiling — a single wide-but-partial range
+is allowed, because the credential below is what actually protects the UI. If the UI must be
+reachable from everywhere, put it behind your own authenticated reverse proxy.
+
+**Remote access needs a stable port.** `web_ui.port` defaults to `0`, which lets the OS pick
+an ephemeral port — correct for the loopback case, where the app opens the URL itself. A
+non-loopback range with `port = 0` is refused at server start with an error naming
+`web_ui.port`, because a remote client or a reverse proxy has no stable port to reach.
+
+A range wider than loopback also **requires a credential**:
 set it once with
 
 ```bash
@@ -411,9 +423,13 @@ naming `web_ui.password`, rather than listen unauthenticated.
 cleartext, and the session token cannot be marked `Secure`. The credential raises the bar
 against someone casually browsing the LAN; it does **not** make an untrusted network
 safe, and it is not a substitute for transport encryption. For access from anywhere you
-do not fully control, terminate TLS at a reverse proxy and reach the UI through that. A
-LAN hostname or the proxy's `Host` must be listed in `allowed_hosts`, and the proxy's
-address in `allowed_cidrs`.
+do not fully control, terminate TLS at a reverse proxy and reach the UI through that.
+Set `web_ui.port` to the fixed port the proxy forwards to, and list the public **name** the
+proxy sends in `Host` (for example `ui.example.com`) in `allowed_hosts`. The `Host` check
+compares the name, not the port, so the proxy's `Host: ui.example.com` or
+`ui.example.com:443` is accepted even though it connects to a different internal port. The
+proxy's own address must be in `allowed_cidrs` (a proxy on the same host is loopback and is
+always allowed).
 
 **Some settings need a restart.** The editor marks each one `[live]` or `[restart]`, and
 the headless command prints which applies:
@@ -425,7 +441,8 @@ the headless command prints which applies:
 - **restart** — the models and base URL, `offline_only`, `escalate_to_vision`,
   `self_consistency_n`, the breaker knobs (`breaker_threshold`, `breaker_cooldown_sec`),
   the reply switch/wording/budgets, `poll_interval_sec`, `history_mode`, `ocr.languages`,
-  `storage.retain_days`, `ui.tray`, `ui.stats_recent_solves`, the whole `http.*` block, and **all
+  `storage.retain_days`, `ui.tray`, `ui.stats_recent_solves`, the whole `http.*` and `web_ui.*`
+  blocks, and **all
   three secrets**,
   because the listener, reasoner, responder or HTTP server capture them when they are
   built. The running service keeps the old value until it is restarted; the editor says

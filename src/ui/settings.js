@@ -116,6 +116,10 @@ export const SETTINGS = Object.freeze([
   Object.freeze({ id: 'http.image_url_hosts', label: 'Allowed image_url hosts (default deny)', path: ['http', 'image_url_hosts'], type: 'string-array', restart: true, securityRelevant: true, since: '0.3.0' }),
 
   Object.freeze({ id: 'web_ui.bind', label: 'Web UI bind address', path: ['web_ui', 'bind'], type: 'string', restart: true, securityRelevant: true, since: '0.3.0' }),
+  // #85: a fixed port is what a remote client or TLS reverse proxy needs; 0 keeps the
+  // loopback ephemeral-port behaviour. A non-loopback range with port 0 refuses to start,
+  // so it belongs with the rest of the `web_ui.*` access block as security-relevant.
+  Object.freeze({ id: 'web_ui.port', label: 'Web UI port (0 = ephemeral, loopback only)', path: ['web_ui', 'port'], type: 'integer', min: 0, max: 65_535, restart: true, securityRelevant: true, since: '0.3.0' }),
   Object.freeze({ id: 'web_ui.allowed_cidrs', label: 'Web UI allowed CIDR ranges (blank = loopback only)', path: ['web_ui', 'allowed_cidrs'], type: 'string-array', allowEmpty: true, restart: true, securityRelevant: true, since: '0.3.0' }),
   Object.freeze({ id: 'web_ui.allowed_hosts', label: 'Web UI extra Host names (blank = default deny)', path: ['web_ui', 'allowed_hosts'], type: 'string-array', allowEmpty: true, restart: true, securityRelevant: true, since: '0.3.0' }),
   // The only secret whose stored value is not the entered value: `prepare` hashes it to

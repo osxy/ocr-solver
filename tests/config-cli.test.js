@@ -16,8 +16,11 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { loadConfig } from '../src/config.js';
+import { loadConfig, defaultStatePath } from '../src/config.js';
 import { runConfig as runConfigCommand } from '../src/config-cli.js';
+import { openStore } from '../src/state/db.js';
+import { PROMPTED_VERSION_KEY, REVIEWED_VERSION_KEY } from '../src/ui/settings-review.js';
+import { APP_VERSION } from '../src/version.js';
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'cli.js');
 
@@ -232,4 +235,35 @@ test('config edit --gui drives the injected web dialog, not the terminal prompt'
   assert.equal(code, 0, stderr.text);
   assert.equal(guiCalls, 1, '--gui must select the web dialog');
   assert.equal(terminalCalls, 0, '--gui must not fall back to the terminal prompt');
+});
+
+test('#87: config edit --gui that is never fetched keeps the badges but silences the prompt', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'puzzlesolver-config-cli-87-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const configPath = join(dir, 'config.toml');
+  writeFileSync(configPath, '[solver]\nself_consistency_n = 5\n');
+  const env = { XDG_DATA_HOME: join(dir, 'data') };
+  const homedir = () => join(dir, 'home');
+  const statePath = defaultStatePath({ platform: 'linux', env, homedir });
+  const seed = openStore({ path: statePath });
+  seed.set(REVIEWED_VERSION_KEY, '0.2.0');
+  seed.set(PROMPTED_VERSION_KEY, '0.2.0');
+  seed.close();
+
+  const stdout = captureStream();
+  const stderr = captureStream();
+  const code = await runConfigCommand(['edit', '--gui', '--config', configPath], {
+    stdout,
+    stderr,
+    env,
+    platform: 'linux',
+    homedir,
+    guiDialog: async () => ({ saved: false, cancelled: true, sessionOpened: false }),
+  });
+  assert.equal(code, 0, stderr.text);
+
+  const after = openStore({ path: statePath });
+  t.after(() => after.close());
+  assert.equal(after.get(REVIEWED_VERSION_KEY), '0.2.0', 'a UI that never rendered must not clear the badges');
+  assert.equal(after.get(PROMPTED_VERSION_KEY), APP_VERSION, 'but the prompt baseline advances');
 });

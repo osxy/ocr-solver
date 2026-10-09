@@ -35,7 +35,7 @@ import {
   planStartupReview,
   recordDismissal,
 } from '../src/ui/settings-review.js';
-import { renderSettingsPage } from '../src/ui/web-config.js';
+import { renderSettingsPage, defaultWebSettingsDialog } from '../src/ui/web-config.js';
 import { APP_VERSION, compareVersions } from '../src/version.js';
 
 const repoRoot = join(import.meta.dirname, '..');
@@ -45,6 +45,7 @@ const V030 = Object.freeze([
   'http.allow_image_url',
   'http.image_url_hosts',
   'web_ui.bind',
+  'web_ui.port',
   'web_ui.allowed_cidrs',
   'web_ui.allowed_hosts',
   'web_ui.password',
@@ -351,6 +352,40 @@ test('#67: reviewing through the editor clears the badges and records the versio
   assert.deepEqual(seenNew, [...V030], 'the editor is shown exactly the new settings');
   assert.equal(store.get(REVIEWED_VERSION_KEY), APP_VERSION, 'the reviewed version is app state in kv');
   assert.deepEqual(app.settingsReview.newSettings, [], 'the badges are cleared after the review');
+});
+
+test('#87: a web UI that is never fetched keeps the badges but silences the prompt', async (t) => {
+  const store = memoryStore();
+  store.set(REVIEWED_VERSION_KEY, '0.2.0');
+  store.set(PROMPTED_VERSION_KEY, '0.2.0');
+  const { app } = await makeReviewApp(t, {
+    configText: '[solver]\nself_consistency_n = 5\n',
+    store,
+    // The real dialog, but the browser never opened and nobody redeemed the URL, so
+    // the server times out with `sessionOpened: false`. That is exactly the case that
+    // used to clear the `[new]` badges without the settings ever being shown (#87).
+    settingsDialog: (opts) =>
+      defaultWebSettingsDialog({
+        ...opts,
+        openBrowser: async () => ({ opened: false }),
+        timeoutMs: 30,
+      }),
+  });
+
+  // createApp's startup offer already advanced the prompt baseline.
+  assert.equal(store.get(PROMPTED_VERSION_KEY), APP_VERSION, 'the startup offer silences the prompt');
+
+  const outcome = await app.openSettings();
+  assert.equal(outcome.cancelled, true);
+  assert.equal(outcome.sessionOpened, false, 'the launch link was never redeemed');
+  // The two kv keys are the whole design: the prompt advances, the badge baseline does not.
+  assert.equal(store.get(REVIEWED_VERSION_KEY), '0.2.0', 'the badges must survive a UI nobody saw');
+  assert.equal(store.get(PROMPTED_VERSION_KEY), APP_VERSION, 'the prompt baseline stays advanced');
+  assert.deepEqual(
+    app.settingsReview.newSettings.map((setting) => setting.id),
+    [...V030],
+    'the settings are still offered as new'
+  );
 });
 
 test('#67: headless startup opens no browser and no dialog, but logs and exposes the set', async (t) => {

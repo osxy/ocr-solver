@@ -8,7 +8,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { request as httpRequest } from 'node:http';
+import { request as httpRequest, createServer as createHttpServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -73,17 +73,37 @@ const UNRESOLVED = {
   disputed: false,
 };
 
-async function startUi(t, { controller = fakeController(), config = null, remote = '127.0.0.1', ...options } = {}) {
+async function startUi(t, { controller = fakeController(), config = null, remote = '127.0.0.1', webUi = null, ...options } = {}) {
   const state = { remote };
+  // #85: a non-loopback range now needs a stable port. Allocate a real free one for
+  // tests that inject a remote address but do not care which port it is, so they keep
+  // exercising the real listener rather than bypassing the check.
+  let resolvedWebUi = webUi;
+  if (webUi && Array.isArray(webUi.allowed_cidrs) && webUi.allowed_cidrs.length > 0 && webUi.port == null) {
+    resolvedWebUi = { ...webUi, port: await freePort() };
+  }
   const server = createWebSettingsServer({
     controller,
     config,
     ...options,
+    webUi: resolvedWebUi,
     getRemoteAddress: () => state.remote,
   });
   await server.start();
   t.after(() => server.stop());
   return { server, state, controller };
+}
+
+/** A concrete free loopback port for the stable-port tests (#85). */
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const probe = createHttpServer();
+    probe.once('error', reject);
+    probe.listen(0, '127.0.0.1', () => {
+      const { port } = probe.address();
+      probe.close(() => resolve(port));
+    });
+  });
 }
 
 const baseUrl = (server) => `http://127.0.0.1:${server.port}`;
@@ -396,4 +416,23 @@ test('the Host allowlist is still explicit when a hostname is configured', async
   assert.equal(allowed.status, 200);
   const refused = await rawGet(`${baseUrl(server)}/`, { host: `evil.example:${server.port}` });
   assert.equal(refused.status, 403);
+});
+
+test('#85: the documented TLS-proxy configuration reaches the UI end to end', async (t) => {
+  const port = await freePort();
+  const { server, state } = await startUi(t, {
+    webUi: { bind: '127.0.0.1', port, allowed_cidrs: ['192.168.1.0/24'], allowed_hosts: ['ui.example.com'] },
+    credentialVerifier: hashWebUiPassword('correct-password'),
+  });
+  assert.equal(server.port, port, 'the documented stable port is the one that listens');
+  // The proxy's address is inside the allowed range and it forwards the public Host
+  // (portless or on :443), while connecting to the internal port above.
+  state.remote = '192.168.1.5';
+  for (const host of ['ui.example.com', 'ui.example.com:443']) {
+    const admitted = await rawGet(`${baseUrl(server)}/`, { host });
+    assert.equal(admitted.status, 200, `${host} must reach the login page: ${admitted.text}`);
+    assert.match(admitted.text, /Sign in/i);
+  }
+  const refused = await rawGet(`${baseUrl(server)}/`, { host: 'evil.example' });
+  assert.equal(refused.status, 403, 'an unenumerated name is still refused');
 });

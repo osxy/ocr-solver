@@ -28,9 +28,11 @@
  *    check runs before `Host`, before any token and before any handler. The remote
  *    address is the socket's, never `X-Forwarded-For`;
  *  - **the `Host` header is explicitly enumerated**: loopback names, the concrete bind
- *    address and `web_ui.allowed_hosts` (default deny). Widening the bind does not
- *    loosen this, because a session is scoped to a hostname and DNS rebinding is
- *    exactly the attack it defends (#56);
+ *    address and `web_ui.allowed_hosts` (default deny). The name is what is compared;
+ *    the port is not, so a reverse proxy's `Host: ui.example.com` or `:443` is admitted
+ *    while a foreign name is still refused. Widening the bind does not loosen this,
+ *    because a session is scoped to a hostname and DNS rebinding is exactly the attack
+ *    it defends (#56, #85);
  *  - the listener binds `web_ui.bind` (loopback by default), and a non-loopback range
  *    is refused unless a credential verifier is configured;
  *  - the URL the app opens carries a **one-time launch token** that is single-use,
@@ -532,6 +534,7 @@ export function createWebSettingsServer({
   }
 
   const bindHost = String(webUi?.bind ?? WEB_UI_BIND);
+  const bindPort = Number.isInteger(webUi?.port) ? webUi.port : 0;
   const allowedCidrs = parseAllowedCidrs(webUi?.allowed_cidrs);
   const allowedHosts = Array.isArray(webUi?.allowed_hosts) ? webUi.allowed_hosts : [];
   // `isAllowedHostHeader` ignores a wildcard bind (it is not a Host anyone can type)
@@ -546,6 +549,15 @@ export function createWebSettingsServer({
     throw new Error(
       `web_ui.allowed_cidrs admits addresses beyond loopback but no web UI credential is configured. ` +
         `Set ${WEB_UI_CREDENTIAL_SETTING} (stored as a scrypt verifier in the credential store) or the web UI will not start.`
+    );
+  }
+  // #85: an ephemeral port is fine on loopback (the URL is opened locally), but a
+  // remote client or a TLS reverse proxy has no stable port to reach. Refuse to start
+  // with a message naming the setting rather than silently exposing an unreachable UI.
+  if (exposesRemote && bindPort === 0) {
+    throw new Error(
+      'web_ui.allowed_cidrs admits addresses beyond loopback but web_ui.port is 0 (an ephemeral port), ' +
+        'so a remote client or a TLS reverse proxy has no stable port to reach. Set web_ui.port to the fixed port you will expose.'
     );
   }
 
@@ -575,7 +587,10 @@ export function createWebSettingsServer({
     if (settled) return;
     settled = true;
     if (timeoutTimer) clearTimeout(timeoutTimer);
-    resolveOutcome(outcomeValue);
+    // #87: whether the settings were ever fetched. A timeout or a link opened in
+    // neither a browser nor a terminal returns `false`; the app uses this to advance
+    // only the prompt baseline, never the `[new]` badge baseline.
+    resolveOutcome({ ...outcomeValue, sessionOpened: sessionToken != null });
   }
 
   function finish(outcomeValue) {
@@ -775,11 +790,11 @@ export function createWebSettingsServer({
         return send(res, 403, messagePage('Refused', 'This web UI only answers requests from an allowed address.'));
       }
       // 2. DNS-rebinding defence. Widening the bind enumerates more names, never "any".
-      if (!isAllowedHostHeader(req.headers.host, address?.port, { boundAddress, allowedHosts })) {
+      if (!isAllowedHostHeader(req.headers.host, { boundAddress, allowedHosts })) {
         return send(
           res,
           403,
-          messagePage('Refused', 'This web UI only answers requests addressed to an allowed hostname (loopback by default) on its own port.')
+          messagePage('Refused', 'This web UI only answers requests addressed to an allowed hostname (loopback by default).')
         );
       }
       const url = new URL(req.url ?? '/', `http://${WEB_UI_BIND}`);
@@ -935,8 +950,9 @@ export function createWebSettingsServer({
       };
       server.once('error', onError);
       server.once('listening', onListening);
-      // An ephemeral port, on the configured bind (loopback unless widened).
-      server.listen({ host: bindHost, port: 0 });
+      // `web_ui.port` (default 0 = ephemeral), on the configured bind (loopback
+      // unless widened). A non-loopback range is refused above unless it is set.
+      server.listen({ host: bindHost, port: bindPort });
     });
   }
 
@@ -968,7 +984,7 @@ export function createWebSettingsServer({
     },
     /** The one access rule and its inputs, for diagnostics and tests. */
     accessRule() {
-      return { bind: bindHost, allowedCidrs: allowedCidrs.map((c) => c.text), allowedHosts: [...allowedHosts], requiresCredential: exposesRemote };
+      return { bind: bindHost, port: bindPort, allowedCidrs: allowedCidrs.map((c) => c.text), allowedHosts: [...allowedHosts], requiresCredential: exposesRemote };
     },
     waitForOutcome: () => outcome,
   };

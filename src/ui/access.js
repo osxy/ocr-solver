@@ -183,6 +183,50 @@ export function isCatchAllCidr(cidr) {
   return Boolean(cidr) && cidr.prefix === 0;
 }
 
+function bytesToBigInt(bytes) {
+  let value = 0n;
+  for (const byte of bytes) value = (value << 8n) | BigInt(byte);
+  return value;
+}
+
+/**
+ * True when the configured ranges, taken together, cover the whole address space
+ * of at least one family (`0.0.0.0/0` or `::/0`).
+ *
+ * #89: `isCatchAllCidr` only sees a literal `/0`. Two half-space ranges -
+ * `0.0.0.0/1` plus `128.0.0.0/1` (or `::/1` plus `8000::/1`) - cover exactly the
+ * same space and each passes that check. This merges the ranges as half-open
+ * intervals and asks the question the operator's intent actually is: is every
+ * address allowed? A single wide-but-partial range is deliberately *not* refused -
+ * the operator asked for it explicitly and the credential is the real control.
+ */
+export function cidrsCoverAddressSpace(cidrs) {
+  const byFamily = new Map();
+  for (const cidr of cidrs) {
+    if (!cidr) continue;
+    if (!byFamily.has(cidr.family)) byFamily.set(cidr.family, []);
+    byFamily.get(cidr.family).push(cidr);
+  }
+  for (const [family, ranges] of byFamily) {
+    const bits = family === 4 ? 32 : 128;
+    const universe = 1n << BigInt(bits);
+    const intervals = ranges
+      .map((cidr) => {
+        const start = bytesToBigInt(cidr.bytes);
+        const size = 1n << BigInt(bits - cidr.prefix);
+        return [start, start + size];
+      })
+      .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+    let covered = 0n;
+    for (const [start, end] of intervals) {
+      if (start > covered) break; // a gap before this range: the space is not full
+      if (end > covered) covered = end;
+    }
+    if (covered >= universe) return true;
+  }
+  return false;
+}
+
 /** True when `address` is numerically loopback (`127.0.0.0/8`, `::1`). */
 export function isLoopbackAddress(address) {
   const parsed = parseIp(address);
@@ -237,6 +281,25 @@ export function normalizeHostEntry(value) {
 }
 
 /**
+ * Extract the *name* from a `Host` header, discarding any port and brackets.
+ * `host:port`, `[::1]:port` and the portless forms all reduce to the name, or
+ * `null` when the header is not a well-formed host/port. A bare unbracketed IPv6
+ * literal is not a valid `Host` and is refused.
+ */
+function hostNameOf(hostHeader) {
+  const text = String(hostHeader).trim().toLowerCase();
+  const bracketed = /^\[([^\]]+)\](?::(\d{1,5}))?$/.exec(text);
+  if (bracketed) {
+    if (bracketed[2] != null && Number(bracketed[2]) > 65535) return null;
+    return normalizeHostEntry(bracketed[1]);
+  }
+  const plain = /^([^:]+)(?::(\d{1,5}))?$/.exec(text);
+  if (!plain) return null;
+  if (plain[2] != null && Number(plain[2]) > 65535) return null;
+  return normalizeHostEntry(plain[1]);
+}
+
+/**
  * The web UI's DNS-rebinding defence, widened for a non-loopback bind.
  *
  * A session cookie/URL token is scoped to a *hostname*: a malicious page whose name
@@ -245,14 +308,17 @@ export function normalizeHostEntry(value) {
  * the legitimate names stay **explicitly enumerated**: loopback names, the concrete
  * bound address, and whatever the operator listed in `web_ui.allowed_hosts`
  * (default deny). Widening the bind does not loosen this.
+ *
+ * The **port is not compared** (#85). It is not the security-relevant part - the name
+ * is - and a TLS reverse proxy legitimately forwards `Host: ui.example.com` or
+ * `ui.example.com:443` while connecting to a different internal port. The rule stays
+ * exact on the name, which is what DNS rebinding attacks; ``host:anyport`` is still
+ * `host`. Loopback-only access and the credential gate are unchanged.
  */
-export function isAllowedHostHeader(hostHeader, port, { boundAddress = null, allowedHosts = [] } = {}) {
+export function isAllowedHostHeader(hostHeader, { boundAddress = null, allowedHosts = [] } = {}) {
   if (typeof hostHeader !== 'string' || hostHeader.trim() === '') return false;
-  if (!Number.isInteger(Number(port)) || Number(port) <= 0) return false;
-  const match = /^(\[[^\]]+\]|[^:]+):(\d+)$/.exec(hostHeader.trim().toLowerCase());
-  if (!match) return false;
-  if (Number(match[2]) !== Number(port)) return false;
-  const host = normalizeHostEntry(match[1].replace(/^\[|\]$/g, ''));
+  const host = hostNameOf(hostHeader);
+  if (host == null) return false;
   const allowed = new Set(['127.0.0.1', 'localhost', '::1']);
   // A wildcard bind is not a name anyone can put in a Host header, so it is not
   // added; the operator must list the name they actually type.
