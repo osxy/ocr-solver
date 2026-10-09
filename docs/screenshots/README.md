@@ -19,32 +19,48 @@ runs the app.
 npm run screenshots        # -> node scripts/screenshots.mjs
 ```
 
-The script needs **Firefox** on `PATH` (it uses Firefox's native
-`firefox --headless --screenshot`, so no screenshot dependency is added). Firefox is not
-installed on a plain Windows dev box or in CI, which is why this is **not** part of
-`npm test`: the offline suite stays credential-free, network-free and browser-free.
+The script needs **Firefox** on `PATH`. It drives Firefox's built-in WebDriver BiDi
+endpoint (`--remote-debugging-port`) through Node's built-in `WebSocket`, so no
+screenshot or automation dependency is added. Firefox is not installed on a plain
+Windows dev box or in CI, which is why this is **not** part of `npm test`: the offline
+suite stays credential-free, network-free and browser-free.
+
+BiDi is used rather than the one-shot `firefox --headless --screenshot` because the
+statistics thumbnails carry `loading="lazy"`: the one-shot CLI captures at the load
+event, before a lazy image has painted, while BiDi lets the script wait until every
+image has loaded.
 
 The script:
 
 1. writes a throwaway fixture to `$TMPDIR/puzzlesolver-screenshots` — a fake
    `config.toml` and a seeded SQLite `state.db` with a synthetic solve history;
 2. starts the real web UI on a loopback ephemeral port (`createWebSettingsServer`);
-3. fetches the real settings page and the real statistics page, and POSTs a **committed
-   corpus image** (`corpus/001-count-kleuren.png`) through the real solve route, so the
-   answer shown (`2`, `tier0:count`) is a genuine offline solve rather than a
-   synthesised string. The light pages are fetched with an explicit `theme=light`
-   cookie so the committed images do not depend on the capture machine's OS colour
-   preference, and the settings and statistics pages are also captured with
-   `?theme=dark`;
-4. screenshots the fetched HTML with Firefox at a fixed width, trims the blank canvas,
-   and writes the six PNGs here;
-5. stops the server, terminates the OCR worker, closes the store and deletes the temp
-   directory — on success and on failure.
+3. opens the launch URL, then captures the real pages **from their live HTTP URLs** at a
+   fixed width with Firefox and trims the blank canvas. The light pages carry
+   `?theme=light` and the dark ones `?theme=dark`, so the committed images do not depend
+   on the capture machine's OS colour preference. The solve page is the one exception
+   (see below); it POSTs a **committed corpus image**
+   (`corpus/001-count-kleuren.png`) through the real solve route, so the answer shown
+   (`2`, `tier0:count`) is a genuine offline solve rather than a synthesised string;
+4. writes the six PNGs here;
+5. stops the server, kills Firefox, terminates the OCR worker, closes the store and
+   deletes the temp directory — on success and on failure.
 
-The pages are fetched from the live loopback server and then rendered from the returned
-HTML because `firefox --screenshot` can only issue a `GET`, while the solve result only
-exists after a `POST`. The pages reference no external resource, so the render is the
-same as the live one.
+The pages are captured from their **live loopback URLs**, so the server's
+`Content-Security-Policy` header applies and the browser is the same one a user gets.
+This matters: an earlier version wrote the fetched HTML to a `file://` document with the
+thumbnails inlined as `data:` URLs, and a `file://` document carries no CSP header — so
+the capture bypassed the very policy that (before `img-src 'self'` was added) blocked
+the images. `scripts/screenshots.mjs` now waits for every `<img>` and **refuses to
+write a page whose images did not render** (`naturalWidth === 0`), so a future CSP
+regression fails the screenshot build instead of producing a flattering image.
+
+The solve page is the one page that cannot be captured from its live URL: its result
+only exists after a `POST`, and a browser navigation is a `GET`. The captured POST
+response — body **and** headers, CSP included — is replayed over loopback HTTP
+(`replay()`), so it is still a real HTTP document rather than a `file://` one. Every
+other page is the live URL. Firefox runs against a throwaway profile inside the temp
+directory, so no real browser profile or cookie store is touched.
 
 ## What is in the fixture (and what is not)
 

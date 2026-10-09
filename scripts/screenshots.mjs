@@ -8,11 +8,28 @@
  *
  *     npm run screenshots
  *
- * It needs a real browser because the UI is an HTML page. Firefox's native headless
- * screenshot (`firefox --headless --screenshot`) is used rather than Playwright or
- * Puppeteer, so no dependency is added. Firefox is not installed on a plain Windows
- * dev box or in CI, which is exactly why this is **not** part of `npm test` - the
- * offline suite stays credential-free, network-free and browser-free.
+ * It needs a real browser because the UI is an HTML page. Firefox is driven through
+ * its built-in WebDriver BiDi endpoint (`--remote-debugging-port`) using Node's
+ * built-in `WebSocket`, so no dependency is added and no external CDP client is
+ * needed. BiDi is used rather than `firefox --headless --screenshot` because the
+ * statistics page's thumbnails are `loading="lazy"`: the one-shot CLI captures at the
+ * load event, before a lazy image has painted, while BiDi lets this script wait until
+ * every image has loaded. Firefox is not installed on a plain Windows dev box or in
+ * CI, which is exactly why this is **not** part of `npm test` - the offline suite stays
+ * credential-free, network-free and browser-free.
+ *
+ * **The pages are captured from their live HTTP URLs** (#111). The previous version
+ * saved the fetched HTML to a `file://` document and inlined each thumbnail as a
+ * `data:` URL; a `file://` document carries no CSP header, so the render bypassed the
+ * Content-Security-Policy that (before #111) refused every image. A screenshot that
+ * bypasses the policy cannot catch a policy bug, and this one did not. Now the real
+ * server answers the browser, so the real CSP applies, and `capture()` refuses to
+ * write a page whose `<img>` elements did not actually render (`naturalWidth === 0`).
+ *
+ * The solve page is the one exception: its result only exists after a `POST`, and a
+ * browser can only navigate with `GET`. Its captured response - body *and* headers,
+ * CSP included - is replayed over loopback HTTP (`replay()`), so it is still a real
+ * HTTP document rather than a `file://` one. Every other page is the live URL.
  *
  * Everything it captures is a fixture:
  *
@@ -23,19 +40,15 @@
  *   - no secret is read, written or rendered (the settings editor is given no
  *     credential store at all, so every secret row shows "not set");
  *   - the solve page runs the *real* offline solver over a committed corpus image,
- *     so the answer shown is genuine rather than a synthesised string.
- *
- * The script fetches the real pages from a loopback server and screenshots the
- * returned HTML. That is deliberate: `firefox --screenshot` can only issue a GET,
- * and the solve result only exists after a POST, so the result markup is fetched by
- * this process (exactly what a browser would receive) and then rendered. No external
- * resource is referenced by the pages, so the file:// render is identical to the
- * live one.
+ *     so the answer shown is genuine rather than a synthesised string;
+ *   - Firefox runs against a throwaway profile inside the temp directory, so the
+ *     capture touches no real browser profile or cookie store.
  *
  * See `docs/screenshots/README.md` for how to use these and what to do when the UI
  * changes.
  */
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
+import { createServer as createHttpServer } from 'node:http';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -136,19 +149,76 @@ function seedHistory(store, setClock) {
   setClock(Math.floor(Date.now() / 1000));
 }
 
-/** Run Firefox's native headless screenshot. Absolute paths, no shell. */
-function screenshot(url, pngPath) {
-  const result = spawnSync(
-    'firefox',
-    ['--headless', '--screenshot', pngPath, `--window-size=${CAPTURE_WIDTH},${CAPTURE_HEIGHT}`, url],
-    { encoding: 'utf8' }
-  );
-  if (result.error) {
-    throw new Error(`could not run firefox (is it installed and on PATH?): ${result.error.message}`);
+/** An ephemeral loopback port, for Firefox's WebDriver BiDi endpoint. */
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const probe = createHttpServer();
+    probe.once('error', reject);
+    probe.listen(0, '127.0.0.1', () => {
+      const port = probe.address().port;
+      probe.close(() => resolve(port));
+    });
+  });
+}
+
+/**
+ * Replay one captured response over loopback HTTP with the exact headers the app sent
+ * (the CSP included). `firefox` can only navigate with GET, and the solve result only
+ * exists after a POST, so this is the one page that cannot come from its live URL.
+ */
+function replay(html, headers) {
+  const body = Buffer.from(html);
+  const server = createHttpServer((req, res) => {
+    res.writeHead(200, { ...headers, 'content-length': String(body.length) });
+    res.end(body);
+  });
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      const port = server.address().port;
+      resolve({ url: `http://127.0.0.1:${port}/`, close: () => new Promise((done) => server.close(done)) });
+    });
+  });
+}
+
+/** Connect to Firefox's BiDi WebSocket, retrying while the browser starts. */
+async function connectBidi(port, firefoxState) {
+  const endpoint = `ws://127.0.0.1:${port}/session`;
+  for (let attempt = 0; attempt < 50; attempt++) {
+    if (firefoxState.error) {
+      throw new Error(`could not run firefox (is it installed and on PATH?): ${firefoxState.error.message}`);
+    }
+    try {
+      const ws = new WebSocket(endpoint);
+      await new Promise((resolve, reject) => {
+        ws.addEventListener('open', resolve, { once: true });
+        ws.addEventListener('error', () => reject(new Error('the BiDi endpoint is not ready yet')), { once: true });
+      });
+      return ws;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
   }
-  if (result.status !== 0) {
-    throw new Error(`firefox exited ${result.status}: ${result.stderr || result.stdout}`);
-  }
+  throw new Error(`firefox did not open a WebDriver BiDi endpoint on ${endpoint}`);
+}
+
+/** A minimal BiDi request/response client over the WebSocket. */
+function bidiClient(ws) {
+  let nextId = 1;
+  const pending = new Map();
+  ws.addEventListener('message', (event) => {
+    const message = JSON.parse(event.data);
+    if (message.id == null || !pending.has(message.id)) return;
+    const { resolve, reject } = pending.get(message.id);
+    pending.delete(message.id);
+    if (message.type === 'error') reject(new Error(`${message.error}: ${message.message}`));
+    else resolve(message.result);
+  });
+  return (method, params = {}) =>
+    new Promise((resolve, reject) => {
+      const id = nextId++;
+      pending.set(id, { resolve, reject });
+      ws.send(JSON.stringify({ id, method, params }));
+    });
 }
 
 /**
@@ -182,8 +252,9 @@ async function main() {
 
   let worker = null;
   let server = null;
-  const rawFiles = [];
-  const written = [];
+  let firefox = null;
+  let bidi = null;
+  let replayServer = null;
   try {
     worker = await createOcrWorker();
     // #100: the fixture's stored review copies come from the committed corpus sample,
@@ -227,7 +298,7 @@ async function main() {
 
     // Pin the explicit light theme on the captured requests so the committed images do
     // not depend on the capture machine's OS colour preference. The dark variant is
-    // captured separately below, chosen with the same cookie the toggle sets.
+    // captured separately, chosen with the same cookie/param the toggle sets.
     const light = { headers: { cookie: 'theme=light' } };
 
     // Opening the launch URL both returns the settings page and opens the one-time
@@ -237,26 +308,22 @@ async function main() {
     if (settings.status !== 200) throw new Error(`settings page returned ${settings.status}: ${settingsHtml}`);
     const session = /name="session" value="([^"]+)"/.exec(settingsHtml)?.[1];
     if (!session) throw new Error('the settings page carried no session token');
+    const sessionParam = encodeURIComponent(session);
 
-    const stats = await fetch(`${base}/stats?session=${encodeURIComponent(session)}`, light);
+    // Validate each page server-side before pointing the browser at it. The browser
+    // capture below is the real check; these stop a 404 or an unexpected theme from
+    // being committed as a screenshot.
+    const stats = await fetch(`${base}/stats?session=${sessionParam}`, light);
     const statsHtml = await stats.text();
     if (stats.status !== 200) throw new Error(`statistics page returned ${stats.status}: ${statsHtml}`);
+    if (!/src="\/images\/\d+\?/.test(statsHtml)) {
+      throw new Error('the statistics page carried no thumbnail; refusing a screenshot without the image feature');
+    }
 
-    // The statistics page in dark, fetched before the solve below so the light and dark
-    // captures show the same recent list (the solve adds a row).
-    const statsDark = await fetch(`${base}/stats?session=${encodeURIComponent(session)}&theme=dark`);
+    const statsDark = await fetch(`${base}/stats?session=${sessionParam}&theme=dark`);
     const statsDarkHtml = await statsDark.text();
     if (statsDark.status !== 200) throw new Error(`dark statistics page returned ${statsDark.status}: ${statsDarkHtml}`);
     if (!/data-theme="dark"/.test(statsDarkHtml)) throw new Error('the dark statistics capture did not render dark');
-
-    // The solve page runs the real offline solver over the committed corpus sample.
-    const image = readFileSync(solveSample);
-    const form = new FormData();
-    form.append('image', new Blob([image], { type: 'image/png' }), '001-count-kleuren.png');
-    const solve = await fetch(`${base}/solve?session=${encodeURIComponent(session)}`, { method: 'POST', body: form, ...light });
-    const solveHtml = await solve.text();
-    if (solve.status !== 200) throw new Error(`solve page returned ${solve.status}: ${solveHtml}`);
-    if (!/Solved\./.test(solveHtml)) throw new Error('the committed corpus sample did not solve offline; refusing a misleading screenshot');
 
     // GET /login is always rendered, so the credential requirement is visible without
     // configuring a non-loopback bind.
@@ -264,47 +331,109 @@ async function main() {
     const loginHtml = await login.text();
     if (login.status !== 200) throw new Error(`login page returned ${login.status}: ${loginHtml}`);
 
-    // The same settings page with an explicit dark cookie, so the README can show both
-    // themes without a browser ever needing the OS preference.
-    const dark = await fetch(`${base}/?session=${encodeURIComponent(session)}&theme=dark`);
+    const dark = await fetch(`${base}/?session=${sessionParam}&theme=dark`);
     const darkHtml = await dark.text();
     if (dark.status !== 200) throw new Error(`dark settings page returned ${dark.status}: ${darkHtml}`);
     if (!/data-theme="dark"/.test(darkHtml)) throw new Error('the dark settings capture did not render dark');
 
-    // Firefox renders a `file://` page, where an absolute `/images/...` URL cannot
-    // resolve. Inline each thumbnail as a data URL (from the fixture's real bounded
-    // WebP, itself made from the committed corpus sample) so the committed screenshot
-    // shows the image rather than the alt text. The live route is unchanged and is
-    // what the route tests exercise.
-    const inlineThumbnails = (html) =>
-      html.replace(/src="\/images\/(\d+)\?[^"]*"/g, (match, id) => {
-        const path = imageStore.pathFor(Number(id));
-        return path ? `src="data:image/webp;base64,${readFileSync(path).toString('base64')}"` : match;
-      });
+    // Start Firefox against a throwaway profile, on a throwaway port, and drive it with
+    // BiDi so this script can wait for lazy images before capturing.
+    const bidiPort = await freePort();
+    const profileDir = join(fixtureDir, 'firefox-profile');
+    mkdirSync(profileDir, { recursive: true });
+    const firefoxState = { error: null };
+    firefox = spawn(
+      'firefox',
+      ['--headless', '--profile', profileDir, '--remote-debugging-port', String(bidiPort), `--window-size=${CAPTURE_WIDTH},${CAPTURE_HEIGHT}`, 'about:blank'],
+      { stdio: 'ignore' }
+    );
+    firefox.once('error', (error) => {
+      firefoxState.error = error;
+    });
+    const ws = await connectBidi(bidiPort, firefoxState);
+    bidi = bidiClient(ws);
+    await bidi('session.new', { capabilities: {} });
+    const { context } = await bidi('browsingContext.create', { type: 'tab' });
+    await bidi('browsingContext.setViewport', { context, viewport: { width: CAPTURE_WIDTH, height: CAPTURE_HEIGHT } });
 
-    // Render each captured page and screenshot it.
-    const pages = [
-      ['settings', settingsHtml, 'settings.png'],
-      ['settings-dark', darkHtml, 'settings-dark.png'],
-      ['statistics', inlineThumbnails(statsHtml), 'statistics.png'],
-      ['statistics-dark', inlineThumbnails(statsDarkHtml), 'statistics-dark.png'],
-      ['solve', solveHtml, 'solve.png'],
-      ['login', loginHtml, 'login.png'],
-    ];
-    for (const [name, html, file] of pages) {
-      const htmlPath = join(fixtureDir, `${name}.html`);
+    /**
+     * Navigate to `url`, wait until every `<img>` has loaded or errored, refuse a page
+     * whose images did not actually render, then screenshot the viewport. The refusal
+     * is the point: with the live URL, a CSP that blocks images now fails this script
+     * instead of being papered over by a `file://` render.
+     */
+    const capture = async (name, url) => {
+      await bidi('browsingContext.navigate', { context, url, wait: 'complete' });
+      const evaluated = await bidi('script.evaluate', {
+        expression:
+          'Promise.all(Array.from(document.images).map((img) => img.complete ? true : new Promise((resolve) => {' +
+          'img.addEventListener("load", () => resolve(true), { once: true });' +
+          'img.addEventListener("error", () => resolve(false), { once: true });' +
+          '}))).then(() => Array.from(document.images).map((img) => img.naturalWidth).join(","))',
+        target: { context },
+        awaitPromise: true,
+        resultOwnership: 'none',
+      });
+      const widths = String(evaluated?.result?.value ?? '');
+      const failed = widths === '' ? [] : widths.split(',').filter((width) => Number(width) === 0);
+      if (failed.length > 0) {
+        throw new Error(`${name}: ${failed.length} image(s) did not render (blocked by the CSP, or a 404); naturalWidth list: ${widths}`);
+      }
+      const { data } = await bidi('browsingContext.captureScreenshot', { context });
       const rawPath = join(fixtureDir, `${name}.raw.png`);
-      writeFileSync(htmlPath, html);
-      rawFiles.push(rawPath);
-      screenshot(`file://${htmlPath}`, rawPath);
+      writeFileSync(rawPath, Buffer.from(data, 'base64'));
+      return rawPath;
+    };
+
+    const written = [];
+    const shoot = async (name, url, file) => {
+      const rawPath = await capture(name, url);
       const info = await writeTrimmedPng(rawPath, join(outDir, file));
       written.push({ file, ...info });
-    }
+    };
+
+    // Capture the pages that must show only the seeded history *before* the solve below
+    // records its own row: the live statistics URL reflects the database at the moment
+    // the browser navigates, not when it was fetched for validation. Every route
+    // carries the session so it is admitted, and the theme so the capture does not
+    // depend on the browser's OS preference.
+    await shoot('settings', `${base}/?session=${sessionParam}&theme=light`, 'settings.png');
+    await shoot('settings-dark', `${base}/?session=${sessionParam}&theme=dark`, 'settings-dark.png');
+    await shoot('statistics', `${base}/stats?session=${sessionParam}&theme=light`, 'statistics.png');
+    await shoot('statistics-dark', `${base}/stats?session=${sessionParam}&theme=dark`, 'statistics-dark.png');
+
+    // The solve page runs the real offline solver over the committed corpus sample.
+    const image = readFileSync(solveSample);
+    const form = new FormData();
+    form.append('image', new Blob([image], { type: 'image/png' }), '001-count-kleuren.png');
+    const solve = await fetch(`${base}/solve?session=${sessionParam}`, { method: 'POST', body: form, ...light });
+    const solveHtml = await solve.text();
+    if (solve.status !== 200) throw new Error(`solve page returned ${solve.status}: ${solveHtml}`);
+    if (!/Solved\./.test(solveHtml)) throw new Error('the committed corpus sample did not solve offline; refusing a misleading screenshot');
+
+    // The solve result is a POST response, so it cannot be navigated to. Replay the
+    // exact body and headers (CSP included) over loopback HTTP.
+    replayServer = await replay(solveHtml, Object.fromEntries(solve.headers.entries()));
+    await shoot('solve', replayServer.url, 'solve.png');
+
+    // GET /login is always rendered, so the credential requirement is visible without
+    // configuring a non-loopback bind.
+    await shoot('login', `${base}/login?theme=light`, 'login.png');
+
+    await bidi('browsingContext.close', { context });
+    await bidi('session.end');
 
     for (const entry of written) {
       console.log(`wrote docs/screenshots/${entry.file} (${entry.width}x${entry.height}, ${Math.round(entry.bytes / 1024)} KiB)`);
     }
   } finally {
+    await replayServer?.close();
+    try {
+      await bidi?.('session.end');
+    } catch {
+      // The session may already be closed; the process is killed below either way.
+    }
+    firefox?.kill('SIGKILL');
     await server?.stop();
     await worker?.terminate();
     store.close();
