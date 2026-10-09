@@ -57,11 +57,6 @@ jobs:
       - name: Assemble the payload
         run: node packaging/build-payload.mjs
 
-      # SCRATCH: deliberate break to prove the smoke test fails the build.
-      - name: Break the packaged tree (scratch)
-        shell: pwsh
-        run: Remove-Item 'dist/payload/node_modules/@tesseract.js-data/nld/4.0.0/nld.traineddata.gz'
-
       - name: Zip the payload
         shell: pwsh
         run: |
