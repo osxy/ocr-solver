@@ -3,8 +3,14 @@
 A small Windows background app that watches Pushbullet for incoming puzzle images,
 reads the image, solves the puzzle, and answers back on Pushbullet.
 
-Status: **M1 complete** (offline solver + model reasoner tiers, 100 tests passing).
+Status: **M1 complete** (offline solver + model reasoner tiers, verified live).
 Decisions confirmed — see §13.
+
+**This document is the architecture reference.** It records what was decided and *why* — the
+measurements, the rejected alternatives, the traps — and deliberately stays readable as a whole.
+Individual work items are tracked separately in the
+[issue tracker](https://github.com/osxy/ocr-solver/issues), grouped into milestones. Where the two
+disagree, the issues say what is being *done* and this document says how it *fits together*.
 
 ---
 
@@ -612,18 +618,25 @@ been exercised against a real provider** (no API key was available while buildin
 
 ## 12. Extension points (v2+)
 
-- **Image-grid CAPTCHAs** ("select all bicycles"): grid splitter, vision model with grounding
-  output (`[[0,2,5]]`), and a click/applier backend. A different responder entirely — do not
-  fold into v1.
-- **Phone-side reply:** if a real threaded reply is ever needed, a `Tasker`/`Join` flow on the
-  phone can read our note push and inject the answer into the originating app. More robust than
-  any desktop automation, and it works where the API has no reply endpoint.
-- **Local model:** route the text tier to Ollama/Qwen for fully offline operation, including
-  the puzzle classes the lexicon does not cover.
-- **Playwright applier:** type the answer into the page instead of replying, if the puzzle
-  always appears in a browser.
-- **Bigger lexicon:** every category added converts another `unknown` puzzle into a free,
-  offline, deterministic Tier 0 solve.
+Deferred deliberately. Each is tracked as an issue under the
+[v2 milestone](https://github.com/osxy/ocr-solver/milestone/6); none is scheduled, because each
+needs a design decision before it becomes work.
+
+- **Image-grid CAPTCHAs** ("select all bicycles") — [issue #9](https://github.com/osxy/ocr-solver/issues/9):
+  grid splitter, vision model with grounding output (`[[0,2,5]]`), and a click/applier backend.
+  A different responder entirely — do not fold into v1.
+- **Phone-side reply** — [issue #10](https://github.com/osxy/ocr-solver/issues/10): if a real
+  threaded reply is ever needed, a `Tasker`/`Join` flow on the phone can read our note push and
+  inject the answer into the originating app. More robust than any desktop automation, and it
+  works where the API has no reply endpoint.
+- **Local model** — [issue #11](https://github.com/osxy/ocr-solver/issues/11): route the text tier
+  to Ollama/vLLM for fully offline operation, including the puzzle classes the lexicon does not
+  cover.
+- **Playwright applier** — [issue #12](https://github.com/osxy/ocr-solver/issues/12): type the
+  answer into the page instead of replying, if the puzzle always appears in a browser.
+- **Bigger lexicon** — folded into [M4 / issue #5](https://github.com/osxy/ocr-solver/issues/5):
+  every category added converts another `unknown` puzzle into a free, offline, deterministic
+  Tier 0 solve.
 
 ## 13. Decisions
 
@@ -650,13 +663,18 @@ Decisions taken during M1:
 
 ## 14. Milestones
 
+Design intent below; **live status lives in the
+[milestone tracker](https://github.com/osxy/ocr-solver/milestones)**. M0 and M1 are closed as
+delivered, so this table is now historical for those two.
+
 | M | Deliverable | Status |
 |---|---|---|
-| **M0** | Offline core: preprocess + OCR + repair + lexicon/Tier 0 + validator + CLI | **✅ done** — 3/3 corpus puzzles correct and confident |
-| **M1** | Model reasoner: text tier, vision escalation, self-consistency, `attempts` logging | **✅ done** — 100 tests passing; model tiers verified against a scripted client, **not yet against a live provider** |
-| **M2** | Pushbullet listener, fetcher, sqlite state, note-push responder, config + secrets | |
-| **M3** | Windows packaging: tray, headless mode, autostart, rotating logs | |
-| **M4** | Corpus growth + accuracy reporting | |
+| **M0** | Offline core: preprocess + OCR + repair + lexicon/Tier 0 + validator + CLI | **✅ done** — [milestone](https://github.com/osxy/ocr-solver/milestone/1) · [issue #1](https://github.com/osxy/ocr-solver/issues/1) |
+| **M1** | Model reasoner: text tier, vision escalation, self-consistency, `attempts` logging | **✅ done** — [milestone](https://github.com/osxy/ocr-solver/milestone/2) · [issue #2](https://github.com/osxy/ocr-solver/issues/2) |
+| **M2** | Pushbullet listener, fetcher, sqlite state, note-push responder, config + secrets | [milestone](https://github.com/osxy/ocr-solver/milestone/3) · [#3](https://github.com/osxy/ocr-solver/issues/3) listener/responder · [#6](https://github.com/osxy/ocr-solver/issues/6) test infra · [#7](https://github.com/osxy/ocr-solver/issues/7) circuit breaker · [#8](https://github.com/osxy/ocr-solver/issues/8) security pass |
+| **M3** | Windows packaging: tray, headless mode, autostart, rotating logs | [milestone](https://github.com/osxy/ocr-solver/milestone/4) · [#4](https://github.com/osxy/ocr-solver/issues/4) |
+| **M4** | Corpus growth + accuracy reporting | [milestone](https://github.com/osxy/ocr-solver/milestone/5) · [#5](https://github.com/osxy/ocr-solver/issues/5) |
+| **v2** | Deferred extension points (§12), each needing a design decision first | [milestone](https://github.com/osxy/ocr-solver/milestone/6) · [#9](https://github.com/osxy/ocr-solver/issues/9) grids · [#10](https://github.com/osxy/ocr-solver/issues/10) phone delivery · [#11](https://github.com/osxy/ocr-solver/issues/11) local model · [#12](https://github.com/osxy/ocr-solver/issues/12) Playwright |
 
 ### M0 results
 
