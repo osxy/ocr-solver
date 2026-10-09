@@ -44,6 +44,8 @@ export function createSolveCore({
       logger,
       useTier0: config.solver.tier0,
       logImages,
+      // Defence in depth behind the image gate (see `preprocess.extractMask`).
+      maxPixels: config.image?.max_pixels ?? null,
     });
   }
 

@@ -17,6 +17,7 @@ import sharp from 'sharp';
 import { startFakePushbullet } from './fake-pushbullet.js';
 import { createOcrWorker } from '../src/ocr/recognize.js';
 import { solveImage } from '../src/solver/pipeline.js';
+import { buildVariants } from '../src/imaging/preprocess.js';
 import { memoryStore, openStore } from '../src/state/db.js';
 import {
   createPushbulletClient,
@@ -911,6 +912,43 @@ test('the fetcher rejects bad magic, undecodable bytes, oversize and implausible
   assert.equal(image.width, 200);
   assert.equal(image.height, 44);
   assert.equal(image.bytes, (await makePng()).length);
+});
+
+test('the fetcher rejects a small file with an absurd pixel count or width', async (t) => {
+  const fake = await startFakePushbullet();
+  t.after(async () => {
+    await fake.close();
+  });
+
+  // 2000x2000 = 4,000,000 pixels in ~16 KB: inside the byte cap, over the default
+  // 1,000,000 pixel cap. Before issue #41 it was accepted and handed to
+  // `buildVariants`, where it cost tens of seconds and hundreds of MB.
+  const bomb = fake.pushImage({ data: await makePng({ width: 2000, height: 2000 }), fileType: 'image/png' });
+  const started = performance.now();
+  await assert.rejects(
+    () => downloadImage(bomb.file_url),
+    (err) => err instanceof ImageFetchError && err.reason === 'pixels'
+  );
+  assert.ok(performance.now() - started < 2000, 'rejection must not decode the pixels');
+
+  // 3000px wide and 100px tall: 300,000 pixels is under the pixel cap, so only the
+  // width cap can stop it.
+  const wide = fake.pushImage({ data: await makePng({ width: 3000, height: 100 }), fileType: 'image/png' });
+  await assert.rejects(
+    () => downloadImage(wide.file_url),
+    (err) => err instanceof ImageFetchError && err.reason === 'width'
+  );
+});
+
+test('the preprocessing layer refuses a pixel bomb that skipped the gate', async () => {
+  // Second layer: `limitInputPixels` is threaded from `image.max_pixels`. This is the
+  // same 4 Mpx file the gate rejects, handed straight to `buildVariants` as if an
+  // ingress had forgotten to validate it.
+  const bomb = await makePng({ width: 2000, height: 2000 });
+  await assert.rejects(
+    () => buildVariants(bomb, ['adaptive_25_020'], { limitInputPixels: 1_000_000 }),
+    /pixel limit/i
+  );
 });
 
 test('fetchImage stores the file under the inbox with a magic-derived extension', async (t) => {

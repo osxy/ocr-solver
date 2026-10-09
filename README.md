@@ -99,6 +99,9 @@ max_per_hour = 20
 [storage]
 retain_days = 7
 log_images = false              # opt-in reference to an UNRESOLVED image only
+[image]
+max_width = 2000                # the shared gate rejects wider images as a 413
+max_pixels = 1000000            # ~14x the largest corpus puzzle; bounds buildVariants
 [http]
 enabled = false                 # an HTTP endpoint that solves captchas is an oracle
 bind = "127.0.0.1"             # never 0.0.0.0 unless you mean it; it warns if you do

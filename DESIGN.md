@@ -455,6 +455,10 @@ max_per_hour = 20
 retain_days = 7
 log_images = false               # opt-in: a file reference for UNRESOLVED puzzles only
 
+[image]
+max_width = 2000                 # gate: wider images are a 413
+max_pixels = 1000000             # gate: more decoded pixels are a 413
+
 [ui]
 tray = true
 notify_on_unresolved = true
@@ -799,15 +803,36 @@ execution:
 | Bind `127.0.0.1` by default; loud warning otherwise | reachability from the network | `config.http.bind`, `createHttpServer.start` |
 | Mandatory `Authorization: Bearer`, compared with `timingSafeEqual` | anonymous use, token guessing | `tokenMatches` |
 | Streaming body cap (default 5 MiB) | memory exhaustion | `readBodyCapped` |
-| Shared magic-byte/decode/height gate | a body that is not a real image | `validateImageBuffer` |
+| Shared magic-byte/decode/width/pixel gate | a body that is not a real image, or a tiny file that decodes to a pixel bomb | `validateImageBuffer` |
 | Fixed-window rate limit | credit burn from a loop | `createRateLimiter` |
 | `http.timeout_ms` -> `504` | a stuck solve holding a request open | `withTimeout` |
 
 The token is resolved through the existing `src/secrets.js` provider interface as a fourth
 secret (`HTTP_AUTH_TOKEN` / `http_auth_token`), not a second mechanism. The response never
 echoes the image, a key or an upstream error body: image errors are reported by reason tag
-(`magic`/`decode`/`height`/`size`), and an unexpected error is a generic `500` with a random
-id while the redacted detail goes to the log.
+(`magic`/`decode`/`height`/`width`/`pixels`/`size`), and an unexpected error is a generic
+`500` with a random id while the redacted detail goes to the log.
+
+**Pixel-bomb caps (issue #41).** The shared gate reads `sharp` metadata and rejects on
+`width` or `width*height` before any pixel is decoded (`extractMask` also passes the same
+limit to `limitInputPixels`, so a future ingress that skips the gate still cannot decode
+one). The caps were chosen by measuring `buildVariants` (all three default variants) on a
+compressible white PNG, the cheapest file per pixel:
+
+| decoded input | pixels | `buildVariants` | peak RSS |
+|---|---|---|---|
+| 1000x1000 (at the cap) | 1.00 Mpx | 2.1 s | 155 MB |
+| 1500x1500 | 2.25 Mpx | 4.7 s | 192 MB |
+| 2000x2000 | 4.0 Mpx | 9.6 s | 236 MB |
+| 3000x3000 | 9.0 Mpx | 17.7 s | 361 MB |
+| 6000x6000 (the report) | 36 Mpx | ~70 s | ~873 MB |
+
+The largest real corpus image is 820x90 = 73,800 px, so `max_pixels = 1000000` leaves
+~14x headroom and keeps the worst admitted image inside the same few-second envelope as a
+normal solve. `max_width = 2000` (~2.4x the widest corpus image) catches the wide-and-short
+case the pixel cap alone would allow; a 3000x100 image is 0.3 Mpx but is still a 413.
+`sharp`'s own default `limitInputPixels` is ~268 Mpx - above even the reported 36 Mpx case -
+so it is raised only as a second layer, never as the defence.
 
 **Known residual (documented, not fixed).** A JSON body may name `image_url`, which makes the
 server fetch a URL. The scheme is restricted to `http`/`https`, and the caller is already

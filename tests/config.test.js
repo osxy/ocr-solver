@@ -201,6 +201,28 @@ test('a config may tune the breaker and turn image logging on', () => {
   assert.equal(config.storage.log_images, true);
 });
 
+test('the image gate limits are configurable and validated by name', () => {
+  const { config } = validateConfig({});
+  assert.deepEqual(config.image, { max_width: 2000, max_pixels: 1_000_000 });
+
+  const tuned = validateConfig({ image: { max_width: 4096, max_pixels: 4_000_000 } }).config;
+  assert.equal(tuned.image.max_width, 4096);
+  assert.equal(tuned.image.max_pixels, 4_000_000);
+
+  assert.throws(
+    () => validateConfig({ image: { max_width: 0 } }),
+    (err) => err instanceof ConfigError && /image\.max_width/.test(err.message)
+  );
+  assert.throws(
+    () => validateConfig({ image: { max_pixels: -1 } }),
+    (err) => err instanceof ConfigError && /image\.max_pixels/.test(err.message)
+  );
+  assert.throws(
+    () => validateConfig({ image: { max_pixels: 1.5 } }),
+    (err) => err instanceof ConfigError && /image\.max_pixels/.test(err.message)
+  );
+});
+
 test('DEFAULTS is not mutated by a loaded config', () => {
   const loaded = loadConfig({ explicitPath: '/definitely/not/here.toml', env: {}, platform: 'linux', homedir: home });
   loaded.config.reply.title = 'Changed';

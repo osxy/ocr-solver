@@ -220,9 +220,15 @@ export async function extractMask(input, opts = {}) {
     despecklePasses = 1,
     closing = 0,
     dilate = 0,
+    // Second layer behind the image gate: `sharp` refuses to decode an input above
+    // this, so a caller that skipped `validateImageBuffer` still cannot hand the
+    // pipeline a pixel bomb. The gate rejects first with a precise reason; this only
+    // ever fires if the gate was bypassed.
+    limitInputPixels = null,
   } = opts;
 
-  const { data, info } = await sharp(input)
+  const sharpOptions = limitInputPixels != null ? { limitInputPixels } : {};
+  const { data, info } = await sharp(input, sharpOptions)
     .flatten({ background: '#ffffff' })
     .removeAlpha()
     .raw()
@@ -256,12 +262,12 @@ export async function renderMask(mask, width, height, scale = 4, border = 8) {
 }
 
 /** Build every named preprocessing variant for one image. */
-export async function buildVariants(input, names = DEFAULT_VARIANTS) {
+export async function buildVariants(input, names = DEFAULT_VARIANTS, { limitInputPixels = null } = {}) {
   const out = [];
   for (const name of names) {
     const preset = VARIANTS[name];
     if (!preset) throw new Error(`unknown preprocessing variant: ${name}`);
-    const { mask, width, height } = await extractMask(input, preset);
+    const { mask, width, height } = await extractMask(input, { ...preset, limitInputPixels });
     const buffer = await renderMask(mask, width, height, preset.scale);
     out.push({ name, buffer, width, height });
   }

@@ -24,6 +24,8 @@ import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import {
   DEFAULT_MIN_HEIGHT,
   DEFAULT_MAX_HEIGHT,
+  DEFAULT_MAX_PIXELS,
+  DEFAULT_MAX_WIDTH,
   ImageFetchError,
   downloadImage,
   validateImageBuffer,
@@ -62,6 +64,8 @@ export class SolveTimeoutError extends Error {
 export function imageErrorStatus(err) {
   switch (err?.reason) {
     case 'size':
+    case 'width':
+    case 'pixels':
       return 413;
     case 'http':
       return 502;
@@ -199,7 +203,7 @@ async function classifyRequest(req, body) {
 }
 
 /** Resolve the parsed request to a validated image (bytes + ext) and the requested egress. */
-async function resolveImage(parsed, { inboxDir, maxBodyBytes, fetchImpl }) {
+async function resolveImage(parsed, { inboxDir, maxBodyBytes, fetchImpl, imageLimits }) {
   const saveValidated = (validated) => {
     const iden = `http-${createHash('sha256').update(validated.buffer).digest('hex').slice(0, 32)}`;
     const path = saveImage(validated.buffer, { inboxDir, iden, ext: validated.ext });
@@ -209,29 +213,16 @@ async function resolveImage(parsed, { inboxDir, maxBodyBytes, fetchImpl }) {
   if (parsed.kind === 'json') {
     if (typeof parsed.json.image_base64 === 'string') {
       const bytes = decodeBase64Image(parsed.json.image_base64);
-      return saveValidated(
-        await validateImageBuffer(bytes, { maxBytes: maxBodyBytes, minHeight: DEFAULT_MIN_HEIGHT, maxHeight: DEFAULT_MAX_HEIGHT })
-      );
+      return saveValidated(await validateImageBuffer(bytes, { maxBytes: maxBodyBytes, ...imageLimits }));
     }
     if (typeof parsed.json.image_url === 'string') {
       const url = assertHttpUrl(parsed.json.image_url);
-      const image = await downloadImage(url, {
-        fetchImpl,
-        maxBytes: maxBodyBytes,
-        minHeight: DEFAULT_MIN_HEIGHT,
-        maxHeight: DEFAULT_MAX_HEIGHT,
-      });
+      const image = await downloadImage(url, { fetchImpl, maxBytes: maxBodyBytes, ...imageLimits });
       return saveValidated(image);
     }
     throw new HttpError(400, 'missing_image', 'provide image_base64 or image_url');
   }
-  return saveValidated(
-    await validateImageBuffer(parsed.buffer, {
-      maxBytes: maxBodyBytes,
-      minHeight: DEFAULT_MIN_HEIGHT,
-      maxHeight: DEFAULT_MAX_HEIGHT,
-    })
-  );
+  return saveValidated(await validateImageBuffer(parsed.buffer, { maxBytes: maxBodyBytes, ...imageLimits }));
 }
 
 /** Serialise one pipeline result. `answer` is null when unresolved - never a guess. */
@@ -335,6 +326,15 @@ export function createHttpServer({
   if (!token) throw new Error('createHttpServer needs a bearer token; there is no anonymous mode');
 
   const http = config.http;
+  // The gate's limits come from config where they are configurable, and from the
+  // shared defaults otherwise. `maxBytes` is the HTTP body cap; the push path keeps
+  // its own byte default in `downloadImage`.
+  const imageLimits = {
+    minHeight: DEFAULT_MIN_HEIGHT,
+    maxHeight: DEFAULT_MAX_HEIGHT,
+    maxWidth: config.image?.max_width ?? DEFAULT_MAX_WIDTH,
+    maxPixels: config.image?.max_pixels ?? DEFAULT_MAX_PIXELS,
+  };
   const modelNames = { text: config.solver?.llm_text_model ?? null, vision: config.solver?.llm_vision_model ?? null };
   // The acknowledgement a human would receive for an unresolved puzzle. It is reported
   // even when nothing is delivered, so a caller can relay the same wording.
@@ -424,6 +424,7 @@ export function createHttpServer({
         inboxDir,
         maxBodyBytes: http.max_body_bytes,
         fetchImpl,
+        imageLimits,
       });
 
       const deliver = parsed.deliver ?? (url.searchParams.get('deliver') || null);

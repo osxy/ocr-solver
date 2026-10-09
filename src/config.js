@@ -23,6 +23,7 @@ import { homedir as osHomedir } from 'node:os';
 import { join } from 'node:path';
 import { parse as parseToml } from 'smol-toml';
 import { VARIANTS } from './imaging/preprocess.js';
+import { DEFAULT_MAX_PIXELS, DEFAULT_MAX_WIDTH } from './imaging/limits.js';
 import { HISTORY_MODES } from './pushbullet/listener.js';
 import { STRATEGIES, DEFAULT_UNRESOLVED_TITLE, DEFAULT_UNRESOLVED_TEXT } from './pushbullet/respond.js';
 import {
@@ -99,6 +100,14 @@ export const DEFAULTS = {
   ui: {
     tray: true,
     notify_on_unresolved: true,
+  },
+  // The shared image gate. Both ingresses run it, so its limits are neither
+  // Pushbullet-only nor HTTP-only. Byte size and height keep their existing defaults
+  // (`files.js`); width and total pixels are the new guard against a tiny file that
+  // decodes to an enormous bitmap. Chosen by measurement (DESIGN 8).
+  image: {
+    max_width: DEFAULT_MAX_WIDTH,
+    max_pixels: DEFAULT_MAX_PIXELS,
   },
   // HTTP ingress (#15). Off by default: an endpoint that solves CAPTCHAs is an
   // oracle, so enabling it is a deliberate act with a bearer token attached.
@@ -310,6 +319,9 @@ export function validateConfig(raw = {}) {
 
   requireBoolean(config, 'ui', 'tray');
   requireBoolean(config, 'ui', 'notify_on_unresolved');
+
+  requireNumber(config, 'image', 'max_width', { min: 1, integer: true });
+  requireNumber(config, 'image', 'max_pixels', { min: 1, integer: true });
 
   requireBoolean(config, 'http', 'enabled');
   requireString(config, 'http', 'bind');
