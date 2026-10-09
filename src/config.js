@@ -27,6 +27,14 @@ import { DEFAULT_MAX_PIXELS, DEFAULT_MAX_WIDTH } from './imaging/limits.js';
 import { HISTORY_MODES } from './pushbullet/listener.js';
 import { STRATEGIES, DEFAULT_UNRESOLVED_TITLE, DEFAULT_UNRESOLVED_TEXT } from './pushbullet/respond.js';
 import {
+  WEB_UI_CREDENTIAL_SETTING,
+  isCatchAllCidr,
+  isLoopbackAddress,
+  normalizeHostEntry,
+  parseCidr,
+  webUiAdmitsNonLoopback,
+} from './ui/access.js';
+import {
   DEFAULT_ALLOW_IMAGE_URL,
   DEFAULT_HTTP_BIND,
   DEFAULT_HTTP_PORT,
@@ -116,6 +124,21 @@ export const DEFAULTS = {
   image: {
     max_width: DEFAULT_MAX_WIDTH,
     max_pixels: DEFAULT_MAX_PIXELS,
+  },
+  // The configuration/solve web UI (#56, #65). Loopback-only and not configurable
+  // until #65; now a configured CIDR list can widen it. An empty `allowed_cidrs`
+  // means loopback only, so the default does not change. A non-loopback range is an
+  // explicit act and additionally requires a credential in the credential store, or
+  // the app refuses to start rather than expose an unauthenticated oracle.
+  web_ui: {
+    bind: '127.0.0.1',
+    // Loopback is always admitted; these are added on top of it. `0.0.0.0/0` and
+    // `::/0` are refused at load (see `requireCidrList`).
+    allowed_cidrs: [],
+    // Extra Host-header names accepted when the bind is non-loopback or a hostname
+    // is used to reach it (a LAN name or a reverse-proxy vhost). Default deny; the
+    // bound address and the loopback names are always accepted.
+    allowed_hosts: [],
   },
   // HTTP ingress (#15). Off by default: an endpoint that solves CAPTCHAs is an
   // oracle, so enabling it is a deliberate act with a bearer token attached.
@@ -279,6 +302,32 @@ function requireHostList(config, section, key) {
   }
 }
 
+/**
+ * One CIDR range per entry, with the catch-all refused.
+ *
+ * `0.0.0.0/0` and `::/0` are not a mistake to accept: a UI that writes secrets and
+ * spends provider credits, reachable from every address, has no legitimate use. The
+ * error names the alternative - a reverse proxy - so the operator is not left to
+ * discover it. The network address is what is stored (host bits masked).
+ */
+function requireCidrList(config, section, key) {
+  requireStringArray(config, section, key);
+  for (const entry of config[section][key]) {
+    const cidr = parseCidr(entry);
+    if (!cidr) {
+      throw new ConfigError(
+        `${section}.${key} entry ${JSON.stringify(entry)} is not a CIDR range like "192.168.1.0/24" or "fd00::/8"`
+      );
+    }
+    if (isCatchAllCidr(cidr)) {
+      throw new ConfigError(
+        `${section}.${key} entry ${JSON.stringify(entry)} is a catch-all and would open the web UI to every address; ` +
+          'refuse it and put the UI behind an authenticated TLS reverse proxy if it must be reachable from everywhere'
+      );
+    }
+  }
+}
+
 function requireVariants(config, section, key) {
   const value = config[section][key];
   requireStringArray(config, section, key, { nonEmpty: true });
@@ -347,6 +396,12 @@ export function validateConfig(raw = {}) {
   requireBoolean(config, 'ui', 'tray');
   requireBoolean(config, 'ui', 'notify_on_unresolved');
 
+  requireString(config, 'web_ui', 'bind');
+  const bindProblem = imageUrlHostProblem(config.web_ui.bind);
+  if (bindProblem) throw new ConfigError(`web_ui.bind ${bindProblem}`);
+  requireCidrList(config, 'web_ui', 'allowed_cidrs');
+  requireHostList(config, 'web_ui', 'allowed_hosts');
+
   requireNumber(config, 'image', 'max_width', { min: 1, integer: true });
   requireNumber(config, 'image', 'max_pixels', { min: 1, integer: true });
 
@@ -359,6 +414,25 @@ export function validateConfig(raw = {}) {
   requireNumber(config, 'http', 'max_queue', { min: 1, integer: true });
   requireBoolean(config, 'http', 'allow_image_url');
   requireHostList(config, 'http', 'image_url_hosts');
+
+  // Loud, at load, whenever the web UI is wider than loopback. The credential check
+  // is a runtime one (the credential store is not available here) and lives in
+  // `assertWebUiAccessIsConfigured`, but the operator should see the consequence at
+  // the same moment the range is loaded.
+  const bindName = normalizeHostEntry(config.web_ui.bind);
+  const bindIsLoopback = bindName === 'localhost' || isLoopbackAddress(bindName);
+  if (webUiAdmitsNonLoopback(config.web_ui)) {
+    warnings.push(
+      'web_ui.allowed_cidrs admits addresses beyond loopback; the web UI can write the config and solve images, ' +
+        `and a non-loopback range requires a configured ${WEB_UI_CREDENTIAL_SETTING} credential or startup is refused`
+    );
+  }
+  if (!bindIsLoopback) {
+    warnings.push(
+      `web_ui.bind=${config.web_ui.bind} listens beyond this machine. Prefer 127.0.0.1; ` +
+        'this UI is plain HTTP, so a password on an untrusted network is cleartext - use a TLS reverse proxy there.'
+    );
+  }
 
   return { config, warnings };
 }

@@ -55,6 +55,23 @@ export function createSolveCore({
   // existing queue shape. Unbounded on purpose - the bound is per-ingress admission
   // control (#43): a Pushbullet push is not retried by a buggy loop and must not be
   // dropped, so the shared lock never refuses work on its own.
+  //
+  // `acquireSlot`/`releaseSlot` are the admission side of that bound. They live here
+  // (issue #65) so the HTTP ingress and the web UI solve page meter the *same*
+  // counter rather than each holding their own: both are user-triggered and both
+  // spend provider credits, so a burst against either must be refused once the
+  // combined backlog reaches `http.max_queue`. A push or the tray does not use them.
+  const maxQueue =
+    Number.isInteger(config.http?.max_queue) && config.http.max_queue > 0 ? config.http.max_queue : Infinity;
+  let inflight = 0;
+  function acquireSlot() {
+    if (inflight >= maxQueue) return false;
+    inflight += 1;
+    return true;
+  }
+  function releaseSlot() {
+    inflight = Math.max(0, inflight - 1);
+  }
   let lock = Promise.resolve();
   function withSolveLock(task) {
     const run = lock.then(task, task);
@@ -99,5 +116,15 @@ export function createSolveCore({
     });
   }
 
-  return { solve };
+  return {
+    solve,
+    acquireSlot,
+    releaseSlot,
+    get queueSize() {
+      return inflight;
+    },
+    get maxQueue() {
+      return maxQueue;
+    },
+  };
 }

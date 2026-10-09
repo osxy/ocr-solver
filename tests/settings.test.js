@@ -17,6 +17,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { ConfigError, loadConfig, validateConfig } from '../src/config.js';
+import { verifyWebUiPassword } from '../src/ui/access.js';
 import {
   SETTINGS,
   SettingValueError,
@@ -445,6 +446,17 @@ test('the editor Test connection reuses the setup probe seam', async (t) => {
 // ---------------------------------------------------------------------------
 // Live versus restart
 // ---------------------------------------------------------------------------
+
+test('the web UI password is hashed to a scrypt verifier before it is stored (#65)', async (t) => {
+  const { editor, secretsWrites, path } = makeEditor(t);
+  editor.set('web_ui.password', 'hunter2');
+  await editor.save();
+  const stored = secretsWrites[0].web_ui;
+  assert.match(stored, /^scrypt\$\d+\$\d+\$\d+\$[A-Za-z0-9_-]+\$[A-Za-z0-9_-]+$/);
+  assert.equal(stored.includes('hunter2'), false, 'the password itself is never stored');
+  assert.equal(verifyWebUiPassword('hunter2', stored), true);
+  assert.equal(existsSync(path), false, 'a credential save does not create config.toml');
+});
 
 test('only settings the running process re-reads are marked live', () => {
   const live = SETTINGS.filter((s) => s.restart === false).map((s) => s.id).sort();

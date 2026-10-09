@@ -39,6 +39,7 @@ import { resolveTrayMode } from './ui/mode.js';
 import { createSetup } from './ui/setup.js';
 import { applyLiveSettings, createSettingsEditor } from './ui/settings.js';
 import { defaultWebSettingsDialog, defaultWebSetupDialog } from './ui/web-config.js';
+import { WEB_UI_CREDENTIAL_SETTING, webUiAdmitsNonLoopback } from './ui/access.js';
 import { storeReport, loadReportCache, defaultAccuracyCachePath } from './accuracy.js';
 
 /**
@@ -81,6 +82,18 @@ export class WeakHttpTokenError extends Error {
   constructor(message) {
     super(message);
     this.name = 'WeakHttpTokenError';
+  }
+}
+
+/**
+ * The web UI is configured to admit non-loopback addresses but has no credential
+ * (#65). Refusing to start is the point: an unauthenticated UI that writes secrets
+ * and spends provider credits must not come up just because a range was typed.
+ */
+export class MissingWebUiCredentialError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'MissingWebUiCredentialError';
   }
 }
 
@@ -272,7 +285,16 @@ export async function createApp({
       });
       let outcome;
       try {
-        outcome = await setupDialog({ setup, logger, credentialPath, openBrowser });
+        // Even the first-run UI is gated by the same access rule; a widened web_ui
+        // with no credential is refused before this point.
+        outcome = await setupDialog({
+          setup,
+          logger,
+          credentialPath,
+          openBrowser,
+          webUi: config.web_ui,
+          credentialVerifier: secrets.web_ui?.value ?? null,
+        });
       } catch (err) {
         if (ownsStore) store.close();
         throw new SetupFailedError(`the first-run setup dialog failed: ${err?.message ?? err}`);
@@ -329,6 +351,20 @@ export async function createApp({
           'and set HTTP_AUTH_TOKEN (or the http_auth_token credential).'
       );
     }
+  }
+
+  // The web UI may be widened to a non-loopback range; #65 requires a configured
+  // credential for that. The credential store is not consulted by `validateConfig`,
+  // so the check happens here, where both the range and the resolved verifier exist.
+  let webUiCredential = secrets.web_ui?.value ?? null;
+  if (webUiAdmitsNonLoopback(config.web_ui) && !webUiCredential) {
+    if (ownsStore) store.close();
+    throw new MissingWebUiCredentialError(
+      'web_ui.allowed_cidrs admits addresses beyond loopback but no web UI credential is configured. ' +
+        `Run \`node src/cli.js config set ${WEB_UI_CREDENTIAL_SETTING} <password>\`, or set the ` +
+        '"web_ui_password_hash" entry in the credential store. The service refuses to start rather than ' +
+        'expose the config and solve UI without authentication.'
+    );
   }
 
   // A Pushbullet client only exists when there is a token (or a test injected one).
@@ -579,6 +615,12 @@ export async function createApp({
         secrets,
         logger,
         openBrowser,
+        // #65: the solve page solves through the same core and against the same caps
+        // as the HTTP ingress, and the access/credential options gate every page.
+        solveCore: core,
+        inboxDir: effectiveInbox,
+        webUi: config.web_ui,
+        credentialVerifier: webUiCredential,
       });
       if (outcome?.saved && outcome.config) {
         outcome.liveApplied = applyLiveSettings(config, outcome.config, outcome.changed ?? []);
@@ -588,6 +630,8 @@ export async function createApp({
         // first-run setup does. Trusting the editor's "saved" flag would let a broken
         // credential store look configured.
         secrets = await loadSecrets({ explicit: explicitSecrets, env, providers, platform, homedir, logger });
+        // A password set in this very session must be visible to the next open.
+        webUiCredential = secrets.web_ui?.value ?? null;
       }
       return outcome;
     },

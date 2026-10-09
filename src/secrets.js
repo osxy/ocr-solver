@@ -29,6 +29,11 @@ export const SECRET_ENV = {
   // Bearer token for the HTTP ingress (#15). A distinct secret from the Pushbullet
   // token: the two credentials guard different listeners and can be rotated apart.
   http: 'HTTP_AUTH_TOKEN',
+  // The web UI remote-access credential (#65). Unlike the others this is *not* a
+  // usable secret: the stored value is a scrypt verifier (salt + hash), and what a
+  // login submits is checked against it. It still lives here because the credential
+  // store is the only write path for secrets, and `config.toml` refuses the name.
+  web_ui: 'WEB_UI_PASSWORD_HASH',
 };
 
 /** Key names inside the file credential store. */
@@ -36,6 +41,7 @@ export const FILE_SECRET_KEYS = {
   pushbullet: 'pushbullet_token',
   llm: 'llm_api_key',
   http: 'http_auth_token',
+  web_ui: 'web_ui_password_hash',
 };
 
 export const SECRET_NAMES = Object.keys(SECRET_ENV);

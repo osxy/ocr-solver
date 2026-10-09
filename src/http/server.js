@@ -33,6 +33,7 @@ import {
   saveImage,
 } from '../pushbullet/files.js';
 import { redactRecord } from '../redact.js';
+import { createAuthThrottle, createRateLimiter, DEFAULT_AUTH_FAILURE_LIMIT } from './throttle.js';
 import {
   DEFAULT_HTTP_BIND,
   DEFAULT_HTTP_PORT,
@@ -45,8 +46,9 @@ import {
 } from './defaults.js';
 
 // Re-exported so `server.js` remains the single import site for the HTTP ingress's
-// public surface; the implementation lives in the leaf `defaults` module so the
-// settings editor can validate a token without importing the image gate.
+// public surface; the implementations live in leaf modules so the settings editor and
+// the web UI can reuse them without importing the image gate.
+export { createAuthThrottle, createRateLimiter, DEFAULT_AUTH_FAILURE_LIMIT } from './throttle.js';
 export {
   DEFAULT_HTTP_BIND,
   DEFAULT_HTTP_PORT,
@@ -143,8 +145,8 @@ export function tokenMatches(expected, header) {
   return timingSafeEqual(provided, wanted);
 }
 
-/** Read the request body, refusing to buffer past the cap. */
-function readBodyCapped(req, maxBytes) {
+/** Read the request body, refusing to buffer past the cap. Shared with the web UI. */
+export function readBodyCapped(req, maxBytes) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0;
@@ -261,7 +263,7 @@ export function assertImageUrlAllowed(url, { enabled = false, hosts = [] } = {})
 }
 
 /** Parse the request into a description the resolver can act on, without touching bytes yet. */
-async function classifyRequest(req, body) {
+export async function classifyRequest(req, body) {
   const contentType = String(req.headers['content-type'] ?? '').toLowerCase();
   if (contentType.startsWith('multipart/form-data')) {
     const file = await firstFormFile(contentType, body);
@@ -294,7 +296,7 @@ async function classifyRequest(req, body) {
 }
 
 /** Resolve the parsed request to a validated image (bytes + ext) and the requested egress. */
-async function resolveImage(parsed, { inboxDir, maxBodyBytes, fetchImpl, imageLimits, imageUrlPolicy }) {
+export async function resolveImage(parsed, { inboxDir, maxBodyBytes, fetchImpl, imageLimits, imageUrlPolicy }) {
   const saveValidated = (validated) => {
     const iden = `http-${createHash('sha256').update(validated.buffer).digest('hex').slice(0, 32)}`;
     const path = saveImage(validated.buffer, { inboxDir, iden, ext: validated.ext });
@@ -391,86 +393,6 @@ export function formatSolveResponse(
   return body;
 }
 
-/** Fixed-window per-client limiter. In-memory: one process, low volume (DESIGN 3). */
-export function createRateLimiter({ limit, windowMs = 60_000, now = () => Date.now() } = {}) {
-  const hits = new Map();
-  return {
-    take(key) {
-      // `rate_limit_per_min = 0` means disabled, not "allow one then refuse".
-      if (!(limit > 0)) return { allowed: true, remaining: null, retryAfterSec: 0 };
-      const at = now();
-      const entry = hits.get(key);
-      if (!entry || at - entry.start >= windowMs) {
-        hits.set(key, { start: at, count: 1 });
-        return { allowed: true, remaining: Math.max(0, limit - 1), retryAfterSec: 0 };
-      }
-      if (entry.count >= limit) {
-        return {
-          allowed: false,
-          remaining: 0,
-          retryAfterSec: Math.max(1, Math.ceil((entry.start + windowMs - at) / 1000)),
-        };
-      }
-      entry.count += 1;
-      return { allowed: true, remaining: Math.max(0, limit - entry.count), retryAfterSec: 0 };
-    },
-    size: () => hits.size,
-  };
-}
-
-/**
- * Bounded failed-auth throttle, per client (#47).
- *
- * The request limiter only runs after a token check, so before this a caller could
- * hammer 401s forever. After `limit` failures the client is blocked for a backoff
- * that doubles with each further trip (1s, 2s, 4s … capped), and a success clears
- * the record so a user who finally types the right token is not locked out. In-memory
- * like the rate limiter: one process, low volume.
- */
-export const DEFAULT_AUTH_FAILURE_LIMIT = 5;
-
-export function createAuthThrottle({
-  limit = DEFAULT_AUTH_FAILURE_LIMIT,
-  windowMs = 60_000,
-  baseBackoffSec = 1,
-  maxBackoffSec = 900,
-  now = () => Date.now(),
-} = {}) {
-  const entries = new Map();
-  const blocked = (entry, at) => entry.blockedUntil > at;
-  const retryAfter = (entry, at) => Math.max(1, Math.ceil((entry.blockedUntil - at) / 1000));
-  return {
-    /** Check before the token comparison so a blocked client never reaches the compare. */
-    check(key) {
-      const at = now();
-      const entry = entries.get(key);
-      if (!entry || !blocked(entry, at)) return { allowed: true, retryAfterSec: 0 };
-      return { allowed: false, retryAfterSec: retryAfter(entry, at) };
-    },
-    /** Record a failed attempt; the trip itself already returns `allowed: false`. */
-    fail(key) {
-      const at = now();
-      let entry = entries.get(key);
-      if (!entry || (entry.blockedUntil <= at && at - entry.windowStart >= windowMs)) {
-        entry = { count: 0, windowStart: at, blockedUntil: 0, trips: 0 };
-        entries.set(key, entry);
-      }
-      entry.count += 1;
-      if (entry.count < limit) return { allowed: true, retryAfterSec: 0 };
-      entry.trips += 1;
-      const backoff = Math.min(maxBackoffSec, baseBackoffSec * 2 ** (entry.trips - 1));
-      entry.blockedUntil = at + backoff * 1000;
-      entry.count = 0;
-      entry.windowStart = at;
-      return { allowed: false, retryAfterSec: backoff };
-    },
-    succeed(key) {
-      entries.delete(key);
-    },
-    size: () => entries.size,
-  };
-}
-
 /**
  * Race a promise against a deadline. The losing solve keeps running and is
  * discarded - cancellation mid-Tesseract is not possible, and this helper does not
@@ -556,22 +478,28 @@ export function createHttpServer({
   // switch stops sending, it does not change what is safe to send.
   const requireConfidence = config.reply?.require_confidence === true;
 
-  // Admission control is the HTTP-specific queue bound (#43). Serialisation is the
-  // core's shared lock; this only decides how many HTTP requests may wait on it. A
-  // caller that stops reading cannot leave an unbounded backlog spending provider
-  // credits after it is gone. Pushbullet and the tray are deliberately exempt - a
-  // push is not retried by a buggy loop and must not be dropped.
+  // Admission control is the queue bound (#43). Serialisation is the core's shared
+  // lock; this only decides how many HTTP requests may wait on it. A caller that stops
+  // reading cannot leave an unbounded backlog spending provider credits after it is
+  // gone. Pushbullet and the tray are deliberately exempt - a push is not retried by a
+  // buggy loop and must not be dropped.
+  //
+  // When the real core is in use its `acquireSlot`/`releaseSlot` are shared with the
+  // web UI solve page (#65), so a burst against either ingress counts against one
+  // bound. A scripted core in a test has no slots and falls back to a local counter.
   const maxQueue = http.max_queue;
   const QUEUE_RETRY_AFTER_SEC = 1;
   let inflight = 0;
-  function acquireSlot() {
-    if (inflight >= maxQueue) return false;
-    inflight += 1;
-    return true;
-  }
-  function releaseSlot() {
-    inflight = Math.max(0, inflight - 1);
-  }
+  const acquireSlot =
+    typeof core.acquireSlot === 'function' ? core.acquireSlot : () => {
+      if (inflight >= maxQueue) return false;
+      inflight += 1;
+      return true;
+    };
+  const releaseSlot =
+    typeof core.releaseSlot === 'function' ? core.releaseSlot : () => {
+      inflight = Math.max(0, inflight - 1);
+    };
 
   function send(res, status, payload, headers = {}) {
     if (res.writableEnded || res.destroyed) return;
