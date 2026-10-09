@@ -22,6 +22,10 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # The offline suite runs in ~11s; this is a ceiling, not a target. Without it a
+    # test whose failure mode is "never terminates" burns the job until GitHub's
+    # default limit, which is hours (issue #37).
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:

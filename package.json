@@ -19,7 +19,7 @@
     "tesseract.js": "^7.0.0"
   },
   "scripts": {
-    "test": "node --test \"tests/**/*.test.js\"",
+    "test": "node --test --test-timeout=60000 \"tests/**/*.test.js\"",
     "test:unit": "node --test tests/numbers.test.js tests/transcript.test.js tests/puzzle.test.js tests/validate.test.js tests/model-client.test.js tests/reason.test.js tests/pipeline-model.test.js tests/state.test.js",
     "test:corpus": "node --test tests/corpus.test.js",
     "accuracy": "node src/accuracy-cli.js",
