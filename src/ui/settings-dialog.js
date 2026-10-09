@@ -56,7 +56,8 @@ export async function defaultSettingsDialog({
     const items = editor.list();
     items.forEach((item, index) => {
       const tag = item.restart ? 'restart' : 'live';
-      say(`${String(index + 1).padStart(2)}. ${item.id} = ${item.display}  [${tag}]`);
+      const mark = item.isNew ? ' [new]' : '';
+      say(`${String(index + 1).padStart(2)}. ${item.id} = ${item.display}  [${tag}]${mark}`);
     });
   }
 
@@ -64,6 +65,8 @@ export async function defaultSettingsDialog({
     say('PuzzleSolver settings');
     if (configPath) say(`Config file: ${configPath}`);
     if (credentialPath) say(`Secrets: ${credentialPath}`);
+    const newCount = editor.list().filter((item) => item.isNew).length;
+    if (newCount > 0) say(`${newCount} setting(s) are new since your last review (marked [new]).`);
     printList();
     say('Enter a number or id to change a setting, "test <id>" to probe a secret,');
     say('blank to save, or "q" to cancel. "[restart]" means the service must restart.');

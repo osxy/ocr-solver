@@ -38,6 +38,8 @@ import { createNotifier } from './ui/notifications.js';
 import { resolveTrayMode } from './ui/mode.js';
 import { createSetup } from './ui/setup.js';
 import { applyLiveSettings, createSettingsEditor } from './ui/settings.js';
+import { APP_VERSION } from './version.js';
+import { computeSettingsReview, planStartupReview, recordReview } from './ui/settings-review.js';
 import { defaultWebSettingsDialog, defaultWebSetupDialog } from './ui/web-config.js';
 import { WEB_UI_CREDENTIAL_SETTING, webUiAdmitsNonLoopback } from './ui/access.js';
 import { storeReport, loadReportCache, defaultAccuracyCachePath } from './accuracy.js';
@@ -226,10 +228,15 @@ export async function createApp({
 
   let config = providedConfig;
   let resolvedConfigPath = configPath;
+  // `loaded` is false only for a genuine fresh install (no config file). The upgrade
+  // review (#67) uses it to skip the first run, where setup already walks the user
+  // through everything and "here is what is new" is noise.
+  let configFileLoaded = false;
   if (!config) {
     const loaded = loadConfig({ explicitPath: configPath, env, platform, homedir });
     config = loaded.config;
     resolvedConfigPath = loaded.path;
+    configFileLoaded = loaded.loaded;
     for (const warning of loaded.warnings) logger.warn(warning);
     logger.info(loaded.loaded ? `config loaded from ${loaded.path}` : `no config file at ${loaded.path}; using defaults`);
   }
@@ -257,6 +264,18 @@ export async function createApp({
   // makes a solve idempotent across restarts, so a store failure must be louder.
   const store = providedStore ?? openStore({ path: statePath ?? defaultStatePath({ platform, env, homedir }) });
   const ownsStore = !providedStore;
+
+  // #67: notice settings introduced since the last reviewed version. This is a
+  // notification, not a gate - it must never block or fail startup, so a store error
+  // is logged and the app continues with defaults. `planStartupReview` advances the
+  // offered baseline (one log line, never a repeat) but leaves the editor's `isNew`
+  // badges until the user actually opens the editor or runs `config review`.
+  let settingsReview = null;
+  try {
+    settingsReview = planStartupReview({ store, appVersion: APP_VERSION, configLoaded: configFileLoaded, logger });
+  } catch (err) {
+    logger.warn(`settings review failed: ${err?.message ?? err}`);
+  }
 
   const effectiveInbox = inboxDir ?? defaultInboxDir();
   const removed = pruneInbox({ inboxDir: effectiveInbox, retainDays: config.storage.retain_days, now });
@@ -579,6 +598,12 @@ export async function createApp({
     core,
     httpServer,
     inboxDir: effectiveInbox,
+    // #67: the settings found to be new at startup (or `null` when there was
+    // nothing to offer). `openSettings` refreshes it after a review. Exposed so the
+    // startup offer is inspectable without opening an editor.
+    get settingsReview() {
+      return settingsReview;
+    },
     // A getter, not a snapshot: rotating a secret through the settings editor
     // re-resolves it so the next editor or diagnostic sees the new value. The running
     // client still holds the old token until a restart, which is why the editor labels
@@ -601,6 +626,10 @@ export async function createApp({
      */
     async openSettings() {
       if (!settingsDialog) return { saved: false, failed: true, detail: 'no settings editor is available' };
+      // Which settings are still new to this user (#67). Re-read on every open: a
+      // previous review advances the baseline in the store. The ids feed the editor's
+      // `isNew` flags; the dialog also receives the descriptors so it can list them.
+      const review = computeSettingsReview({ store });
       const editor = createSettingsEditor({
         config,
         configPath: resolvedConfigPath,
@@ -609,6 +638,7 @@ export async function createApp({
         secrets,
         saveSecrets: (args) => saveSecrets({ ...args, providers, platform, env, homedir, logger }),
         logger,
+        newSettingIds: review.newSettings.map((setting) => setting.id),
       });
       const outcome = await settingsDialog({
         editor,
@@ -618,6 +648,9 @@ export async function createApp({
         secrets,
         logger,
         openBrowser,
+        // #67: the new settings, security-relevant first, so the web shell can show
+        // them without re-reading the store.
+        settingsReview: review,
         // #65: the solve page solves through the same core and against the same caps
         // as the HTTP ingress, and the access/credential options gate every page.
         solveCore: core,
@@ -630,6 +663,17 @@ export async function createApp({
         store,
         corpusReport: loadReportCache(accuracyCachePath ?? defaultAccuracyCachePath(store.path))?.corpus ?? null,
       });
+      // The editor presented the settings, so they are no longer "new". A dialog that
+      // never came up (`failed`) did not present them, so the badges stay. Recording is
+      // best-effort: a store failure must not turn a successful save into an error.
+      if (outcome && !outcome.failed) {
+        try {
+          recordReview(store, APP_VERSION);
+        } catch (err) {
+          logger.warn?.(`could not record the settings review: ${err?.message ?? err}`);
+        }
+        settingsReview = computeSettingsReview({ store });
+      }
       if (outcome?.saved && outcome.config) {
         outcome.liveApplied = applyLiveSettings(config, outcome.config, outcome.changed ?? []);
       }
