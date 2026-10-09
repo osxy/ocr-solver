@@ -59,6 +59,8 @@ function parseArgs(argv) {
     excludedModels: (process.env.LLM_EXCLUDED_MODELS ?? '').split(',').filter(Boolean),
     // listen mode: run the Pushbullet service rather than solving local images.
     listen: false,
+    // --headless: skip the tray and every notification; the default is tray mode.
+    headless: false,
     config: null,
     // Explicit secrets only. `apiKey` above may come from the environment, but the
     // secret resolver should still report the environment as the source, so only a
@@ -80,6 +82,7 @@ function parseArgs(argv) {
     else if (a === '--pushbullet-token') opts.token = next() ?? null;
     else if (a === '--config') opts.config = next() ?? null;
     else if (a === '--listen') opts.listen = true;
+    else if (a === '--headless') { opts.headless = true; opts.listen = true; }
     else if (a === '--base-url') opts.baseUrl = next() ?? opts.baseUrl;
     else if (a === '--auto') {
       // Auto-route the TEXT tier only. The vision tier stays a chosen model: it runs
@@ -265,6 +268,7 @@ async function main() {
       '  --store <file.db>      record every attempt to SQLite\n' +
       '  --attempts <file.db>   print recorded attempts and exit\n' +
       '  listen                 run the Pushbullet service (see also --listen)\n' +
+      '  --headless             skip the tray and notifications (for a service/unattended run)\n' +
       '  --config <path>        TOML config file (or PUZZLESOLVER_CONFIG)\n' +
       '  --token <token>        Pushbullet token for listen mode (or PUSHBULLET_TOKEN)'
     );
@@ -378,12 +382,21 @@ async function runListen(argv) {
     configPath: opts.config,
     // Only literal flags travel as explicit secrets; env vars keep source 'env'.
     explicitSecrets: { pushbullet: opts.token, llm: opts.explicitApiKey },
+    // Tray is the default; --headless turns both the tray and notifications off.
+    headless: opts.headless,
+    tray: !opts.headless,
   });
 }
 
 const argv = process.argv.slice(2);
-if (argv[0] === 'listen' || argv.includes('--listen')) {
+if (argv[0] === 'listen' || argv.includes('--listen') || argv.includes('--headless')) {
   runListen(argv).catch((err) => {
+    // The missing-tray case is expected on a machine without systray2; a stack trace
+    // there reads as a crash, so surface only the actionable line.
+    if (err?.name === 'TrayUnavailableError') {
+      console.error(err.message);
+      process.exit(1);
+    }
     console.error(err.stack ?? String(err));
     process.exit(1);
   });

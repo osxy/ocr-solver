@@ -18,9 +18,9 @@
  * environment is Linux, so that branch has never been executed here: it is behind a
  * one-method provider interface, its loader is injectable, and no test requires it.
  */
-import { readFileSync, existsSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from 'node:fs';
 import { homedir as osHomedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 /** Environment variable per secret name. */
 export const SECRET_ENV = {
@@ -74,8 +74,11 @@ export function defaultCredentialPath({ platform = process.platform, env = proce
 export function createFileCredentialProvider({
   path = defaultCredentialPath(),
   readFile = readFileSync,
+  writeFile = writeFileSync,
   fileExists = existsSync,
+  mkdir = mkdirSync,
   stat = statSync,
+  mode = 0o600,
 } = {}) {
   let warnedMode = false;
   return {
@@ -93,6 +96,32 @@ export function createFileCredentialProvider({
       if (!key) return null;
       const value = parsed?.[key];
       return value != null && String(value).trim() !== '' ? String(value) : null;
+    },
+    /**
+     * Persist one secret, merging with whatever is already there. The file is the
+     * cross-platform store, so this is the write path the setup dialog uses.
+     * Never logs the value; the mode is 0600 on POSIX and ignored on Windows.
+     */
+    set(name, value) {
+      const key = FILE_SECRET_KEYS[name];
+      if (!key) throw new Error(`unknown secret name ${JSON.stringify(name)}`);
+      if (!path) throw new Error('the file credential provider has no path to write to');
+      const text = String(value ?? '');
+      if (text.trim() === '') throw new Error(`refusing to store an empty secret for ${name}`);
+
+      let parsed = {};
+      if (fileExists(path)) {
+        try {
+          parsed = JSON.parse(readFile(path, 'utf8')) ?? {};
+        } catch {
+          // Overwrite a corrupt file rather than staying permanently unset.
+          parsed = {};
+        }
+      }
+      parsed[key] = text;
+      mkdir(dirname(path), { recursive: true });
+      writeFile(path, `${JSON.stringify(parsed, null, 2)}\n`, { encoding: 'utf8', mode });
+      return { stored: true, path, mode };
     },
     /** Non-fatal problems worth surfacing once, e.g. lax file permissions. */
     warnings() {
@@ -153,6 +182,17 @@ export function createWindowsCredentialProvider({
       } catch {
         return null;
       }
+    },
+    /** UNVERIFIED ON WINDOWS: written against the keytar `setPassword` shape. */
+    async set(name, value) {
+      const account = FILE_SECRET_KEYS[name];
+      if (!account) throw new Error(`unknown secret name ${JSON.stringify(name)}`);
+      const text = String(value ?? '');
+      if (text.trim() === '') throw new Error(`refusing to store an empty secret for ${name}`);
+      const mod = await binding();
+      if (typeof mod?.setPassword !== 'function') throw new Error('credential manager backing unavailable');
+      await mod.setPassword(service, account, text);
+      return { stored: true, store: 'windows-credential-manager' };
     },
   };
 }
@@ -231,4 +271,60 @@ export async function loadSecrets({
   for (const warning of warnings) logger?.warn?.(warning);
 
   return { ...out, providers: list.map((p) => p.name), warnings };
+}
+
+/**
+ * Persist secrets through the provider interface - the first provider that can
+ * `set` wins. This is the *only* write path: environment variables cannot be
+ * written, so the credential store is the destination, and the setup dialog calls
+ * this rather than reaching into a file itself.
+ *
+ * Values are never returned or logged. `saveSecrets` deliberately refuses to run
+ * with no writable provider instead of silently discarding a key the user typed.
+ *
+ * @returns {Promise<{saved: string[], providers: string[]}>}
+ */
+export async function saveSecrets({
+  entries = {},
+  providers = null,
+  platform = process.platform,
+  env = process.env,
+  homedir = osHomedir,
+  credentialPath = null,
+  logger = null,
+} = {}) {
+  const list =
+    providers ??
+    defaultCredentialProviders({
+      path: credentialPath ?? defaultCredentialPath({ platform, env, homedir }),
+      platform,
+    });
+  const writable = list.filter((p) => typeof p.set === 'function');
+  if (writable.length === 0) {
+    throw new Error(
+      'no writable credential store is available; set PUSHBULLET_TOKEN / LLM_API_KEY in the environment instead'
+    );
+  }
+
+  const saved = [];
+  for (const [name, value] of Object.entries(entries)) {
+    if (value == null || String(value).trim() === '') continue;
+    let stored = false;
+    let lastError = null;
+    for (const provider of writable) {
+      try {
+        await provider.set(name, value);
+        stored = true;
+        logger?.info?.(`stored ${name} secret in ${provider.name}`);
+        break;
+      } catch (err) {
+        lastError = err;
+      }
+    }
+    if (!stored) {
+      throw new Error(`could not store the ${name} secret: ${lastError?.message ?? 'no provider accepted it'}`);
+    }
+    saved.push(name);
+  }
+  return { saved, providers: writable.map((p) => p.name) };
 }

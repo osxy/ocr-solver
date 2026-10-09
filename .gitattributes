@@ -1,0 +1,5 @@
+# The launcher shim is generated with CRLF line endings (a Windows `wscript`
+# artefact) and `tests/deploy.test.js` asserts the checked-in file byte-for-byte
+# against the generator. Normalising to LF in the index and checking it out as CRLF
+# keeps the diff clean without changing what Windows sees.
+packaging/*.vbs text eol=crlf
