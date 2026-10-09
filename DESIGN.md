@@ -1224,7 +1224,7 @@ captchasolver/
 
 ## 10. Testing
 
-**Working now — 672 tests (666 pass, 6 skip), none needing a network or an API key:**
+**Working now — 705 tests (699 pass, 6 skip), none needing a network or an API key:**
 
 1. **Offline unit (37):** Dutch number words and compounds including diaereses, all four
    operators, precedence, division by zero; transcript normalisation and every repair rule;

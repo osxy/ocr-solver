@@ -22,32 +22,41 @@ guess (see [What happens to a puzzle](#what-happens-to-a-puzzle)).
 
 ## Status
 
-**0.2.0 — a pre-release.** The offline solver, model tiers, Pushbullet listener and
+**0.3.0 — a pre-release.** The offline solver, model tiers, Pushbullet listener and
 reply path are implemented and tested. The packaged Windows app, the installer, the
-scheduled task and the launcher are executed on `windows-latest` in CI; the native tray
-widget and the notification toast still need an interactive desktop and remain
-unverified (see [Known limitations](#known-limitations)).
+scheduled task and the launcher are executed on `windows-latest` in CI, and a fresh
+`node` process decrypts Windows secrets through DPAPI there; the native tray widget and
+the notification toast still need an interactive desktop and remain unverified (see
+[Known limitations](#known-limitations)).
+
+The **Pushbullet ingress — reading a real push, fetching its image, solving it and
+replying — has never been executed against the real Pushbullet service**, because no
+account or token exists (tracked and blocked as
+[issue #3](https://github.com/osxy/ocr-solver/issues/3)). That is the app's primary
+user-facing path, so **0.3.0 remains a pre-release**: the parts a runner can reach are
+tested against fakes and, where possible, executed, but the main ingress is not
+*observed* end to end.
 Work is tracked in the [issue tracker](https://github.com/osxy/ocr-solver/issues); the
 design and its reasoning live in [DESIGN.md](./DESIGN.md).
 
 ## Install
 
 Install from a **release**, not from source. From the
-[v0.2.0 pre-release](https://github.com/osxy/ocr-solver/releases/tag/v0.2.0) download
-`PuzzleSolver-0.2.0-win-x64.zip` (~81 MiB) and its `.sha256` checksum. The ZIP carries
+[v0.3.0 pre-release](https://github.com/osxy/ocr-solver/releases/tag/v0.3.0) download
+`PuzzleSolver-0.3.0-win-x64.zip` and its `.sha256` checksum. The ZIP carries
 its own pinned `node.exe`, so Node does not have to be installed.
 
 The binary is **unsigned**, so **Windows SmartScreen will warn on first run** and the
 SHA256 checksum is the only integrity signal. Verify it before extracting:
 
 ```powershell
-Get-FileHash .\PuzzleSolver-0.2.0-win-x64.zip -Algorithm SHA256
-Get-Content .\PuzzleSolver-0.2.0-win-x64.zip.sha256
+Get-FileHash .\PuzzleSolver-0.3.0-win-x64.zip -Algorithm SHA256
+Get-Content .\PuzzleSolver-0.3.0-win-x64.zip.sha256
 ```
 
 The two hashes must match. (On Linux or macOS:
-`sha256sum -c PuzzleSolver-0.2.0-win-x64.zip.sha256`.) If Windows flags the download,
-`Unblock-File .\PuzzleSolver-0.2.0-win-x64.zip` first.
+`sha256sum -c PuzzleSolver-0.3.0-win-x64.zip.sha256`.) If Windows flags the download,
+`Unblock-File .\PuzzleSolver-0.3.0-win-x64.zip` first.
 
 Then extract the ZIP and, from the extracted folder, run the installer:
 
@@ -714,7 +723,10 @@ folders. Manually: `schtasks /Delete /TN PuzzleSolver /F`, then delete
 
 ## Known limitations
 
-- **Pre-release.** 0.2.0 is a pre-release: expect rough edges and no stability promise.
+- **Pre-release.** 0.3.0 is a pre-release: expect rough edges and no stability promise.
+  The **Pushbullet ingress has never run against the real Pushbullet service** — no
+  account or token exists (issue #3) — so the app's primary path is exercised against
+  fakes rather than observed end to end.
 - **The native tray widget, the notification toast and the browser hand-off remain
   unverified on Windows.** The packaged `node.exe`, the app, `sharp`'s win32-x64 binary
   and the traineddata are smoke-tested on `windows-latest` by the package job, and the
@@ -776,7 +788,7 @@ plain ESM.
 
 ```bash
 npm install
-npm test              # 672 tests (666 pass, 6 skip), offline: no network, no token, no key
+npm test              # 705 tests (699 pass, 6 skip), offline: no network, no token, no key
 npm run test:unit     # fast subset
 npm run test:corpus   # real images through real OCR, ~4s
 npm run test:live     # opt-in; skips unless LLM_API_KEY is set
