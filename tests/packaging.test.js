@@ -200,7 +200,7 @@ test('run-deploy.ps1 asserts every deployment surface and throws on the first mi
 });
 
 // ---------------------------------------------------------------------------
-// README install instructions vs. the version CI builds (#97)
+// README install instructions vs. the version CI builds (#97, #106)
 // ---------------------------------------------------------------------------
 
 /**
@@ -215,20 +215,26 @@ test('run-deploy.ps1 asserts every deployment surface and throws on the first mi
  * what keeps this test from freezing today's version into a green-but-vacuous check.
  *
  * Honest limit: this cannot assert that the release EXISTS. At the moment of a version
- * bump the README deliberately names a tag that has not been pushed yet, and that is
- * correct. What it catches is a README left naming the PREVIOUS release after
- * `package.json` has moved on.
+ * bump the asset is named before the tag is pushed, and that is correct. What it
+ * catches is a README left naming the PREVIOUS release after `package.json` has moved
+ * on.
+ *
+ * The download *link* is a separate test below: it must not depend on a tag existing,
+ * and keeping the two assertions apart is what lets each fail on its own (#106).
  */
-test('the README install instructions name the version and the asset CI builds (#97)', () => {
+function readmeInstallFacts() {
   const { version } = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'));
-  const readme = readFileSync(join(repoRoot, 'README.md'), 'utf8');
-
-  // Derive the asset name from the script the workflow actually runs.
   const buildZip = readFileSync(join(repoRoot, 'packaging', 'build-zip.ps1'), 'utf8');
   const template = /\$zip\s*=\s*Join-Path\s+\$OutDir\s+"([^"]*\$Version[^"]*)"/.exec(buildZip);
   assert.ok(template, 'build-zip.ps1 no longer builds a $Version-named zip; update this guard');
   const asset = template[1].replaceAll('$Version', version);
   assert.match(asset, /-win-x64\.zip$/, 'the asset is expected to be the win-x64 zip');
+  return { version, asset };
+}
+
+test('the README install instructions name the asset CI builds (#97)', () => {
+  const { version, asset } = readmeInstallFacts();
+  const readme = readFileSync(join(repoRoot, 'README.md'), 'utf8');
 
   // The workflow must take that version from package.json and pass it through.
   const workflow = readFileSync(join(repoRoot, '.github', 'workflows', 'package.yml'), 'utf8');
@@ -239,10 +245,6 @@ test('the README install instructions name the version and the asset CI builds (
   );
   assert.match(workflow, /build-zip\.ps1[^\n]*-Version \$version/, 'package.yml must pass that version to build-zip.ps1');
 
-  // The download link names the current tag.
-  const escaped = version.replaceAll('.', '\\.');
-  assert.match(readme, new RegExp(`releases/tag/v${escaped}`), `README must link to the v${version} release`);
-
   // Every asset filename in the README names the current version - not just one of
   // them. A stale `Get-FileHash PuzzleSolver-0.2.0-...` beside a correct link is the
   // exact drift this guards against.
@@ -252,10 +254,36 @@ test('the README install instructions name the version and the asset CI builds (
     assert.equal(named, version, `README names PuzzleSolver-${named}-win-x64.zip but package.json says ${version}`);
   }
   assert.ok(readme.includes(asset), `README must name the asset CI builds, ${asset}`);
+});
 
-  // Any other release-tag link must also be current (the README links the tag once).
-  const tagVersions = [...readme.matchAll(/releases\/tag\/v([0-9]+\.[0-9]+\.[0-9]+)/g)].map((m) => m[1]);
-  for (const named of new Set(tagVersions)) {
-    assert.equal(named, version, `README links releases/tag/v${named} but package.json says ${version}`);
-  }
+/**
+ * The download link must resolve on `main` at every point in the development cycle,
+ * including the window between the version bump and the release (issue #106).
+ *
+ * #97 originally asserted the README linked `releases/tag/v<package.json version>`.
+ * Because the bump necessarily precedes the tag, that pinned the documented download
+ * to a URL that 404s for the whole cycle. `/releases` lists everything and cannot 404.
+ *
+ * Do not "tidy" this back to a pinned tag, and prefer `/releases` over
+ * `/releases/latest`: the *web* `/releases/latest` currently only works by falling
+ * back to `/releases` (every v0.x release is a pre-release), and the *API*
+ * `repos/osxy/ocr-solver/releases/latest` genuinely 404s. The releases page depends on
+ * neither fallback nor on a release existing.
+ *
+ * Honest limit: this cannot assert that a release EXISTS, only that the link does not
+ * depend on one particular tag.
+ */
+test('the README download link points at the releases page, not a pinned version tag (#106)', () => {
+  const readme = readFileSync(join(repoRoot, 'README.md'), 'utf8');
+
+  assert.match(
+    readme,
+    /github\.com\/osxy\/ocr-solver\/releases(?!\/)/,
+    'README must link the releases page so a version bump cannot 404 the download link'
+  );
+  assert.doesNotMatch(
+    readme,
+    /releases\/tag\/v[0-9]+\.[0-9]+\.[0-9]+/,
+    'README must not pin the download link to a version tag that may not exist yet (#106)'
+  );
 });
