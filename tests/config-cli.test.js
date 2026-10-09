@@ -17,6 +17,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { loadConfig } from '../src/config.js';
+import { runConfig as runConfigCommand } from '../src/config-cli.js';
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'cli.js');
 
@@ -181,4 +182,54 @@ test('config --help is a usage page, not an error', (t) => {
   assert.match(result.stdout, /config list/);
   assert.match(result.stdout, /config edit/);
   assert.equal(withoutNodeWarnings(result.stderr), '', '--help itself must not write to stderr');
+});
+
+// ---------------------------------------------------------------------------
+// `config edit --gui`: the web editor wiring, off-browser
+// ---------------------------------------------------------------------------
+
+/** A minimal capture stream that keeps everything written to it. */
+function captureStream() {
+  let text = '';
+  return {
+    write(chunk) {
+      text += String(chunk);
+      return true;
+    },
+    get text() {
+      return text;
+    },
+  };
+}
+
+test('config edit --gui drives the injected web dialog, not the terminal prompt', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'puzzlesolver-config-cli-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const stdout = captureStream();
+  const stderr = captureStream();
+  let guiCalls = 0;
+  let terminalCalls = 0;
+
+  const code = await runConfigCommand(['edit', '--gui', '--config', join(dir, 'config.toml')], {
+    stdout,
+    stderr,
+    env: {},
+    platform: 'linux',
+    homedir: () => join(dir, 'home'),
+    dialog: async () => {
+      terminalCalls += 1;
+      return { saved: false, cancelled: true };
+    },
+    guiDialog: async ({ editor, configPath, openBrowser }) => {
+      guiCalls += 1;
+      assert.equal(typeof editor.list, 'function', 'the web dialog receives the real editor');
+      assert.match(configPath, /config\.toml$/);
+      assert.equal(openBrowser, undefined, 'no browser override is supplied by default');
+      return { saved: false, cancelled: true };
+    },
+  });
+
+  assert.equal(code, 0, stderr.text);
+  assert.equal(guiCalls, 1, '--gui must select the web dialog');
+  assert.equal(terminalCalls, 0, '--gui must not fall back to the terminal prompt');
 });
