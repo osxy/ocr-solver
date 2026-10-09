@@ -147,3 +147,32 @@ vite.config.ts.timestamp-*
 
 # Turbo Repo
 .turbo
+
+# --- project specific -------------------------------------------------------
+# Secrets. The app reads keys from the environment and never writes them to disk,
+# but these cover the file-based paths a future Windows build will use (DPAPI blob,
+# config with an embedded key, sqlite state, downloaded puzzle images).
+config.toml
+secrets.*
+*.dpapi
+*.env
+!*.env.example
+llm.env
+
+# runtime state
+inbox/
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+logs/
+
+# scratch output from `node src/cli.js --dump-masks`
+/masks/
+/tmp/
+
+# tesseract.js writes a stray copy here if langPath is not configured
+*.traineddata
+
+# pi-web session state (chat uploads) - never part of the project
+.pi-web/

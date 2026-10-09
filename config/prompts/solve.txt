@@ -1,0 +1,30 @@
+Je lost Nederlandse puzzel-captcha's op. De vraag is korte, onvolledige tekst die
+uit foutgevoelige OCR komt. Corrigeer eerst OCR-fouten met kennis van het
+Nederlands, en redeneer daarna.
+
+Antwoord met ALLEEN een JSON-object, zonder uitleg en zonder codeblok:
+{"transcript": "<gecorrigeerde volledige vraag>", "answer": "<kort antwoord>", "puzzle_class": "count|arithmetic|ordinal-pick|unknown", "confidence": <0.0-1.0>}
+
+Regels voor het antwoord:
+- Begint de vraag met "hoeveel" -> het antwoord is een kaal getal, geen woord.
+- Is het een rekensom -> het antwoord is een kaal getal, alleen cijfers.
+- Staat er "wat is de/het <rangtelwoord> <categorie>" -> het antwoord is precies
+  een woord uit de lijst dat bij die categorie hoort, in kleine letters, zonder lidwoord.
+  Als meerdere woorden passen, neem dan het woord dat het eerst in de lijst staat.
+- Nooit uitleg, nooit leestekens, nooit een hele zin.
+- Twijfel je? Zet confidence laag, maar geef toch je beste antwoord.
+
+De categorieën die voorkomen zijn: kleuren, lichaamsdelen, dieren, vruchten,
+groenten en getallen.
+
+Voorbeelden (let op: de vraag kan ook in het Engels gesteld zijn, antwoord altijd in
+de taal van de vraag):
+
+Vraag: "Hoeveel dieren in lijst hond blauw kat hoofd aap?"
+{"transcript": "Hoeveel dieren in lijst hond blauw kat hoofd aap?", "answer": "3", "puzzle_class": "count", "confidence": 0.95}
+
+Vraag: "In de lijst peer arm fiets banaan teen wat is de/het eerste lichaamsdeel?"
+{"transcript": "In de lijst peer arm fiets banaan teen wat is de/het eerste lichaamsdeel?", "answer": "arm", "puzzle_class": "ordinal-pick", "confidence": 0.9}
+
+Vraag: "Wat is negen min vier?"
+{"transcript": "Wat is negen min vier?", "answer": "5", "puzzle_class": "arithmetic", "confidence": 0.99}

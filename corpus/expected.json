@@ -1,0 +1,29 @@
+[
+  {
+    "file": "001-count-kleuren.png",
+    "note": "count how many list items are colours: wit + paars",
+    "class": "count",
+    "category": "kleur",
+    "list": ["wit", "kiwi", "hoofd", "paars", "olifant", "aap"],
+    "transcript": "hoeveel kleuren in lijst wit kiwi hoofd paars olifant aap",
+    "answer": "2"
+  },
+  {
+    "file": "002-ordinal-lichaamsdeel.png",
+    "note": "first body part in the list; note 'lijst' is itself a list item here",
+    "class": "ordinal-pick",
+    "category": "lichaamsdeel",
+    "list": ["lijst", "hoofd", "buik", "citroen", "borst", "olifant", "paard"],
+    "transcript": "in de lijst lijst hoofd buik citroen borst olifant paard wat is de/het eerste lichaamsdeel",
+    "answer": "hoofd"
+  },
+  {
+    "file": "003-arithmetic-acht-min-een.png",
+    "note": "arithmetic written in Dutch number words",
+    "class": "arithmetic",
+    "category": null,
+    "list": [],
+    "transcript": "wat is acht min een",
+    "answer": "7"
+  }
+]
