@@ -190,6 +190,9 @@ export async function createApp({
   // `setupDialog`: injected so the UI is out of the assembly logic, and defaulted by
   // `runApp` rather than here so a library caller gets no prompt.
   settingsDialog = null,
+  // Where the offline-corpus report cache lives, for the statistics page (#64).
+  // `null` means derive it from the store path, exactly like the tray does.
+  accuracyCachePath = null,
   // The browser launcher the web UI uses. Injected so the startup and tray paths are
   // testable without a display, exactly like the tray's `openPath`.
   openBrowser = undefined,
@@ -621,6 +624,11 @@ export async function createApp({
         inboxDir: effectiveInbox,
         webUi: config.web_ui,
         credentialVerifier: webUiCredential,
+        // #64: the statistics page reads the real store and the cached offline-corpus
+        // report. They are passed as two separate inputs, so the page cannot blend the
+        // synthetic figure into the real one.
+        store,
+        corpusReport: loadReportCache(accuracyCachePath ?? defaultAccuracyCachePath(store.path))?.corpus ?? null,
       });
       if (outcome?.saved && outcome.config) {
         outcome.liveApplied = applyLiveSettings(config, outcome.config, outcome.changed ?? []);

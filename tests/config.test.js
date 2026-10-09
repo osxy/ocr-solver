@@ -450,3 +450,16 @@ test('the secret rejection says where secrets do belong', () => {
     /PUSHBULLET_TOKEN|credential store|environment/i
   );
 });
+
+test('ui.stats_recent_solves defaults to 5 and rejects anything outside a bounded integer (#64)', () => {
+  assert.equal(validateConfig({}).config.ui.stats_recent_solves, 5);
+  assert.equal(validateConfig({ ui: { stats_recent_solves: 1 } }).config.ui.stats_recent_solves, 1);
+  assert.equal(validateConfig({ ui: { stats_recent_solves: 100 } }).config.ui.stats_recent_solves, 100);
+  for (const bad of [0, -1, 1.5, 101, 'five']) {
+    assert.throws(
+      () => validateConfig({ ui: { stats_recent_solves: bad } }),
+      (err) => err instanceof ConfigError && /ui\.stats_recent_solves/.test(err.message),
+      `${JSON.stringify(bad)} must be rejected`
+    );
+  }
+});

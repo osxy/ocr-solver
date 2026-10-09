@@ -304,7 +304,8 @@ the headless command prints which applies:
 - **restart** — the models and base URL, `offline_only`, `escalate_to_vision`,
   `self_consistency_n`, the breaker knobs (`breaker_threshold`, `breaker_cooldown_sec`),
   the reply switch/wording/budgets, `poll_interval_sec`, `history_mode`, `ocr.languages`,
-  `storage.retain_days`, `ui.tray`, the whole `http.*` block, and **all three secrets**,
+  `storage.retain_days`, `ui.tray`, `ui.stats_recent_solves`, the whole `http.*` block, and **all
+  three secrets**,
   because the listener, reasoner, responder or HTTP server capture them when they are
   built. The running service keeps the old value until it is restarted; the editor says
   so rather than appearing to save something that does nothing.

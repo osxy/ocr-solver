@@ -116,6 +116,9 @@ export const SETTINGS = Object.freeze([
 
   Object.freeze({ id: 'ui.tray', label: 'Show the tray', path: ['ui', 'tray'], type: 'boolean', restart: true }),
   Object.freeze({ id: 'ui.notify_on_unresolved', label: 'Notify on an unresolved puzzle', path: ['ui', 'notify_on_unresolved'], type: 'boolean', restart: false }),
+  // Read by the statistics page on each load. Bounded like every other numeric
+  // setting, so an absurd value cannot be used to dump the attempts table (#64).
+  Object.freeze({ id: 'ui.stats_recent_solves', label: 'Recent solves shown on the statistics page', path: ['ui', 'stats_recent_solves'], type: 'integer', min: 1, max: 100, restart: true }),
 ]);
 
 const SETTINGS_BY_ID = new Map(SETTINGS.map((setting) => [setting.id, setting]));

@@ -189,3 +189,42 @@ test('falls back to a built-in prompt when the file is absent', () => {
 test('returns an empty string for an unknown prompt name', () => {
   assert.equal(loadPrompt('nope', { promptDir: join(tmpdir(), 'definitely-not-here') }), '');
 });
+// ---------------------------------------------------------------------------
+// The statistics page's bounded reads (#64)
+// ---------------------------------------------------------------------------
+
+test('recentSolves is bounded, newest first, and uses the created_at index', () => {
+  let clock = 1000;
+  const store = openStore({ path: ':memory:', now: () => { clock += 1; return clock; } });
+  for (let i = 0; i < 50; i += 1) {
+    store.record({ subject: `s${i}`, stage: 'validate', ok: true, payload: { answer: String(i) } });
+  }
+  const recent = store.recentSolves(5);
+  assert.equal(recent.length, 5, 'the LIMIT is the bound against dumping the table');
+  assert.deepEqual(recent.map((r) => r.subject), ['s49', 's48', 's47', 's46', 's45']);
+  // The plan is the proof the bound is real: an index scan that stops at the LIMIT,
+  // not a full-table scan that happens to slice afterwards.
+  const plan = store.db
+    .prepare("EXPLAIN QUERY PLAN SELECT subject FROM attempts WHERE stage = ? ORDER BY created_at DESC, id DESC LIMIT ?")
+    .all('validate', 5)
+    .map((row) => row.detail)
+    .join('\n');
+  assert.match(plan, /idx_attempts_created_at/);
+  assert.deepEqual(store.recentSolves(0), [], 'a zero limit is refused, not unlimited');
+  assert.deepEqual(store.recentSolves(-1), []);
+  store.close();
+});
+
+test('latestValidationRows returns the latest validate per subject, one row each', () => {
+  const store = memoryStore();
+  store.record({ subject: 'p', stage: 'validate', ok: false, payload: { answer: null } });
+  store.record({ subject: 'p', stage: 'validate', ok: true, payload: { answer: '9' } });
+  store.record({ subject: 'q', stage: 'ocr', payload: {} });
+  store.record({ subject: 'q', stage: 'validate', ok: true, payload: { answer: '1' } });
+  const rows = store.latestValidationRows();
+  assert.deepEqual(rows.map((r) => r.subject), ['p', 'q']);
+  assert.equal(rows.find((r) => r.subject === 'p').payload.answer, '9', 'the latest validate wins');
+  assert.equal(store.stageCounts().ocr, 1);
+  assert.equal(store.stageCounts().validate, 3);
+  store.close();
+});

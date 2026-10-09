@@ -89,8 +89,23 @@ function groupBy(outcomes, key) {
   return Object.fromEntries([...map.entries()].map(([value, rows]) => [value, summarize(rows)]));
 }
 
+/**
+ * Collapse a winning `method` to the tier the statistics page reports: `tier0`,
+ * `model:text`, `model:vision`, or `none`. `tier0` methods carry a class suffix
+ * (`tier0:count`); a model method is already the tier name. This is the one place
+ * the tier label is derived, so the page cannot invent a fourth spelling.
+ */
+export function methodTier(method) {
+  if (method == null || method === '') return 'none';
+  return String(method).startsWith('model:') ? String(method) : 'tier0';
+}
+
 /** Build the report object the CLI, the tray and the cache all consume. */
 export function buildReport(outcomes, { source = 'corpus', label = null } = {}) {
+  // `outcome()` stamps `tier`, but a plain caller (and older cached rows) may only
+  // carry `method`; derive the tier here so the by-tier breakdown cannot silently
+  // collapse into one bucket.
+  const tiered = outcomes.map((o) => (o.tier == null ? { ...o, tier: methodTier(o.method) } : o));
   return {
     version: REPORT_VERSION,
     source,
@@ -99,6 +114,9 @@ export function buildReport(outcomes, { source = 'corpus', label = null } = {}) 
     byProvenance: groupBy(outcomes, 'provenance'),
     byClass: groupBy(outcomes, 'class'),
     byKind: groupBy(outcomes, 'kind'),
+    // How the answer was actually produced: offline Tier 0 vs a model text/vision
+    // call. This is the efficiency figure the statistics page surfaces (#64).
+    byTier: groupBy(tiered, 'tier'),
     // `failures` means one thing only: a graded item (ground truth known) whose
     // answer was wrong or absent. Recorded traffic has no ground truth, so `correct`
     // is always false there and every row used to be listed as a failure (#49).
@@ -130,6 +148,7 @@ export function buildReport(outcomes, { source = 'corpus', label = null } = {}) 
 }
 
 function outcome(item, fields = {}) {
+  const method = fields.method ?? null;
   return {
     id: item.id,
     provenance: item.provenance,
@@ -140,7 +159,8 @@ function outcome(item, fields = {}) {
     valid: false,
     correct: false,
     confident: false,
-    method: null,
+    method,
+    tier: methodTier(method),
     transcript: item.transcript ?? null,
     error: null,
     ...fields,
@@ -226,31 +246,85 @@ export function reportBundle({ corpusReport = null, storeReport = null, generate
  * crashed or were still in flight and correctly count as seen-but-unanswered.
  */
 export function storeReport(store, { excludeSubjects = ['circuit-breaker'] } = {}) {
-  const subjects = typeof store.subjects === 'function'
-    ? store.subjects()
-    : store.db.prepare('SELECT DISTINCT subject FROM attempts').all().map((r) => r.subject);
+  // Prefer the one-row-per-subject SQL reduction when the store offers it: the old
+  // shape called `attemptsFor` for every subject, which is O(subjects x attempts)
+  // and the wrong thing to run behind a page that reloads (#64). The fallback keeps
+  // a store double that only implements the documented read surface working.
+  const rows = typeof store.latestValidationRows === 'function'
+    ? store.latestValidationRows()
+    : (typeof store.subjects === 'function'
+        ? store.subjects()
+        : store.db.prepare('SELECT DISTINCT subject FROM attempts').all().map((r) => r.subject)
+      ).map((subject) => {
+        const validate = store.attemptsFor(subject).filter((r) => r.stage === 'validate').at(-1);
+        return { subject, payload: validate?.payload ?? {}, ok: Boolean(validate?.ok) };
+      });
 
   const outcomes = [];
-  for (const subject of subjects) {
-    if (excludeSubjects.includes(subject)) continue;
-    const rows = store.attemptsFor(subject);
-    const validate = rows.filter((r) => r.stage === 'validate').at(-1);
-    const payload = validate?.payload ?? {};
+  for (const row of rows) {
+    if (excludeSubjects.includes(row.subject)) continue;
+    const payload = row.payload ?? {};
     outcomes.push({
-      id: subject,
+      id: row.subject,
       provenance: 'real',
       kind: 'traffic',
       class: payload.class ?? null,
       expected: null,
       answer: payload.answer ?? null,
-      valid: Boolean(validate?.ok),
+      valid: Boolean(row.ok),
       correct: false,
       confident: Boolean(payload.confident),
       method: payload.method ?? null,
+      tier: methodTier(payload.method ?? null),
       error: null,
     });
   }
   return buildReport(outcomes, { source: 'attempts' });
+}
+
+/**
+ * The recent solves the statistics page lists, newest first and bounded.
+ *
+ * Each row is the raw stored verdict plus the fields `formatSolveResponse` consumes,
+ * so the page renders the same answer/method/confidence/reason the solve page shows
+ * rather than a second interpretation of the same payload (#64, #65).
+ */
+export function storeRecentSolves(store, { limit = 5 } = {}) {
+  if (typeof store.recentSolves !== 'function') return [];
+  return store.recentSolves(limit).map((row) => {
+    const payload = row.payload ?? {};
+    const method = payload.method ?? null;
+    return {
+      subject: row.subject,
+      at: row.created_at,
+      answer: payload.answer ?? null,
+      method,
+      tier: methodTier(method),
+      confident: payload.confident === true,
+      puzzleClass: payload.class ?? null,
+      disputed: payload.disputed === true,
+      // The validate row records no `ms`; the elapsed wall time between the subject's
+      // first and last attempt is the timing the store actually has.
+      ms: row.ms != null ? row.ms : row.elapsedMs ?? null,
+      // The Pushbullet responder's own verdict, when one was recorded. HTTP and CLI
+      // solves have no responder row, so `null` means "not recorded", not "not sent".
+      sent: row.respond ? row.respond.sent === true : null,
+      respondReason: row.respond?.reason ?? null,
+    };
+  });
+}
+
+/**
+ * The recorded-traffic report plus the model-call count. It reuses `storeReport`, so
+ * the totals are the same numbers the tray and the accuracy CLI report, not a second
+ * implementation. The model-call count is a SQL aggregate over the model stages, not
+ * a read of every payload.
+ */
+export function storeStats(store, { excludeSubjects = ['circuit-breaker'] } = {}) {
+  const traffic = storeReport(store, { excludeSubjects });
+  const stageCounts = typeof store.stageCounts === 'function' ? store.stageCounts() : {};
+  const modelCalls = (stageCounts['model-text'] ?? 0) + (stageCounts['model-vision'] ?? 0);
+  return { traffic, modelCalls, stageCounts };
 }
 
 // ---------------------------------------------------------------------------
