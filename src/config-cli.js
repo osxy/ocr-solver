@@ -103,6 +103,9 @@ export async function runConfig(
   // Secrets are resolved with real values only for the credential store round-trip and
   // the Test connection probe; `list()` and every printer below expose presence/source.
   const secrets = await loadSecrets({ env, platform, ...(homedir ? { homedir } : {}), logger });
+  // The store chain and any fallback are user-facing: `config list` is where a
+  // Windows user learns whether DPAPI or the plaintext file is in use (#60).
+  for (const warning of secrets.warnings) stderr.write(`warning: ${warning}\n`);
 
   // The upgrade review (#67) lives in the app state store, never in `config.toml`.
   // Only `review`/`edit` need it; `list`/`get`/`set` stay store-free. A store that
@@ -190,7 +193,7 @@ export async function runConfig(
     switch (action) {
     case 'list': {
       stdout.write(`config: ${loaded.path}${loaded.loaded ? '' : ' (not present; defaults)'}\n`);
-      stdout.write(`credentials: ${credentialPath}\n`);
+      stdout.write(`credentials: ${secrets.store ?? credentialPath}\n`);
       writeItems(editor.list());
       return 0;
     }
@@ -259,6 +262,7 @@ export async function runConfig(
         editor,
         configPath: loaded.path,
         credentialPath,
+        credentialStore: secrets.store,
         secrets,
         logger,
         // #67: the editor is the review; the web shell can name the new settings.

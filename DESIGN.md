@@ -481,12 +481,14 @@ notify_on_unresolved = true
 stats_recent_solves = 5       # bounded 1-100; how many solves the statistics page lists
 ```
 
-**Secrets are never written to `config.toml`.** The Pushbullet token, the model key and the
-HTTP bearer token go to an ACL-restricted JSON file (or environment variables —
-`PUSHBULLET_TOKEN`, `LLM_API_KEY`, `HTTP_AUTH_TOKEN` — for development on Linux). A Windows
-Credential Manager provider is written behind an injectable loader but **ships no binding**:
-`keytar` is not a dependency, so on a real Windows install `import('keytar')` fails and the
-file store is what runs (issue #50). The
+**Secrets are never written to `config.toml`.** The Pushbullet token, the model key, the
+HTTP bearer token and the web UI verifier go to the platform credential store (or environment
+variables — `PUSHBULLET_TOKEN`, `LLM_API_KEY`, `HTTP_AUTH_TOKEN` — for development on Linux).
+On Windows that is **DPAPI at `CurrentUser` scope**, reached through PowerShell's
+`[System.Security.Cryptography.ProtectedData]`, writing `%APPDATA%\PuzzleSolver\credentials.dpapi`;
+a legacy plaintext `credentials.json` is read once, migrated and removed, and the file store
+remains the fallback (and is named as such) when the protected call fails (issue #60). Off
+Windows the `0600` JSON file is unchanged. The
 logger redacts the configured secrets by value and the documented shapes (`sk-`, `gsk_`,
 `AIza`, `ghp_`/`github_pat_`, `sk_live_`/`pk_live_`, `xox…`, `AKIA`, `o.`, `Bearer`), plus
 values following a credential key name (`api_key=`, `Authorization:`, `token:`).
@@ -498,13 +500,14 @@ fixed by the implementation and its tests:
   `count` and `arithmetic` stay at one sample, because M1-5 records them as deterministic and
   sampling `9 - 4` would add cost for no information. The default of 3 is therefore exactly the
   M1-5 default for the voting classes, not a new policy.
-- **The credential store is a provider interface**, not one hardcoded mechanism. The Windows
-  Credential Manager provider is loaded lazily and is **unverified** (this project is developed
-  on Linux); the cross-platform fallback is an ACL-restricted JSON file at
-  `%APPDATA%\PuzzleSolver\credentials.json` or `${XDG_CONFIG_HOME:-~/.config}/puzzlesolver/credentials.json`.
+- **The credential store is a provider interface**, not one hardcoded mechanism. On Windows it
+  is DPAPI at `CurrentUser` scope (a `credentials.dpapi` blob written through PowerShell's
+  `ProtectedData`), behind an injectable runner; off Windows it is an ACL-restricted JSON file
+  at `${XDG_CONFIG_HOME:-~/.config}/puzzlesolver/credentials.json`. A legacy
+  `%APPDATA%\PuzzleSolver\credentials.json` is migrated to DPAPI on first read and removed.
   A group/world-readable file still resolves but reports a warning. Resolution order is
   explicit option → environment → provider → `null`, and `describeSecret()` exposes only
-  `{ present, source, hint }`.
+  `{ present, source, hint }` — including which store answered (`windows-dpapi`/`file`).
 
 A missing config file is not an error: every value has a working default, so the app starts with
 no config at all. A *bad* value (unknown enum, negative or non-numeric interval, unknown OCR
@@ -542,7 +545,7 @@ turns it on, and `ui.tray = false` or `--headless` vetoes it. Notifications defa
 **First run** is `src/ui/setup.js`: validation (internal whitespace rejected, a trailing newline
 trimmed), an injected `Test connection` probe per field, and a write through the **existing**
 provider interface — `saveSecrets` calls `provider.set`, which M3 added to the file and
-Credential-Manager providers. There is no second credential file. The Windows dialog itself is
+Windows providers. There is no second credential file. The Windows dialog itself is
 not built here; its logic is, and that is what is tested.
 
 **Wiring (issue #25).** The dialog was built and tested but imported by nothing — a tested
@@ -947,7 +950,7 @@ dependencies.
 | State | `node:sqlite` | built in, no dependency |
 | Config | `smol-toml` | tiny pure-JS TOML parser |
 | Tray | `systray2` + `node-notifier` | no Electron; ~200 MB saved; both declared, both imported lazily (M3) |
-| Secrets | ACL-restricted per-user JSON file (mode 600) | no native dependency; the Windows Credential Manager provider is unverified code with no shipped binding (#50) |
+| Secrets | Windows DPAPI (`CurrentUser`) via PowerShell; else ACL-restricted JSON file (mode 600) | no native dependency and no key to manage; the round trip is executed on `windows-latest` (#60) |
 | Tests | `node:test` + `node:assert` | built in |
 
 **Trade-off accepted:** Node makes Windows packaging more awkward than .NET, mainly around
@@ -1001,9 +1004,11 @@ cooldown instead of one per puzzle.
 
 - Images leave the machine **only** if a cloud model is used; `solver.offline_only = true`
   restricts everything to Tier 0 + local OCR.
-- Secrets in an ACL-restricted per-user JSON file, never logged, `secrets.*` gitignored.
-  The Windows Credential Manager provider is unverified and ships no binding, so the file is
-  what runs on Windows too (issue #50).
+- Secrets in the platform credential store, never logged, `secrets.*` gitignored. On Windows
+  that is DPAPI at `CurrentUser` scope (a `credentials.dpapi` blob); elsewhere an
+  ACL-restricted per-user JSON file. A legacy plaintext Windows file is migrated on first read
+  and removed. `config list` names the store that answered (`windows-dpapi`/`file`), so a
+  fallback to the plaintext file is never silent (issues #50, #60).
 - Transcripts are logged (needed for debugging); image bytes are not, unless
   `log_images = true` for unresolved puzzles specifically.
 - The app posts nothing except a validated answer, and only in response to the originating push.
@@ -1017,7 +1022,7 @@ What each artefact gives a reader, and what was done about it:
 | **Log file** | operational lines, OCR transcripts, model failure text | the puzzles seen, the answers, and — if redaction failed — keys | every line passes through the single `redactRecord` (`redact` + `redactPushbullet` + `stripImageBytes`); image bytes are stripped |
 | **State database** | `attempts` rows (transcripts, model replies, error bodies), `pushes` (file names/URLs), `outbox` (answer hashes, delivery responses) | the puzzle history and what each tier answered | the same `redactRecord` runs inside `store.record` and the outbox writers, so a configured key or a documented shape in an upstream error body cannot persist |
 | **Config file** | non-secret settings only | the models, base URL, retention, and whether logging is on | secrets are rejected at load; every credential lives in the environment or the credential store |
-| **Credential store** | the Pushbullet token, the model key and the HTTP token | the account, if the file is not `0600` | `describeSecret` exposes only `{ present, source, hint }`; a world-readable fallback file warns and is tightened to `0600` on the next write; a file that cannot be parsed is reported and never overwritten (issue #46) |
+| **Credential store** | the Pushbullet token, the model key, the HTTP token and the web UI verifier | the account and the provider balance | Windows: DPAPI `CurrentUser` (`credentials.dpapi`), so a copy of the file on another account or machine is useless; elsewhere a `0600` JSON file. `describeSecret` exposes only `{ present, source, hint }`; the source names the store that answered (`windows-dpapi`/`file`); a world-readable fallback file warns and is tightened to `0600` on the next write; a file that cannot be parsed is reported and never overwritten (issue #46). **Residual: any process running as the user can ask the OS to unprotect the DPAPI blob.** |
 
 **Redaction is enforced, but it is not omniscience (issue #45).** Both sinks call the one
 `redactRecord`, so there is no second rule set to drift. It redacts, in order: the exact values
@@ -1175,7 +1180,7 @@ captchasolver/
 
 ## 10. Testing
 
-**Working now — 534 tests (528 pass, 6 skip), none needing a network or an API key:**
+**Working now — 672 tests (666 pass, 6 skip), none needing a network or an API key:**
 
 1. **Offline unit (37):** Dutch number words and compounds including diaereses, all four
    operators, precedence, division by zero; transcript normalisation and every repair rule;
@@ -1295,12 +1300,12 @@ the same way, then removes the three per-user folders. All path and task decisio
 Node modules; the PowerShell is locator/launcher glue.
 
 **Unverifiable on the Linux development host:** `wscript` execution, `schtasks` registration and
-restart-on-failure behaviour, the Credential-Manager `set`, the `_ps1` scripts end to end,
-Explorer opening a log, and the actual tray widget. Every one of those has a testable seam
-(content, arguments or an injected loader) which is asserted. Since issue #59 the installer,
-task registration and inspection, the `--headless` start, the `wscript` launcher and uninstall are
-also executed on `windows-latest`; what remains native-only is the interactive-desktop behaviour
-(tray, toast, Explorer hand-off) and the Credential-Manager `set`.
+restart-on-failure behaviour, the `_ps1` scripts end to end, Explorer opening a log, and the
+actual tray widget. Every one of those has a testable seam (content, arguments or an injected
+loader) which is asserted. Since issue #59 the installer, task registration and inspection, the
+`--headless` start, the `wscript` launcher and uninstall are also executed on `windows-latest`,
+and since #60 the real DPAPI round trip is (`packaging/run-dpapi.ps1`); what remains native-only
+is the interactive-desktop behaviour (tray, toast, Explorer hand-off).
 
 **CI packaging and release (issue #19).** `.github/workflows/package.yml` builds and publishes the
 Windows package; `ci.yml` gained `workflow_call` and is the gate, so the Node matrix still has one
@@ -1350,8 +1355,9 @@ Windows build it reuses, and an installer regression belongs on the PR that intr
 What an interactive desktop would be needed for is still unverified: the native `systray2` tray
 widget and the `node-notifier` toast need a window station, and the `explorer.exe` browser hand-off
 (#56) is likewise unexercised. Restart-on-failure is inspected as a task *property*; a crash loop
-has not been observed restarting it. The Credential-Manager provider remains unshipped and
-unverified (see [§8](#8-state-and-secrets)).
+has not been observed restarting it. The DPAPI credential round trip, by contrast, *is* executed
+on the runner (see [§8](#8-security--privacy)); what it cannot cover is a process running as the
+same user.
 
 **Unverifiable on the Linux development host:** `Compress-Archive`/`Expand-Archive`, running the
 bundled `node.exe`, and the release job's `gh` call. The decisions with a judgement in them (the

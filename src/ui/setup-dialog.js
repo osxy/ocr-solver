@@ -23,6 +23,7 @@ import { createInterface } from 'node:readline/promises';
 export async function defaultSetupDialog({
   setup,
   credentialPath = null,
+  credentialStore = null,
   logger = null,
   input = process.stdin,
   output = process.stdout,
@@ -34,7 +35,7 @@ export async function defaultSetupDialog({
 
   try {
     say('PuzzleSolver first-run setup');
-    if (credentialPath) say(`Secrets will be stored in ${credentialPath}`);
+    if (credentialStore ?? credentialPath) say(`Secrets will be stored in ${credentialStore ?? credentialPath}`);
     const pushbulletToken = await ask('Pushbullet token: ');
     const llmApiKey = await ask('Model API key (optional, Enter to skip): ');
 

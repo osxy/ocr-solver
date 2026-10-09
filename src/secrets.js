@@ -6,7 +6,7 @@
  *   1. an explicit option (`--token`, `--api-key`);
  *   2. the environment (`PUSHBULLET_TOKEN`, `LLM_API_KEY`) - what development and
  *      the live test suite use;
- *   3. the platform credential store (Windows Credential Manager, or the
+ *   3. the platform credential store (Windows DPAPI, or the
  *      ACL-restricted file fallback);
  *   4. otherwise `null`.
  *
@@ -14,10 +14,15 @@
  * stringified into an error. `describeSecret` is the only diagnostic, and it keeps
  * a three-character prefix - enough to tell two keys apart, useless to a reader.
  *
- * The Windows Credential Manager provider is loaded lazily. The development and CI
- * environment is Linux, so that branch has never been executed here: it is behind a
- * one-method provider interface, its loader is injectable, and no test requires it.
+ * On Windows the store is DPAPI (`CurrentUser`) reached through the PowerShell that
+ * ships with every Windows box, so no npm dependency is needed. That is why it
+ * replaced the keytar-based Credential Manager provider: keytar was never a
+ * dependency, so that branch could only ever fall through to the plaintext file
+ * (issue #60). The PowerShell call sits behind an injectable runner, so everything
+ * above it is testable off Windows; the real round trip is demonstrated on
+ * `windows-latest` by the deploy job (`packaging/run-dpapi.ps1`).
  */
+import { spawnSync } from 'node:child_process';
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir as osHomedir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -45,7 +50,6 @@ export const FILE_SECRET_KEYS = {
 };
 
 export const SECRET_NAMES = Object.keys(SECRET_ENV);
-export const CREDENTIAL_SERVICE = 'PuzzleSolver';
 
 /**
  * A safe description of a secret for diagnostics.
@@ -158,6 +162,7 @@ export function createFileCredentialProvider({
 
   return {
     name: 'file',
+    path,
     get(name) {
       if (!path || !fileExists(path)) return null;
       const outcome = readStore();
@@ -236,66 +241,272 @@ export function createFileCredentialProvider({
 }
 
 /**
- * Windows Credential Manager provider.
+ * Windows credential store: DPAPI at `CurrentUser` scope, reached through the
+ * PowerShell that ships with every Windows box.
  *
- * UNVERIFIED ON WINDOWS. This repository is developed and tested on Linux, so this
- * code path has never run. It is written against the keytar-style interface
- * (`getPassword(service, account)`) and its module loader is injectable, which is
- * what the tests exercise instead. A Windows build is expected to provide the
- * native binding; M2's dependency budget is `smol-toml` alone, so none is bundled.
- * Any failure (missing module, no entry) returns null so the environment variable
- * path still works.
+ * `Add-Type -AssemblyName System.Security` exposes
+ * `[System.Security.Cryptography.ProtectedData]`, so this needs no npm dependency and
+ * no key to manage. `keytar` was never a dependency, so the old Credential Manager
+ * branch could only fall through to the plaintext file (issue #60); DPAPI is the
+ * shipped store now.
+ *
+ * The blob is written to a *sibling* file rather than over the legacy JSON path, so a
+ * fallback write by the file provider can never scribble plaintext into the middle of
+ * an encrypted envelope. The legacy file is read once, migrated, then removed.
+ *
+ * Everything below the PowerShell call is injectable, so the provider is exercised off
+ * Windows. The real round trip is demonstrated on `windows-latest` by the deploy job
+ * (`packaging/run-dpapi.ps1`), not asserted from this file's existence.
  */
-export function createWindowsCredentialProvider({
-  loadModule = () => import('keytar'),
+export const DPAPI_FORMAT = 'puzzlesolver-dpapi';
+export const DPAPI_SCOPE = 'CurrentUser';
+
+/** Where the DPAPI blob lives: beside the legacy file it replaces, never on top of it. */
+export function protectedCredentialPath(filePath) {
+  return join(dirname(filePath), 'credentials.dpapi');
+}
+
+// The value travels on stdin as base64 and both scripts emit base64, so the pipe is
+// pure ASCII and Windows PowerShell's console encoding cannot mangle a secret.
+const DPAPI_PROTECT_SCRIPT = [
+  "$ErrorActionPreference = 'Stop'",
+  'Add-Type -AssemblyName System.Security',
+  '$in = [Console]::In.ReadToEnd()',
+  '$plain = [Convert]::FromBase64String($in.Trim())',
+  '$protected = [System.Security.Cryptography.ProtectedData]::Protect($plain, $null, [System.Security.Cryptography.DataProtectionScope]::CurrentUser)',
+  '[Console]::Out.Write([Convert]::ToBase64String($protected))',
+].join('; ');
+
+const DPAPI_UNPROTECT_SCRIPT = [
+  "$ErrorActionPreference = 'Stop'",
+  'Add-Type -AssemblyName System.Security',
+  '$in = [Console]::In.ReadToEnd()',
+  '$protected = [Convert]::FromBase64String($in.Trim())',
+  '$plain = [System.Security.Cryptography.ProtectedData]::Unprotect($protected, $null, [System.Security.Cryptography.DataProtectionScope]::CurrentUser)',
+  '[Console]::Out.Write([Convert]::ToBase64String($plain))',
+].join('; ');
+
+/**
+ * The default DPAPI runner. The script is passed as an `-EncodedCommand`
+ * (UTF-16LE base64), which removes every quoting hazard, and the value on stdin as
+ * base64. `protect` maps plaintext to a DPAPI blob; `unprotect` maps it back.
+ *
+ * A non-zero exit, a spawn error or empty output throws, so the caller can fall back
+ * to the file provider and say so instead of pretending the secret was protected.
+ */
+export function createDpapiRunner({ spawn = spawnSync, powershell = 'powershell.exe', timeoutMs = 20000 } = {}) {
+  function run(script, input) {
+    const encoded = Buffer.from(script, 'utf16le').toString('base64');
+    const result = spawn(
+      powershell,
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded],
+      { input: `${input}\n`, encoding: 'utf8', timeout: timeoutMs, windowsHide: true, maxBuffer: 1024 * 1024 }
+    );
+    if (result?.error) throw result.error;
+    if (result?.status !== 0) {
+      const detail = String(result?.stderr ?? '').trim();
+      throw new Error(`PowerShell exited ${result?.status}${detail ? `: ${detail}` : ''}`);
+    }
+    const output = String(result?.stdout ?? '').trim();
+    if (output === '') throw new Error('PowerShell returned no output');
+    return output;
+  }
+  return {
+    async protect(plaintext) {
+      return run(DPAPI_PROTECT_SCRIPT, Buffer.from(String(plaintext), 'utf8').toString('base64'));
+    },
+    async unprotect(ciphertextBase64) {
+      return Buffer.from(run(DPAPI_UNPROTECT_SCRIPT, String(ciphertextBase64)), 'base64').toString('utf8');
+    },
+  };
+}
+
+/**
+ * The DPAPI credential provider.
+ *
+ * A protected call is the *only* way this provider ever serves or writes a value: on
+ * any failure it returns `null` (read) or throws (write), so the file provider behind
+ * it is the only path that can use plaintext and the reported `source` is truthful.
+ * The failure is recorded as a warning so the fallback is announced, never silent.
+ */
+export function createDpapiCredentialProvider({
   platform = process.platform,
-  service = CREDENTIAL_SERVICE,
+  path = defaultCredentialPath(),
+  protectedPath = protectedCredentialPath(path),
+  runner = null,
+  readFile = readFileSync,
+  writeFile = writeFileSync,
+  fileExists = existsSync,
+  mkdir = mkdirSync,
+  rename = renameSync,
+  unlink = unlinkSync,
+  mode = 0o600,
+  now = () => Date.now(),
+  pid = process.pid,
+  format = DPAPI_FORMAT,
+  scope = DPAPI_SCOPE,
 } = {}) {
-  let modulePromise = null;
-  async function binding() {
-    if (platform !== 'win32') return null;
-    if (!modulePromise) modulePromise = Promise.resolve().then(loadModule);
+  const dpapi = runner ?? createDpapiRunner();
+  let pendingWarnings = [];
+  // Migration and the first decrypt happen once per process. `null` is a cached
+  // failure: the provider then declines every read, so the file provider serves the
+  // legacy value with source `file` and the warning explains why.
+  let storePromise = null;
+
+  function readObject(file) {
     try {
-      const mod = await modulePromise;
-      return mod?.default ?? mod ?? null;
+      const parsed = JSON.parse(readFile(file, 'utf8'));
+      return parsed != null && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
     } catch {
-      // No binding installed: fall through to the file store / environment.
       return null;
     }
   }
-  return {
-    name: 'windows-credential-manager',
-    async get(name) {
-      const account = FILE_SECRET_KEYS[name];
-      if (!account) return null;
-      const mod = await binding();
-      if (typeof mod?.getPassword !== 'function') return null;
+
+  function isEnvelope(value) {
+    return value != null && typeof value === 'object' && value.format === format && typeof value.data === 'string';
+  }
+
+  /** Encrypt the whole store and replace the protected file atomically. */
+  async function writeProtected(store) {
+    const plain = `${JSON.stringify(store, null, 2)}\n`;
+    const data = await dpapi.protect(plain);
+    const envelope = `${JSON.stringify({ format, version: 1, scope, data }, null, 2)}\n`;
+    mkdir(dirname(protectedPath), { recursive: true });
+    const tmp = `${protectedPath}.tmp-${pid}-${now()}`;
+    try {
+      writeFile(tmp, envelope, { encoding: 'utf8', mode });
+      rename(tmp, protectedPath);
+    } catch (err) {
       try {
-        const value = await mod.getPassword(service, account);
-        return value != null && String(value).trim() !== '' ? String(value) : null;
+        unlink(tmp);
       } catch {
+        // the temp file may not exist; the original write error is the one that matters
+      }
+      throw err;
+    }
+  }
+
+  /** Delete the plaintext file; if it cannot be deleted, scrub its contents instead. */
+  function scrubLegacy() {
+    try {
+      unlink(path);
+      return 'removed';
+    } catch {
+      try {
+        writeFile(path, '{}\n', { encoding: 'utf8', mode });
+        return 'scrubbed';
+      } catch {
+        return 'left';
+      }
+    }
+  }
+
+  async function loadStore() {
+    if (fileExists(protectedPath)) {
+      const envelope = readObject(protectedPath);
+      if (!isEnvelope(envelope)) {
+        pendingWarnings.push(`the protected credential store ${protectedPath} is not a recognised DPAPI envelope; it was ignored`);
         return null;
       }
+      try {
+        const parsed = JSON.parse(await dpapi.unprotect(envelope.data));
+        if (parsed == null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          pendingWarnings.push(`the protected credential store ${protectedPath} did not hold a JSON object; it was ignored`);
+          return null;
+        }
+        return parsed;
+      } catch (err) {
+        pendingWarnings.push(
+          `the protected credential store ${protectedPath} could not be decrypted (${err?.message ?? err}); ` +
+            'nothing was changed and the plaintext fallback is being used'
+        );
+        return null;
+      }
+    }
+
+    // No protected store: migrate a legacy plaintext file on this first read.
+    const legacy = readObject(path);
+    if (legacy) {
+      try {
+        await writeProtected(legacy);
+      } catch (err) {
+        pendingWarnings.push(
+          `DPAPI is unavailable (${err?.message ?? err}); the plaintext credential file ${path} was left in place and is being used`
+        );
+        return null;
+      }
+      const outcome = scrubLegacy();
+      if (outcome === 'left') {
+        pendingWarnings.push(
+          `credentials were migrated to ${protectedPath} but the plaintext file ${path} could not be removed; delete it manually`
+        );
+      } else if (outcome === 'scrubbed') {
+        pendingWarnings.push(
+          `credentials were migrated to ${protectedPath} but the plaintext file ${path} could not be deleted; it was overwritten with an empty store`
+        );
+      }
+      return legacy;
+    }
+    // Nothing to migrate. The file provider still reports an unparseable legacy file
+    // with its own warning, and this provider makes no claim that DPAPI worked.
+    return {};
+  }
+
+  function ensureStore() {
+    if (!storePromise) storePromise = loadStore();
+    return storePromise;
+  }
+
+  return {
+    name: 'windows-dpapi',
+    protectedPath,
+    async get(name) {
+      if (platform !== 'win32') return null;
+      const key = FILE_SECRET_KEYS[name];
+      if (!key) return null;
+      const store = await ensureStore();
+      if (store == null) return null;
+      const value = store[key];
+      return value != null && String(value).trim() !== '' ? String(value) : null;
     },
-    /** UNVERIFIED ON WINDOWS: written against the keytar `setPassword` shape. */
     async set(name, value) {
-      const account = FILE_SECRET_KEYS[name];
-      if (!account) throw new Error(`unknown secret name ${JSON.stringify(name)}`);
+      if (platform !== 'win32') throw new Error('DPAPI is only available on Windows');
+      const key = FILE_SECRET_KEYS[name];
+      if (!key) throw new Error(`unknown secret name ${JSON.stringify(name)}`);
       const text = String(value ?? '');
       if (text.trim() === '') throw new Error(`refusing to store an empty secret for ${name}`);
-      const mod = await binding();
-      if (typeof mod?.setPassword !== 'function') throw new Error('credential manager backing unavailable');
-      await mod.setPassword(service, account, text);
-      return { stored: true, store: 'windows-credential-manager' };
+      const store = await ensureStore();
+      if (store == null) throw new Error('the DPAPI credential store is unavailable');
+      store[key] = text;
+      await writeProtected(store);
+      return { stored: true, store: 'windows-dpapi', path: protectedPath };
+    },
+    warnings() {
+      const out = pendingWarnings;
+      pendingWarnings = [];
+      return out;
     },
   };
+}
+
+/**
+ * A human label for the store secrets are written to. It names the actual destination
+ * so a Windows install does not advertise a plaintext path it will not use.
+ */
+export function describeCredentialStore(providers = [], { platform = process.platform } = {}) {
+  const dpapi = providers.find((provider) => provider?.name === 'windows-dpapi');
+  if (platform === 'win32' && dpapi) {
+    return dpapi.protectedPath ? `Windows DPAPI (CurrentUser) at ${dpapi.protectedPath}` : 'Windows DPAPI (CurrentUser)';
+  }
+  const file = providers.find((provider) => provider?.name === 'file');
+  return file?.path ? `credential file at ${file.path}` : 'the file credential store';
 }
 
 /** The providers used when none are injected, in priority order. */
 export function defaultCredentialProviders(options = {}) {
   const providers = [];
   if ((options.platform ?? process.platform) === 'win32') {
-    providers.push(createWindowsCredentialProvider(options));
+    providers.push(createDpapiCredentialProvider(options));
   }
   providers.push(createFileCredentialProvider(options));
   return providers;
@@ -331,7 +542,7 @@ export async function resolveSecret(name, { explicit = null, env = process.env, 
 
 /**
  * Resolve every known secret.
- * @returns {Promise<{pushbullet: {value,source}, llm: {value,source}, providers: string[], warnings: string[]}>}
+ * @returns {Promise<{pushbullet: {value,source}, llm: {value,source}, providers: string[], store: string, warnings: string[]}>}
  */
 export async function loadSecrets({
   explicit = {},
@@ -363,8 +574,12 @@ export async function loadSecrets({
     }
   }
   for (const warning of warnings) logger?.warn?.(warning);
+  // Name the store chain explicitly, so a Windows install that fell back to the file
+  // shows both the preference and the fallback instead of hiding it (#60).
+  const store = describeCredentialStore(list, { platform });
+  logger?.info?.(`credential store: ${list.map((p) => p.name).join(' -> ')} (${store})`);
 
-  return { ...out, providers: list.map((p) => p.name), warnings };
+  return { ...out, providers: list.map((p) => p.name), store, warnings };
 }
 
 /**
@@ -413,6 +628,9 @@ export async function saveSecrets({
         break;
       } catch (err) {
         lastError = err;
+        // The fallback is announced: silently storing plaintext because DPAPI is
+        // unavailable would be exactly the posture #60 exists to end.
+        logger?.warn?.(`credential store ${provider.name} did not accept the ${name} secret: ${err?.message ?? err}`);
       }
     }
     if (!stored) {

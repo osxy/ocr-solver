@@ -198,3 +198,37 @@ test('runUninstall deletes the task and tolerates one that was never registered'
   const missing = runUninstall({ spawn: () => ({ status: 1 }), log: { warn() {} } });
   assert.equal(missing.removed, false, 'an absent task is already the desired end state');
 });
+
+// ---------------------------------------------------------------------------
+// DPAPI round trip (executed on windows-latest; asserted as content here)
+// ---------------------------------------------------------------------------
+
+test('run-dpapi.ps1 runs the round trip against the artifact, not this checkout', () => {
+  const ps = readFileSync(join(packaging, 'run-dpapi.ps1'), 'utf8');
+  assert.match(ps, /Expand-Archive/);
+  assert.match(ps, /Join-Path \$payload 'app\\src\\secrets\.js'/, 'it must test the shipped secrets.js');
+  assert.match(ps, /dpapi-roundtrip\.mjs/);
+  assert.match(ps, /\$code -eq 0/, 'a non-zero node exit must fail the step');
+  assert.match(ps, /DPAPI round trip/, 'the step must confirm the script reported success');
+  assert.match(ps, /WaitForExit\(120000\)/, 'the run is bounded');
+});
+
+test('dpapi-roundtrip.mjs asserts migration, removal and a round trip through the shipped store', () => {
+  const script = readFileSync(join(packaging, 'dpapi-roundtrip.mjs'), 'utf8');
+  assert.match(script, /app', 'src', 'secrets\.js'/, 'it imports the shipped store, not a copy');
+  assert.match(script, /createDpapiCredentialProvider/);
+  assert.match(script, /saveSecrets/);
+  assert.match(script, /existsSync\(credentialPath\)/, 'the plaintext file must be asserted gone');
+  assert.match(script, /includes\(legacySecret\)/, 'the protected file must be asserted free of the plaintext');
+  assert.equal(/powershell/i.test(script), false, 'the DPAPI call belongs in secrets.js, not duplicated in the proof');
+});
+
+test('the package workflow executes the DPAPI round trip on the Windows deploy job', () => {
+  const workflow = readFileSync(join(repoRoot, '.github', 'workflows', 'package.yml'), 'utf8');
+  assert.match(workflow, /run-dpapi\.ps1 -Zip \$zip/);
+  // It must be a step of the job that already has the artifact, after the deploy glue.
+  const deployIndex = workflow.indexOf('deploy:');
+  const dpapiIndex = workflow.indexOf('Prove the DPAPI credential round trip');
+  const releaseIndex = workflow.indexOf('release:');
+  assert.ok(deployIndex >= 0 && dpapiIndex > deployIndex && dpapiIndex < releaseIndex, 'the DPAPI step belongs to the deploy job');
+});
