@@ -14,6 +14,10 @@ on:
   push:
   pull_request:
     branches: [main]
+  # Callable from the Windows package workflow so there is one Node matrix and no
+  # second copy of the offline suite to keep in sync. Adding this does not change what
+  # runs on push or pull_request.
+  workflow_call:
 
 jobs:
   test:

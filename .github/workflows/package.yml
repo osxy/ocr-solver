@@ -1,0 +1,117 @@
+# CI/CD: build the Windows package and publish it as a downloadable Release.
+#
+# The packaging job runs on windows-latest because `sharp` is a native module: a
+# node_modules installed on Ubuntu contains Linux binaries and will not load on
+# Windows. Cross-installing with --os=win32 --cpu=x64 is fragile, so the build happens
+# on the platform it ships to.
+#
+# The packaged app is smoke-tested *after* the zip is extracted into a clean directory.
+# If that fails the release job never runs, so a broken tree publishes nothing.
+#
+# Triggers, and why this shape matters:
+#   - pull_request -> main: build + smoke test, publish nothing. This is the only way
+#     to prove the packaging job runs before the workflow exists on the default branch
+#     (`workflow_dispatch` is not available until then).
+#   - push -> main: same, so `main` is known to package.
+#   - push of a `v*` tag: build + smoke test, then create the Release.
+#   - workflow_dispatch: manual run of the same pipeline, no release.
+name: Package (Windows)
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+# Read everywhere; only the release job opts into write access.
+permissions:
+  contents: read
+
+concurrency:
+  group: package-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # The existing Ubuntu offline suite is the gate. Reusing ci.yml keeps one source of
+  # truth for the Node matrix and leaves its behaviour unchanged.
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  package:
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+
+      # Fail fast: a tag that disagrees with package.json must never produce an artifact.
+      - name: Refuse a mismatched tag
+        run: node packaging/check-version.mjs
+
+      - name: Assemble the payload
+        run: node packaging/build-payload.mjs
+
+      - name: Zip the payload
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          ./packaging/build-zip.ps1 -Payload dist/payload -Version $version -OutDir dist
+
+      - name: Write the checksum and the size summary
+        shell: pwsh
+        run: |
+          $zip = (Get-ChildItem dist/*.zip).FullName
+          node packaging/checksum.mjs $zip
+
+      # Verify the artifact, not the source: unzip into a clean directory and run it.
+      - name: Smoke-test the extracted artifact
+        shell: pwsh
+        run: |
+          $zip = (Get-ChildItem dist/*.zip).FullName
+          ./packaging/run-smoke.ps1 -Zip $zip -Corpus corpus -RepoRoot .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-package
+          path: |
+            dist/*.zip
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    needs: package
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-package
+          path: dist
+
+      # `gh` is preinstalled on the runner, so publishing needs no third-party action
+      # to pin. The default GITHUB_TOKEN is scoped to this job only.
+      - name: Create the Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          # Pre-1.0 tags are pre-releases: GitHub should not offer the first 0.x build
+          # as the project's "latest".
+          pre=""
+          case "$tag" in v0.*) pre="--prerelease" ;; esac
+          gh release create "$tag" \
+            --title "PuzzleSolver $tag" \
+            --generate-notes \
+            $pre \
+            dist/*.zip dist/*.sha256
