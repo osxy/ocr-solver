@@ -1,0 +1,58 @@
+#!/bin/sh
+# Refuse direct pushes to a protected branch. See AGENTS.md section 1.
+#
+# Enable in a clone with:
+#     git config core.hooksPath scripts/git-hooks
+# (`npm install` does this via the package.json "prepare" script.)
+#
+# Deliberate override, for bootstrapping or an emergency:
+#     ALLOW_MAIN_PUSH=1 git push origin main
+#
+# Git passes one line per ref being pushed on stdin:
+#     <local ref> <local sha> <remote ref> <remote sha>
+
+PROTECTED_BRANCHES="main master"
+
+if [ "${ALLOW_MAIN_PUSH:-}" = "1" ]; then
+  echo "pre-push: ALLOW_MAIN_PUSH=1 set - allowing a direct push to a protected branch." >&2
+  echo "pre-push: record why in the commit or the PR description afterwards." >&2
+  exit 0
+fi
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ -n "$remote_ref" ] || continue
+
+  branch=${remote_ref#refs/heads/}
+  for protected in $PROTECTED_BRANCHES; do
+    [ "$branch" = "$protected" ] || continue
+
+    cat >&2 <<EOF
+
+pre-push: refusing to push to '$branch'.
+
+  '$branch' is protected. Changes go through a branch and a pull request:
+
+      git switch -c <type>/<short-slug>        # feat/ fix/ docs/ chore/ test/
+      git push -u origin <type>/<short-slug>
+      # then open a pull request against '$branch'
+
+  If your commits are already sitting on '$branch' locally, move them instead
+  of pushing:
+
+      git branch <type>/<slug>                 # branch at the current commit
+      git reset --hard origin/$branch          # rewind '$branch', keeping the branch
+      git switch <type>/<slug>
+      git push -u origin <type>/<slug>
+
+  Deliberate override:
+
+      ALLOW_MAIN_PUSH=1 git push origin $branch
+
+  See AGENTS.md section 1.
+
+EOF
+    exit 1
+  done
+done
+
+exit 0

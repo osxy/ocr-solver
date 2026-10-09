@@ -21,6 +21,7 @@
     "test:corpus": "node --test tests/corpus.test.js",
     "solve": "node src/cli.js",
     "tune": "node scripts/tune-preprocessing.js",
-    "test:live": "node --test tests/live-model.test.js"
+    "test:live": "node --test tests/live-model.test.js",
+    "prepare": "git config core.hooksPath scripts/git-hooks 2>/dev/null || true"
   }
 }
