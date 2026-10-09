@@ -27,12 +27,15 @@ import { DEFAULT_MAX_PIXELS, DEFAULT_MAX_WIDTH } from './imaging/limits.js';
 import { HISTORY_MODES } from './pushbullet/listener.js';
 import { STRATEGIES, DEFAULT_UNRESOLVED_TITLE, DEFAULT_UNRESOLVED_TEXT } from './pushbullet/respond.js';
 import {
+  DEFAULT_ALLOW_IMAGE_URL,
   DEFAULT_HTTP_BIND,
   DEFAULT_HTTP_PORT,
+  DEFAULT_IMAGE_URL_HOSTS,
   DEFAULT_MAX_BODY_BYTES,
   DEFAULT_MAX_QUEUE,
   DEFAULT_RATE_LIMIT_PER_MIN,
   DEFAULT_TIMEOUT_MS,
+  imageUrlHostProblem,
 } from './http/defaults.js';
 
 export class ConfigError extends Error {
@@ -130,6 +133,11 @@ export const DEFAULTS = {
     // the request is refused (503 + Retry-After) rather than queued to bill for an
     // answer nobody is waiting for. See DESIGN 4.15 (#43).
     max_queue: DEFAULT_MAX_QUEUE,
+    // `image_url` makes the server fetch a caller-supplied URL (SSRF). Uploading is
+    // the normal path, so this is off by default; enabling it requires the host to
+    // be named below (default deny). See DESIGN §8 (issue #57).
+    allow_image_url: DEFAULT_ALLOW_IMAGE_URL,
+    image_url_hosts: DEFAULT_IMAGE_URL_HOSTS,
   },
 };
 
@@ -262,6 +270,15 @@ function requireStringArray(config, section, key, { nonEmpty = false } = {}) {
   }
 }
 
+/** An allowlist of bare hosts; a typo like `https://example.com` must not silently deny. */
+function requireHostList(config, section, key) {
+  requireStringArray(config, section, key);
+  for (const entry of config[section][key]) {
+    const problem = imageUrlHostProblem(entry);
+    if (problem) throw new ConfigError(`${section}.${key} entry ${JSON.stringify(entry)} ${problem}`);
+  }
+}
+
 function requireVariants(config, section, key) {
   const value = config[section][key];
   requireStringArray(config, section, key, { nonEmpty: true });
@@ -340,6 +357,8 @@ export function validateConfig(raw = {}) {
   requireNumber(config, 'http', 'timeout_ms', { min: 0, integer: true });
   requireNumber(config, 'http', 'max_body_bytes', { min: 1, integer: true });
   requireNumber(config, 'http', 'max_queue', { min: 1, integer: true });
+  requireBoolean(config, 'http', 'allow_image_url');
+  requireHostList(config, 'http', 'image_url_hosts');
 
   return { config, warnings };
 }

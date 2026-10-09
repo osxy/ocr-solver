@@ -41,6 +41,7 @@ import {
   MIN_HTTP_TOKEN_LENGTH,
   SOLVE_PATH,
   httpTokenProblem,
+  imageUrlHostAllowed,
 } from './defaults.js';
 
 // Re-exported so `server.js` remains the single import site for the HTTP ingress's
@@ -54,6 +55,7 @@ export {
   MIN_HTTP_TOKEN_LENGTH,
   SOLVE_PATH,
   httpTokenProblem,
+  imageUrlHostAllowed,
 };
 
 const LOOPBACK_HOSTS = new Set(['::1', 'localhost']);
@@ -98,6 +100,9 @@ export function imageErrorStatus(err) {
       return 502;
     case 'no-url':
       return 400;
+    // A redirect is refused before it is followed; policy, not a bad image (#57).
+    case 'redirect':
+      return 403;
     // magic | decode | height - the bytes are not an image we can use
     default:
       return 415;
@@ -216,6 +221,43 @@ export function assertHttpUrl(value) {
   return url.toString();
 }
 
+// The refusal wording points every caller at the normal path: uploading the image.
+const UPLOAD_ALTERNATIVE =
+  'upload the image instead (image_base64, a multipart/form-data file, or an image/* body)';
+const IMAGE_URL_DISABLED_REASON =
+  `image_url is disabled by default; ${UPLOAD_ALTERNATIVE}, or set http.allow_image_url = true ` +
+  'and add the host to http.image_url_hosts';
+const IMAGE_URL_REDIRECT_REASON =
+  'image_url redirected and redirects are not followed; the target may be a blocked address. ' +
+  `Host the image at a URL that answers directly, or ${UPLOAD_ALTERNATIVE}`;
+
+/**
+ * Refuse an `image_url` the operator has not opted into (#57).
+ *
+ * Two independent gates: the feature is off unless `allow_image_url` is true, and the
+ * URL's host must then be named in `image_url_hosts` (default deny). The host list is
+ * the control, not a post-resolution address check: `fetch` re-resolves the name, so
+ * checking the resolved address and then fetching by name is a check DNS rebinding
+ * walks past. Validate the name the operator chose instead.
+ */
+export function assertImageUrlAllowed(url, { enabled = false, hosts = [] } = {}) {
+  if (!enabled) throw new HttpError(403, 'image_url_disabled', IMAGE_URL_DISABLED_REASON);
+  let host;
+  try {
+    host = (url instanceof URL ? url : new URL(String(url))).hostname;
+  } catch {
+    host = String(url);
+  }
+  if (!imageUrlHostAllowed(host, hosts)) {
+    throw new HttpError(
+      403,
+      'image_url_host_not_allowed',
+      `image_url host ${host} is not in http.image_url_hosts; add it there, or ${UPLOAD_ALTERNATIVE}`
+    );
+  }
+  return url;
+}
+
 /** Parse the request into a description the resolver can act on, without touching bytes yet. */
 async function classifyRequest(req, body) {
   const contentType = String(req.headers['content-type'] ?? '').toLowerCase();
@@ -245,7 +287,7 @@ async function classifyRequest(req, body) {
 }
 
 /** Resolve the parsed request to a validated image (bytes + ext) and the requested egress. */
-async function resolveImage(parsed, { inboxDir, maxBodyBytes, fetchImpl, imageLimits }) {
+async function resolveImage(parsed, { inboxDir, maxBodyBytes, fetchImpl, imageLimits, imageUrlPolicy }) {
   const saveValidated = (validated) => {
     const iden = `http-${createHash('sha256').update(validated.buffer).digest('hex').slice(0, 32)}`;
     const path = saveImage(validated.buffer, { inboxDir, iden, ext: validated.ext });
@@ -258,8 +300,25 @@ async function resolveImage(parsed, { inboxDir, maxBodyBytes, fetchImpl, imageLi
       return saveValidated(await validateImageBuffer(bytes, { maxBytes: maxBodyBytes, ...imageLimits }));
     }
     if (typeof parsed.json.image_url === 'string') {
+      // Parse, then policy: the scheme is checked before the host, and only a permitted
+      // host is fetched. The fetch will not follow a redirect.
       const url = assertHttpUrl(parsed.json.image_url);
-      const image = await downloadImage(url, { fetchImpl, maxBytes: maxBodyBytes, ...imageLimits });
+      assertImageUrlAllowed(url, imageUrlPolicy);
+      let image;
+      try {
+        image = await downloadImage(url, {
+          fetchImpl,
+          maxBytes: maxBodyBytes,
+          redirect: 'manual',
+          ...imageLimits,
+        });
+      } catch (err) {
+        // The fetcher reports the 3xx; the HTTP layer owns the status and wording.
+        if (err instanceof ImageFetchError && err.reason === 'redirect') {
+          throw new HttpError(403, 'image_url_redirect', IMAGE_URL_REDIRECT_REASON);
+        }
+        throw err;
+      }
       return saveValidated(image);
     }
     throw new HttpError(400, 'missing_image', 'provide image_base64 or image_url');
@@ -467,6 +526,13 @@ export function createHttpServer({
     maxPixels: config.image?.max_pixels ?? DEFAULT_MAX_PIXELS,
   });
   const modelNames = { text: config.solver?.llm_text_model ?? null, vision: config.solver?.llm_vision_model ?? null };
+  // Captured with the rest of the `http.*` block, so the editor's `[restart]` label is
+  // true. `image_url` is off unless both gates pass (#57). The array is copied so a
+  // later in-place edit of the config cannot widen the allowlist by accident.
+  const imageUrlPolicy = {
+    enabled: http.allow_image_url === true,
+    hosts: [...(http.image_url_hosts ?? [])],
+  };
   // The acknowledgement a human would receive for an unresolved puzzle. It is reported
   // even when nothing is delivered, so a caller can relay the same wording.
   const unresolvedReply =
@@ -612,6 +678,7 @@ export function createHttpServer({
         maxBodyBytes: http.max_body_bytes,
         fetchImpl,
         imageLimits: imageLimits(),
+        imageUrlPolicy,
       });
 
       const deliver = parsed.deliver ?? (url.searchParams.get('deliver') || null);

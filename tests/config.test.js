@@ -154,7 +154,38 @@ test('the HTTP ingress is off, loopback and token-gated by default', () => {
     timeout_ms: 30_000,
     max_body_bytes: 5 * 1024 * 1024,
     max_queue: 8,
+    // image_url fetch is an SSRF surface: off by default, default-deny allowlist (#57).
+    allow_image_url: false,
+    image_url_hosts: [],
   });
+});
+
+test('http.image_url_hosts default-denies and rejects anything but a bare host', () => {
+  assert.equal(validateConfig({}).config.http.allow_image_url, false);
+  assert.deepEqual(validateConfig({}).config.http.image_url_hosts, []);
+  assert.deepEqual(
+    validateConfig({ http: { allow_image_url: true, image_url_hosts: ['images.example.test', '127.0.0.1'] } }).config
+      .http.image_url_hosts,
+    ['images.example.test', '127.0.0.1']
+  );
+  // A URL, a wildcard or `host:port` never matches a hostname, so it is refused at
+  // load instead of becoming a locked door the operator thinks is open.
+  assert.throws(
+    () => validateConfig({ http: { image_url_hosts: ['https://images.example.test'] } }),
+    (err) => err instanceof ConfigError && /http\.image_url_hosts/.test(err.message) && /bare host/.test(err.message)
+  );
+  assert.throws(
+    () => validateConfig({ http: { image_url_hosts: ['*.example.test'] } }),
+    (err) => err instanceof ConfigError && /wildcard/.test(err.message)
+  );
+  assert.throws(
+    () => validateConfig({ http: { image_url_hosts: ['images.example.test:8443'] } }),
+    (err) => err instanceof ConfigError && /host:port/.test(err.message)
+  );
+  assert.throws(
+    () => validateConfig({ http: { allow_image_url: 'yes' } }),
+    (err) => err instanceof ConfigError && /http\.allow_image_url/.test(err.message)
+  );
 });
 
 test('the HTTP ingress rejects a bad port, cap or interval by name', () => {

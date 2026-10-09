@@ -603,6 +603,7 @@ something that silently does nothing. The live ones are copied into the live con
 
 **The editor covers the settings added after #27 (#35).** `http.enabled`, `http.bind`,
 `http.port`, `http.rate_limit_per_min`, `http.timeout_ms`, `http.max_body_bytes`, `http.max_queue`,
+`http.allow_image_url`, `http.image_url_hosts`,
 `solver.tier0`, `solver.breaker_threshold`, `solver.breaker_cooldown_sec`, `ocr.languages`,
 `ocr.min_confidence`, `image.max_width`, `image.max_pixels` and `reply.unresolved_max_per_hour`
 all have descriptors, so `config list` and both editors see them. The same pass closes two
@@ -898,6 +899,7 @@ execution:
 | Shared magic-byte/decode/width/pixel gate | a body that is not a real image, or a tiny file that decodes to a pixel bomb | `validateImageBuffer` |
 | Fixed-window rate limit | credit burn from a loop | `createRateLimiter` |
 | Bounded queue (`http.max_queue`) -> `503` + `Retry-After` | an unbounded backlog spending credits after the caller has gone | `createHttpServer` admission |
+| `image_url` off by default; when on, a host allowlist, and redirects not followed | a token-holder using the server as an SSRF pivot into the server's own network position (#57) | `assertImageUrlAllowed`, `downloadImage({ redirect: 'manual' })` |
 | `http.timeout_ms` -> `504`, plus skip-at-dequeue | a stuck solve holding a request open, and a queued solve outliving its caller | `withTimeout`, `createSolveCore` lock |
 | `reply.require_confidence` on the body | returning an uncorroborated answer the Pushbullet path would withhold (#42) | `formatSolveResponse` |
 
@@ -928,11 +930,38 @@ case the pixel cap alone would allow; a 3000x100 image is 0.3 Mpx but is still a
 `sharp`'s own default `limitInputPixels` is ~268 Mpx - above even the reported 36 Mpx case -
 so it is raised only as a second layer, never as the defence.
 
-**Known residual (documented, not fixed).** A JSON body may name `image_url`, which makes the
-server fetch a URL. The scheme is restricted to `http`/`https`, and the caller is already
-authenticated and local, but a leaked token on an exposed server would turn it into an SSRF
-pivot (e.g. cloud metadata). The mitigation is the bind/token pair; disabling `image_url`
-entirely is the next step if the endpoint is ever bound beyond loopback.
+**`image_url` is off by default and host-allowlisted when on (issue #57).** A JSON body may
+name `image_url`, which makes the server fetch a caller-supplied URL. Auth is mandatory and the
+bind defaults to loopback, which genuinely limits the blast radius - but SSRF's danger is that
+the server sits in a different network position from the caller, so a token-holder on the same
+host can make it probe services only that host can reach, and a non-loopback bind widens that to
+anything the server can route to. Link-local metadata endpoints (`169.254.169.254`) are the
+classic target.
+
+The controls, in order of execution:
+
+- `http.allow_image_url` defaults to `false`; a body with `image_url` is refused `403`
+  (`image_url_disabled`) and the reason points at uploading the image instead. Uploading is the
+  normal path, so the safe default costs most callers nothing.
+- When it is on, the URL's host must be named in `http.image_url_hosts` (default deny, exact
+  match, case and a trailing dot normalised, port ignored). This is the load-bearing control: the
+  operator chooses the *names*, so a name the operator did not choose cannot be reached even if
+  its DNS points inward, and `evil.example.com` is not admitted by an entry for `example.com`.
+- The shared magic-byte/decode/width/pixel gate and the streaming byte cap still run on the
+  fetched bytes - this adds no second image path (#41).
+- Redirects are not followed. The HTTP ingress fetches with `redirect: 'manual'` and refuses any
+  `3xx` (`403`, `image_url_redirect`); the Pushbullet path keeps `follow`, because a pre-signed S3
+  URL is not caller-supplied. A public URL that `302`s to `169.254.169.254` therefore cannot walk
+  past the check applied to the first URL.
+
+**Residual, named.** There is no post-resolution private/loopback/link-local range check, and
+that is deliberate. `fetch` re-resolves the hostname at connect time, so checking the resolved
+address and then fetching by name is a check DNS rebinding walks straight past - it would only
+look like protection. Doing it correctly means connecting to the address that was validated (a
+custom `Agent`/`lookup`), which is more than this ingress needs once the allowlist is the gate.
+The honest statement is: **an allowlisted hostname that resolves to an internal address is
+fetched.** The operator's allowlist is the trust boundary; a name only gets on it because the
+operator put it there. Keep the list to names you control, and prefer `image_base64`/upload.
 
 ## 9. Layout
 

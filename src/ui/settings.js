@@ -103,6 +103,8 @@ export const SETTINGS = Object.freeze([
   Object.freeze({ id: 'http.timeout_ms', label: 'HTTP solve timeout (ms)', path: ['http', 'timeout_ms'], type: 'integer', min: 0, restart: true }),
   Object.freeze({ id: 'http.max_body_bytes', label: 'HTTP max body bytes', path: ['http', 'max_body_bytes'], type: 'integer', min: 1, restart: true }),
   Object.freeze({ id: 'http.max_queue', label: 'HTTP max queue', path: ['http', 'max_queue'], type: 'integer', min: 1, restart: true }),
+  Object.freeze({ id: 'http.allow_image_url', label: 'Allow image_url fetching (SSRF risk)', path: ['http', 'allow_image_url'], type: 'boolean', restart: true }),
+  Object.freeze({ id: 'http.image_url_hosts', label: 'Allowed image_url hosts (default deny)', path: ['http', 'image_url_hosts'], type: 'string-array', restart: true }),
 
   Object.freeze({ id: 'ui.tray', label: 'Show the tray', path: ['ui', 'tray'], type: 'boolean', restart: true }),
   Object.freeze({ id: 'ui.notify_on_unresolved', label: 'Notify on an unresolved puzzle', path: ['ui', 'notify_on_unresolved'], type: 'boolean', restart: false }),

@@ -71,6 +71,8 @@ test('every setting the issue names is editable', () => {
     'http.timeout_ms',
     'http.max_body_bytes',
     'http.max_queue',
+    'http.allow_image_url',
+    'http.image_url_hosts',
     'solver.tier0',
     'solver.breaker_threshold',
     'solver.breaker_cooldown_sec',
@@ -352,6 +354,8 @@ test('#35: every new non-secret setting round-trips through the real loader', as
     ['http.timeout_ms', '12345'],
     ['http.max_body_bytes', '1048576'],
     ['http.max_queue', '3'],
+    ['http.allow_image_url', 'true'],
+    ['http.image_url_hosts', 'images.example.test, 127.0.0.1'],
     ['reply.unresolved_max_per_hour', '90'],
     ['reply.strategy', 'clipboard+notify'],
     ['reply.min_interval_sec', '10'],
@@ -375,6 +379,8 @@ test('#35: every new non-secret setting round-trips through the real loader', as
   assert.equal(config.http.timeout_ms, 12345);
   assert.equal(config.http.max_body_bytes, 1048576);
   assert.equal(config.http.max_queue, 3);
+  assert.equal(config.http.allow_image_url, true);
+  assert.deepEqual(config.http.image_url_hosts, ['images.example.test', '127.0.0.1']);
   assert.equal(config.reply.unresolved_max_per_hour, 90);
   assert.equal(config.reply.strategy, 'clipboard+notify');
   assert.equal(config.reply.min_interval_sec, 10);
