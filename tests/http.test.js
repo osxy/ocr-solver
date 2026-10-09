@@ -304,6 +304,69 @@ test('multipart/form-data with a file part is accepted', async (t) => {
 });
 
 // ---------------------------------------------------------------------------
+// The default egress is the HTTP response, never a Pushbullet push
+// ---------------------------------------------------------------------------
+
+/**
+ * A fetch that refuses any Pushbullet host. The default HTTP path must not call
+ * fetch at all; a request that did would trip this rather than pass silently.
+ */
+function pushbulletHostGuard(base = globalThis.fetch) {
+  const calls = [];
+  const fetchImpl = (url, init) => {
+    const href = String(url);
+    calls.push(href);
+    if (/pushbullet\.com/i.test(href)) {
+      throw new Error(`unexpected Pushbullet request on the default HTTP path: ${href}`);
+    }
+    return base(url, init);
+  };
+  return { fetchImpl, calls };
+}
+
+/** A responder that must never run: invoking it is the regression under test. */
+function responderMustNotRun() {
+  const calls = [];
+  return {
+    calls,
+    respond: async (push, result) => {
+      calls.push({ push, result });
+      throw new Error('the responder must not run when deliver is not "pushbullet"');
+    },
+  };
+}
+
+test('the default path never fetches Pushbullet and never invokes the responder', async (t) => {
+  const guard = pushbulletHostGuard();
+  const responder = responderMustNotRun();
+  const { url } = await startServer(t, { responder, fetchImpl: guard.fetchImpl });
+  const bytes = await smallPng();
+
+  // Each input shape parses `deliver` on its own, so each is checked, plus an
+  // explicit `deliver: null` to pin the "absent means absent" contract.
+  const raw = await post(url, { body: bytes, contentType: 'image/png' });
+  const form = new FormData();
+  form.append('image', new Blob([bytes], { type: 'image/png' }), 'puzzle.png');
+  const multipart = await post(url, { body: form });
+  const jsonDefault = await post(url, {
+    body: JSON.stringify({ image_base64: bytes.toString('base64') }),
+    contentType: 'application/json',
+  });
+  const jsonNull = await post(url, {
+    body: JSON.stringify({ image_base64: bytes.toString('base64'), deliver: null }),
+    contentType: 'application/json',
+  });
+
+  for (const res of [raw, multipart, jsonDefault, jsonNull]) {
+    assert.equal(res.status, 200, res.text);
+    assert.equal(res.json.answer, '2');
+    assert.equal(res.json.delivery, undefined, 'the default path must not report a delivery');
+  }
+  assert.equal(responder.calls.length, 0, 'the responder must never be invoked by default');
+  assert.equal(guard.calls.length, 0, 'the default path must not fetch anything');
+});
+
+// ---------------------------------------------------------------------------
 // Optional Pushbullet egress, for exercising the note-push path
 // ---------------------------------------------------------------------------
 
@@ -507,6 +570,53 @@ test('the app runs HTTP-only with no Pushbullet token', async (t) => {
   });
   assert.equal(res.status, 200, res.text);
   assert.equal(res.json.answer, '7');
+});
+
+test('an HTTP-only app makes zero Pushbullet requests while solving', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'puzzlesolver-http-app-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const logger = collectingLogger();
+
+  // Installed before createApp so the running server's default fetch is this guard:
+  // any Pushbullet request throws rather than succeeding invisibly.
+  const originalFetch = globalThis.fetch;
+  const outbound = [];
+  globalThis.fetch = (url, init) => {
+    const href = String(url);
+    outbound.push(href);
+    if (/pushbullet\.com/i.test(href)) {
+      throw new Error(`an HTTP-only app reached a Pushbullet host: ${href}`);
+    }
+    return originalFetch(url, init);
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const app = await createApp({
+    config: validateConfig({ http: { enabled: true, bind: '127.0.0.1', port: 0 } }).config,
+    env: { HTTP_AUTH_TOKEN: 'http-only-secret' }, // no PUSHBULLET_TOKEN anywhere
+    providers: [],
+    reasoner: null,
+    solveImage: async () => ({ answer: '7', confident: true, method: 'tier0:arithmetic', puzzleClass: 'arithmetic', transcript: 'x', opinions: [], model: null, disputed: false }),
+    createWorker: async () => ({ terminate: async () => {} }),
+    inboxDir: join(dir, 'inbox'),
+    statePath: join(dir, 'state.db'),
+    logger,
+  });
+  t.after(() => app.stop());
+  await app.start();
+
+  const res = await post(`http://127.0.0.1:${app.httpServer.port()}/v1/solve`, {
+    token: 'http-only-secret',
+    body: await smallPng(),
+    contentType: 'image/png',
+  });
+
+  assert.equal(res.status, 200, res.text);
+  assert.equal(res.json.answer, '7');
+  assert.equal(res.json.delivery, undefined, 'the HTTP response is the only delivery');
+  assert.equal(outbound.filter((url) => /pushbullet\.com/i.test(url)).length, 0, 'no request may reach a Pushbullet host');
 });
 
 test('http.enabled without a token refuses to start', async (t) => {

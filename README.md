@@ -260,8 +260,10 @@ bounds it; there is no job id and no polling. If the budget is exceeded the requ
 the `504` and the abandoned solve is discarded - nothing is delivered later.
 
 It coexists with the Pushbullet listener in one process (two ingresses, one solve core).
-To exercise the *note-push* path without a real Pushbullet push, add `"deliver":
-"pushbullet"` to a JSON body; the response then also reports `delivery`.
+**An HTTP request replies over HTTP and sends no Pushbullet push by default** - Pushbullet
+delivery is opt-in, not the default. To exercise the *note-push* path without a real
+Pushbullet push, add `"deliver": "pushbullet"` to a JSON body; only then does the
+configured responder run and the response report `delivery`.
 
 > **Binding beyond loopback.** `bind = "0.0.0.0"` exposes a CAPTCHA solver to your
 > network. The token is still required, but anyone who has it can spend your provider

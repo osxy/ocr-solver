@@ -541,7 +541,10 @@ store's rule that logging must never break solving.
   (`http-<sha256 of the image>`), so the note-push path can be exercised end to end without
   a real push. It is off by default: the response body is the honest HTTP egress, and a
   second delivery per request would double the failure modes (a `200` answer plus a
-  suppressed or failed note push).
+  suppressed or failed note push). The default - no `deliver` field, or `deliver: null` -
+  is HTTP-only egress: the responder is never invoked and no Pushbullet host is fetched.
+  `tests/http.test.js` guards that default with a throwing responder spy and a fetch that
+  rejects Pushbullet hosts, across the raw, multipart and JSON body shapes.
 - **Fixed-window rate limit** (`http.rate_limit_per_min`, default 20; `0` disables). The
   Pushbullet responder's rate limit guards *sending*; this guard is on *spending* - a
   model-escalated request costs provider credits even though it sends nothing.
