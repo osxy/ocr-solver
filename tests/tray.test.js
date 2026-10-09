@@ -28,10 +28,10 @@ function fakeListener(overrides = {}) {
   };
 }
 
-test('the menu is the seven documented actions, in order', () => {
+test('the menu is the eight documented actions, in order', () => {
   assert.deepEqual(
     TRAY_MENU.map((i) => i.id),
-    ['status', 'accuracy', 'pause', 'solve-last', 'open-log', 'open-config', 'quit']
+    ['status', 'accuracy', 'pause', 'solve-last', 'open-log', 'open-config', 'settings', 'quit']
   );
   assert.deepEqual(TRAY_MENU.map((i) => i.title), [
     'Status',
@@ -40,6 +40,7 @@ test('the menu is the seven documented actions, in order', () => {
     'Solve last image',
     'Open log',
     'Open config',
+    'Settings',
     'Quit',
   ]);
 });
@@ -126,6 +127,41 @@ test('open-log and open-config pass the real resolved paths to the opener', asyn
     'C:\\Users\\a\\AppData\\Local\\PuzzleSolver\\logs\\app.log',
     'C:\\Users\\a\\AppData\\Roaming\\PuzzleSolver\\config.toml',
   ]);
+});
+
+// The tray half of the settings-editor reachability: the Settings item must actually
+// call the injected editor. Removing the `openSettings` wiring fails this test.
+test('the settings action delegates to the injected editor', async () => {
+  let calls = 0;
+  const c = createTrayController({
+    listener: fakeListener(),
+    watchdog: createWatchdog(),
+    openSettings: async () => {
+      calls += 1;
+      return { saved: true, changed: ['solver.offline_only'], restartRequired: ['solver.offline_only'] };
+    },
+  });
+  const result = await c.handleClick('settings');
+  assert.equal(calls, 1, 'clicking Settings must open the editor');
+  assert.equal(result.opened, true);
+  assert.deepEqual(result.result.changed, ['solver.offline_only']);
+});
+
+test('settings without an editor is reported, not ignored, and a throwing editor cannot take the tray down', async () => {
+  const idle = createTrayController({ listener: fakeListener(), watchdog: createWatchdog() });
+  assert.deepEqual(await idle.handleClick('settings'), { id: 'settings', opened: false, reason: 'unavailable' });
+
+  const broken = createTrayController({
+    listener: fakeListener(),
+    watchdog: createWatchdog(),
+    openSettings: async () => {
+      throw new Error('stdin is not a TTY');
+    },
+  });
+  const result = await broken.handleClick('settings');
+  assert.equal(result.opened, false);
+  assert.equal(result.reason, 'error');
+  assert.match(result.detail, /not a TTY/);
 });
 
 test('quit forwards exactly once', async () => {

@@ -1,0 +1,221 @@
+/**
+ * `node src/cli.js config ...` - the headless settings route.
+ *
+ * `--headless` has no tray, so the settings editor needs a command-line equivalent or
+ * the feature exists only for people with a desktop session. The command and the tray
+ * share `src/ui/settings.js`, so a change made either way validates, routes and writes
+ * identically:
+ *
+ *   node src/cli.js config list                 # current values (secrets shown as presence + source)
+ *   node src/cli.js config get <id>             # one value
+ *   node src/cli.js config set <id> <value>     # validate and persist one change
+ *   node src/cli.js config edit                 # the guided editor over stdin
+ *
+ * A rejected value exits non-zero and names the setting; nothing is written. The
+ * restart semantics are printed on every write rather than left for the user to
+ * discover.
+ */
+import { loadConfig, resolveConfigPath } from './config.js';
+import { defaultCredentialPath, loadSecrets, saveSecrets } from './secrets.js';
+import { createSettingsEditor, getSetting, SETTINGS } from './ui/settings.js';
+import { defaultSettingsDialog } from './ui/settings-dialog.js';
+
+const USAGE = `Usage: node src/cli.js config <action> [options]
+
+  config list                  print every editable setting and its current value
+  config get <id>              print one setting
+  config set <id> <value>      validate and persist one setting
+  config edit                  guided editor over stdin (the headless tray equivalent)
+
+Options:
+  --config <path>              TOML config file (or PUZZLESOLVER_CONFIG)
+  --json                       machine-readable output
+`;
+
+function parse(argv) {
+  const opts = { json: false, config: null, help: false, positional: [] };
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === '--json') opts.json = true;
+    else if (arg === '--config') opts.config = argv[++i] ?? null;
+    else if (arg === '--help' || arg === '-h') opts.help = true;
+    else if (arg.startsWith('-')) throw new Error(`unknown option: ${arg}`);
+    else opts.positional.push(arg);
+  }
+  return opts;
+}
+
+function printUsage(stdout, stream = stdout) {
+  stream.write(USAGE);
+}
+
+/**
+ * @param {string[]} argv arguments after the `config` subcommand
+ * @returns {Promise<number>} process exit code
+ */
+export async function runConfig(
+  argv = [],
+  {
+    stdout = process.stdout,
+    stderr = process.stderr,
+    stdin = process.stdin,
+    env = process.env,
+    platform = process.platform,
+    homedir = undefined,
+    logger = null,
+    dialog = defaultSettingsDialog,
+  } = {}
+) {
+  const opts = parse(argv);
+  if (opts.help || opts.positional[0] === 'help') {
+    printUsage(stdout);
+    return 0;
+  }
+
+  const action = opts.positional[0] ?? 'list';
+  const explicitPath = opts.config;
+  const configPath = resolveConfigPath({ explicit: explicitPath, env, platform, ...(homedir ? { homedir } : {}) });
+  const credentialPath = defaultCredentialPath({ platform, env, ...(homedir ? { homedir } : {}) });
+
+  let loaded;
+  try {
+    loaded = loadConfig({ explicitPath, env, platform, ...(homedir ? { homedir } : {}) });
+  } catch (err) {
+    stderr.write(`${err?.message ?? err}\n`);
+    return 1;
+  }
+  for (const warning of loaded.warnings) stderr.write(`warning: ${warning}\n`);
+
+  // Secrets are resolved with real values only for the credential store round-trip and
+  // the Test connection probe; `list()` and every printer below expose presence/source.
+  const secrets = await loadSecrets({ env, platform, ...(homedir ? { homedir } : {}), logger });
+
+  const editor = createSettingsEditor({
+    config: loaded.config,
+    configPath: loaded.path,
+    secrets,
+    saveSecrets: (args) =>
+      saveSecrets({ ...args, env, platform, ...(homedir ? { homedir } : {}), credentialPath, logger }),
+    logger,
+  });
+
+  function writeItems(items) {
+    if (opts.json) {
+      stdout.write(
+        `${JSON.stringify(
+          items.map((item) => ({
+            id: item.id,
+            secret: item.secret,
+            restart: item.restart,
+            value: item.secret ? null : item.value,
+            display: item.display,
+            ...(item.choices ? { choices: item.choices } : {}),
+          })),
+          null,
+          2
+        )}\n`
+      );
+      return;
+    }
+    const width = Math.max(...items.map((item) => item.id.length));
+    for (const item of items) {
+      stdout.write(`${item.id.padEnd(width)}  ${item.display}  ${item.restart ? '[restart]' : '[live]'}\n`);
+    }
+  }
+
+  /** Only the fields a caller can act on: never the whole config, never a secret. */
+  function safeResult(result) {
+    return {
+      saved: result.saved,
+      reason: result.reason ?? null,
+      changed: result.changed ?? [],
+      restartRequired: result.restartRequired ?? [],
+      live: result.live ?? [],
+      configPath: result.configPath ?? null,
+      backupPath: result.backupPath ?? null,
+      secretsSaved: result.secretsSaved ?? [],
+    };
+  }
+
+  function writeResult(result) {
+    if (opts.json) {
+      stdout.write(`${JSON.stringify(safeResult(result), null, 2)}\n`);
+      return;
+    }
+    stdout.write(`Saved: ${result.changed.join(', ')}\n`);
+    if (result.backupPath) stdout.write(`Previous config backed up to ${result.backupPath}\n`);
+    if (result.restartRequired.length > 0) {
+      stdout.write(`Restart the service for: ${result.restartRequired.join(', ')}\n`);
+    }
+    if (result.live.length > 0) stdout.write(`Applied live: ${result.live.join(', ')}\n`);
+  }
+
+  switch (action) {
+    case 'list': {
+      stdout.write(`config: ${loaded.path}${loaded.loaded ? '' : ' (not present; defaults)'}\n`);
+      stdout.write(`credentials: ${credentialPath}\n`);
+      writeItems(editor.list());
+      return 0;
+    }
+    case 'get': {
+      const id = opts.positional[1];
+      if (!id) {
+        stderr.write('config get needs a setting id; run `config list` to see them\n');
+        return 2;
+      }
+      const item = editor.list().find((entry) => entry.id === id);
+      if (!item) {
+        stderr.write(`unknown setting "${id}"; run \`config list\` to see them\n`);
+        return 2;
+      }
+      stdout.write(`${item.display.replace(/ \(pending\)$/, '')}\n`);
+      return 0;
+    }
+    case 'set': {
+      const id = opts.positional[1];
+      const value = opts.positional.slice(2).join(' ');
+      if (!id || opts.positional.length < 3) {
+        stderr.write('config set needs a setting id and a value; run `config list` to see them\n');
+        return 2;
+      }
+      try {
+        editor.set(id, value);
+      } catch (err) {
+        stderr.write(`${err?.message ?? err}\n`);
+        return 2;
+      }
+      const result = await editor.save();
+      writeResult(result);
+      return 0;
+    }
+    case 'edit': {
+      const outcome = await dialog({
+        editor,
+        configPath: loaded.path,
+        credentialPath,
+        logger,
+        input: stdin,
+        output: stdout,
+      });
+      if (outcome?.failed) {
+        stderr.write(`${outcome.detail ?? 'the settings editor failed'}\n`);
+        return 1;
+      }
+      if (!outcome?.saved) {
+        if (opts.json) stdout.write(`${JSON.stringify({ saved: false, cancelled: Boolean(outcome?.cancelled) })}\n`);
+        return 0;
+      }
+      if (opts.json) stdout.write(`${JSON.stringify(safeResult(outcome), null, 2)}\n`);
+      else writeResult(outcome);
+      return 0;
+    }
+    default: {
+      stderr.write(`unknown config action "${action}"\n`);
+      printUsage(stderr);
+      return 2;
+    }
+  }
+}
+
+/** Exported for the tests and for `config list` callers that want the schema. */
+export { SETTINGS, getSetting };

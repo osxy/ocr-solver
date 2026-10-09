@@ -494,10 +494,11 @@ records a durable file reference for puzzles that ended unresolved.
 ### 4.14 UI & logging ✅ M3
 
 - Tray via `systray2`, notifications via `node-notifier`; `--headless` skips both.
-- Menu: **Status / Accuracy / Pause / Solve last image / Open log / Open config / Quit**. "Solve
-  last image" re-runs the pipeline on the newest image — essential for tuning without a live push.
-  "Accuracy" reports the live recorded-traffic rate plus the cached offline-corpus number, and
-  the same summary is appended to the status text and tray tooltip (M4).
+- Menu: **Status / Accuracy / Pause / Solve last image / Open log / Open config / Settings / Quit**.
+  "Solve last image" re-runs the pipeline on the newest image — essential for tuning without a live
+  push. "Accuracy" reports the live recorded-traffic rate plus the cached offline-corpus number, and
+  the same summary is appended to the status text and tray tooltip (M4). "Settings" opens the
+  editor below (issue #27).
 - First run: a small setup dialog (token, key, **Test connection**).
 - Rotating log at `%LOCALAPPDATA%\PuzzleSolver\logs\app.log` (5 MB × 3).
 
@@ -531,6 +532,52 @@ the exit line rather than a stack. Because the credential is resolved before the
 considered, a second start with a stored token does not prompt. The dialog itself is injectable,
 which is what makes the startup path testable on Linux without `systray2` or a display; the
 native tray widget remains unverified (see **§11**).
+
+**Settings editor (issue #27).** Guided setup captured the token and key once; after that
+changing anything meant hand-editing TOML, and the token was not even in that file. The editor
+is `src/ui/settings.js` (schema + logic), `src/ui/settings-dialog.js` (the terminal prompt) and
+`src/config-cli.js` (`config list|get|set|edit`), not a third prompt implementation:
+`createSettingsEditor` builds on `src/ui/setup.js` — the same `hasInternalWhitespace` check and
+the same **Test connection** probes (through `createSetup`'s `testConnection`), so first-run and
+settings cannot drift.
+
+The two failure modes the issue names are handled by construction rather than by care:
+
+- **Validation before writing, and the loader is the validator.** Each value is parsed and
+  rejected at `set()` — nothing becomes pending. `save()` then assembles the whole candidate and
+  passes it through the loader's own `validateConfig`; a `ConfigError` names the offending key and
+  the writer never runs. There is no second, drifting notion of validity.
+- **Secrets take the credential path only.** A descriptor is either a config `path` or a `secret`
+  name, never both; `saveSecrets` handles the latter. A secret-only save (the token rotation case,
+  the most likely reason to open the editor) does not call the writer at all, so `config.toml` is
+  never created or rewritten — asserted by byte-equality of an existing file and by the absence of
+  a new one.
+
+The write is atomic (temp file in the same directory, then rename) and the previous file is copied
+to `config.toml.bak` first, so a bad edit is recoverable without a hand-kept copy. Only values
+that differ from `DEFAULTS` are written (`configToOverrides`), because the file is documented as an
+override of the defaults: copying every key would pin today's defaults in the file, so a later
+release could not change one. Unknown keys and comments are not preserved — the file is rewritten,
+which is the honest trade for a settings editor and is why the backup is mandatory rather than
+nice-to-have.
+
+**Restart semantics are labelled, not guessed.** The descriptors carry `restart`, and the editor,
+the dialog and `config set` all name which changes apply. Exactly two are `restart: false`,
+because those are the only two the running process re-reads from the shared config object:
+`storage.log_images` (`core.solve`) and `ui.notify_on_unresolved` (`handlePush`). Everything else
+— models, base URL, `offline_only`, `escalate_to_vision`, `self_consistency_n`, reply
+switch/wording, poll interval, `history_mode`, `ocr.variants`, `retain_days`, `ui.tray` and both
+secrets — is captured when the listener, reasoner or responder is built, so the editor says
+"restart" rather than appearing to save something that silently does nothing. The two live ones
+are copied into the live config by `applyLiveSettings` after a successful save.
+
+**Headless is the same editor, not a second path.** `--headless` has no tray, so
+`node src/cli.js config ...` is the non-interactive route and the guided prompt is also runnable
+over stdin. `tests/config-cli.test.js` exercises it **as a command** (a child process, real files,
+real exit codes) for the reason #25 and `pruneInbox` exist in this record: a tested function is not
+a delivered feature. The tray wiring is proven the same way — `runApp` passes `openSettings` into
+`startTray`, the controller's `settings` action calls it, and a test fails if that link is removed
+(the `setupDialog`/`createSetup` pattern, now closed for the editor too).
 
 **Watchdog.** `src/ui/watchdog.js` is a pure, clock-injectable state machine. The listener now
 exposes `lastActivityAt` (advanced by a socket `open`, any stream message, or a completed poll)

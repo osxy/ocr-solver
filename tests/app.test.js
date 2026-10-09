@@ -8,7 +8,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import sharp from 'sharp';
@@ -592,6 +592,57 @@ test('runApp supplies the dialog seam in tray mode, before the tray starts', asy
     (err) => err.name === 'SetupCancelledError'
   );
   assert.equal(calls, 1, 'runApp must forward the dialog; the tray must not run before setup');
+});
+
+// The settings-editor reachability test. Remove the `openSettings` wiring from `runApp`
+// (or the `settings` menu item) and the captured handler is undefined, so this fails.
+// It also proves a successful save reaches the live config and the file.
+test('runApp wires the tray Settings item to the injected editor, which persists and applies live', async (t) => {
+  const fake = await startFakePushbullet();
+  const dir = mkdtempSync(join(tmpdir(), 'puzzlesolver-app-'));
+  const configPath = join(dir, 'config.toml');
+  writeFileSync(configPath, '[storage]\nlog_images = false\n');
+  t.after(async () => {
+    await fake.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const provider = createFileCredentialProvider({ path: join(dir, 'credentials.json') });
+  provider.set('pushbullet', 'o.tray-settings');
+
+  let captured = null;
+  let dialogCalls = 0;
+  const app = await runApp({
+    ...firstRunOptions(dir, {
+      providers: [provider],
+      client: fakeClient(fake),
+      configPath,
+    }),
+    tray: true,
+    settingsDialog: async ({ editor }) => {
+      dialogCalls += 1;
+      editor.set('storage.log_images', 'true');
+      editor.set('pushbullet.token', 'o.rotated-through-editor');
+      return editor.save();
+    },
+    startTray: async (options) => {
+      captured = options;
+      return { controller: {}, tray: {}, stop: async () => {} };
+    },
+  });
+  t.after(async () => {
+    await app.tray?.stop?.();
+    await app.stop();
+  });
+
+  assert.equal(typeof captured?.openSettings, 'function', 'the tray must receive an openSettings handler');
+  const outcome = await captured.openSettings();
+  assert.equal(dialogCalls, 1, 'the Settings item must reach the injected editor');
+  assert.equal(outcome.saved, true);
+  assert.equal(app.config.storage.log_images, true, 'a live setting is applied to the running config');
+  assert.match(readFileSync(configPath, 'utf8'), /log_images = true/);
+  assert.equal(readFileSync(configPath, 'utf8').includes('rotated-through-editor'), false, 'the token stays out of the config');
+  assert.equal(provider.get('pushbullet'), 'o.rotated-through-editor', 'the editor wrote the credential store');
+  assert.equal(app.secrets.pushbullet.hint, 'o.r…', 'the app re-resolved the rotated secret');
 });
 
 // ---------------------------------------------------------------------------

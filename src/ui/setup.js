@@ -19,7 +19,7 @@
 export const SETUP_FIELDS = ['pushbulletToken', 'llmApiKey'];
 
 /** A key/token pasted from a browser or a shell often carries a trailing newline. */
-function hasInternalWhitespace(value) {
+export function hasInternalWhitespace(value) {
   return /\s/.test(String(value).trim());
 }
 
