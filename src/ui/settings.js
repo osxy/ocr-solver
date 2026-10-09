@@ -24,7 +24,7 @@
  *     `config.toml.bak` first. A bad edit is always recoverable.
  */
 
-import { copyFileSync, existsSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { stringify } from 'smol-toml';
 import { DEFAULTS, validateConfig } from '../config.js';
@@ -268,15 +268,374 @@ function describeSecretForDisplay(entry) {
 }
 
 /**
+ * The in-place editor refused a config file it cannot rewrite safely. Unlike a parse
+ * error (the loader already validated the file), this is about *locating* a value in
+ * the raw bytes: a construct that has no single line to replace. The writer never
+ * falls back to re-serialising when it sees this - a full rewrite is exactly the bug
+ * the editor exists to avoid - so the file is left untouched and the reason is
+ * surfaced to the user.
+ */
+export class ConfigEditError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'ConfigEditError';
+  }
+}
+
+const BARE_KEY_CHAR = /[A-Za-z0-9_-]/;
+
+function skipHorizontal(text, index) {
+  let i = index;
+  while (i < text.length && (text[i] === ' ' || text[i] === '\t' || text[i] === '\r')) i += 1;
+  return i;
+}
+
+function skipToLineEnd(text, index) {
+  let i = index;
+  while (i < text.length && text[i] !== '\n') i += 1;
+  return i;
+}
+
+/** Read one TOML key segment: a bare key, `"basic"` or `'literal'`. */
+function parseKeySegment(text, index) {
+  const first = text[index];
+  if (first === '"') {
+    let i = index + 1;
+    let value = '';
+    while (i < text.length && text[i] !== '"') {
+      if (text[i] === '\\') {
+        const escape = text[i + 1];
+        if (escape === 'u' || escape === 'U') {
+          const length = escape === 'u' ? 4 : 8;
+          value += String.fromCodePoint(parseInt(text.slice(i + 2, i + 2 + length), 16));
+          i += 2 + length;
+          continue;
+        }
+        const simple = { b: '\b', t: '\t', n: '\n', f: '\f', r: '\r', '"': '"', '\\': '\\' };
+        value += simple[escape] ?? escape;
+        i += 2;
+        continue;
+      }
+      value += text[i];
+      i += 1;
+    }
+    if (text[i] !== '"') throw new ConfigEditError('unterminated quoted key in config.toml');
+    return { value, end: i + 1 };
+  }
+  if (first === "'") {
+    const close = text.indexOf("'", index + 1);
+    if (close === -1) throw new ConfigEditError('unterminated literal key in config.toml');
+    return { value: text.slice(index + 1, close), end: close + 1 };
+  }
+  let i = index;
+  while (i < text.length && BARE_KEY_CHAR.test(text[i])) i += 1;
+  if (i === index) throw new ConfigEditError(`cannot read a TOML key near ${JSON.stringify(text.slice(index, index + 24))}`);
+  return { value: text.slice(index, i), end: i };
+}
+
+function parseKeyPath(text, index) {
+  const path = [];
+  let i = index;
+  for (;;) {
+    i = skipHorizontal(text, i);
+    const segment = parseKeySegment(text, i);
+    path.push(segment.value);
+    i = skipHorizontal(text, segment.end);
+    if (text[i] === '.') {
+      i += 1;
+      continue;
+    }
+    break;
+  }
+  return { path, end: i };
+}
+
+function scanQuoted(text, index, quote) {
+  let i = index + 1;
+  while (i < text.length) {
+    const c = text[i];
+    if (c === '\n') return { end: i, complete: false };
+    if (quote === '"' && c === '\\') {
+      i += 2;
+      continue;
+    }
+    if (c === quote) return { end: i + 1, complete: true };
+    i += 1;
+  }
+  return { end: i, complete: false };
+}
+
+function scanMultilineQuoted(text, index, quote, delimiter) {
+  let i = index + delimiter.length;
+  while (i < text.length) {
+    if (quote === '"' && text[i] === '\\') {
+      i += 2;
+      continue;
+    }
+    if (text.startsWith(delimiter, i)) return { end: i + delimiter.length, complete: true, multiline: true };
+    i += 1;
+  }
+  return { end: i, complete: false, multiline: true };
+}
+
+/** Scan an array or inline table, honouring nested brackets, strings and comments. */
+function scanBracketed(text, index) {
+  const open = text[index];
+  const close = open === '[' ? ']' : '}';
+  let depth = 1;
+  let multiline = false;
+  let i = index + 1;
+  while (i < text.length) {
+    const c = text[i];
+    if (c === '\n') {
+      multiline = true;
+      i += 1;
+      continue;
+    }
+    if (c === '#') {
+      i = skipToLineEnd(text, i);
+      continue;
+    }
+    if (c === '"') {
+      const result =
+        text.startsWith('"""', i) ? scanMultilineQuoted(text, i, '"', '"""') : scanQuoted(text, i, '"');
+      i = result.end;
+      if (!result.complete) return { end: i, complete: false, multiline: result.multiline || multiline };
+      continue;
+    }
+    if (c === "'") {
+      const result =
+        text.startsWith("'''", i) ? scanMultilineQuoted(text, i, "'", "'''") : scanQuoted(text, i, "'");
+      i = result.end;
+      if (!result.complete) return { end: i, complete: false, multiline: result.multiline || multiline };
+      continue;
+    }
+    if (c === open) depth += 1;
+    else if (c === close) {
+      depth -= 1;
+      if (depth === 0) return { end: i + 1, complete: true, multiline };
+    }
+    i += 1;
+  }
+  return { end: i, complete: false, multiline: true };
+}
+
+function scanValue(text, index) {
+  const first = text[index];
+  if (first === '"') {
+    return text.startsWith('"""', index) ? scanMultilineQuoted(text, index, '"', '"""') : scanQuoted(text, index, '"');
+  }
+  if (first === "'") {
+    return text.startsWith("'''", index) ? scanMultilineQuoted(text, index, "'", "'''") : scanQuoted(text, index, "'");
+  }
+  if (first === '[' || first === '{') return scanBracketed(text, index);
+  // A bare scalar (number, boolean, date/time) ends at whitespace, a comment or the
+  // end of a surrounding construct.
+  let i = index;
+  while (i < text.length) {
+    const c = text[i];
+    if (c === ' ' || c === '\t' || c === '\r' || c === '\n' || c === '#' || c === ',' || c === ']' || c === '}') break;
+    i += 1;
+  }
+  return { end: i, complete: true };
+}
+
+function parseTableHeader(text, index) {
+  let i = index + 1;
+  const arrayOfTables = text[i] === '[';
+  if (arrayOfTables) i += 1;
+  const { path, end } = parseKeyPath(text, i);
+  i = skipHorizontal(text, end);
+  if (arrayOfTables) {
+    throw new ConfigEditError(
+      `config.toml uses an array of tables ([[${path.join('.')}]]) and cannot be edited in place; edit it by hand`
+    );
+  }
+  if (text[i] !== ']') throw new ConfigEditError(`cannot parse the table header [${path.join('.')}] in config.toml`);
+  return { path, end: i + 1 };
+}
+
+/**
+ * Walk the raw bytes of a config file and record every key assignment with the
+ * character span of its value. This is the TOML-aware locator: it tracks the current
+ * `[section]`, skips commented-out lines and the inside of strings, and jumps whole
+ * multi-line values, so a `key =` that is not an assignment is never mistaken for one.
+ * Anything it cannot map throws `ConfigEditError` rather than guessing.
+ */
+export function locateConfigStatements(text) {
+  const statements = [];
+  const headers = [];
+  let sectionPath = [];
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i];
+    if (c === '\n') {
+      i += 1;
+      continue;
+    }
+    i = skipHorizontal(text, i);
+    if (i >= text.length) break;
+    const first = text[i];
+    if (first === '\n') {
+      i += 1;
+      continue;
+    }
+    if (first === '#') {
+      i = skipToLineEnd(text, i);
+      continue;
+    }
+    if (first === '[') {
+      const header = parseTableHeader(text, i);
+      i = skipHorizontal(text, header.end);
+      if (i < text.length && text[i] !== '\n' && text[i] !== '#') {
+        throw new ConfigEditError('cannot parse a config table header: unexpected text after ]');
+      }
+      sectionPath = header.path;
+      headers.push({ path: header.path, end: header.end });
+      continue;
+    }
+    const key = parseKeyPath(text, i);
+    i = key.end;
+    if (text[i] !== '=') {
+      throw new ConfigEditError(`cannot parse the config key ${JSON.stringify(key.path.join('.'))}: expected =`);
+    }
+    i += 1;
+    i = skipHorizontal(text, i);
+    const valueStart = i;
+    const value = scanValue(text, i);
+    const valueEnd = value.end;
+    const multiline = value.multiline === true || text.slice(valueStart, valueEnd).includes('\n');
+    i = skipHorizontal(text, valueEnd);
+    if (i < text.length && text[i] !== '\n' && text[i] !== '#') {
+      throw new ConfigEditError(`cannot parse the value of ${key.path.join('.')} in config.toml`);
+    }
+    statements.push({ sectionPath: [...sectionPath], keyPath: key.path, valueStart, valueEnd, multiline });
+  }
+  return { statements, headers };
+}
+
+/** Render one value the way `stringify` would, but as a single line with no key. */
+function serializeInlineValue(value) {
+  const line = stringify({ x: value });
+  let out = line.slice(line.indexOf('=') + 1);
+  if (out.startsWith(' ')) out = out.slice(1);
+  if (out.endsWith('\n')) out = out.slice(0, -1);
+  if (out.includes('\n')) throw new ConfigEditError('a value cannot be written on one line');
+  return out;
+}
+
+function lineEndAfter(text, index) {
+  const newline = text.indexOf('\n', index);
+  return newline === -1 ? text.length : newline + 1;
+}
+
+/**
+ * Apply `edits` (`[{ path: ['section', 'key'], value }]`) to the raw config text,
+ * changing only the value bytes of each key. An absent key is inserted at the end of
+ * its section when `overrides` says it is a non-default value; otherwise it is left
+ * out. Every unrelated byte - comments, blank lines, order, spacing - is preserved.
+ * A value that spans more than one line throws instead of being collapsed.
+ */
+export function editConfigInPlace(text, edits, overrides = {}) {
+  const { statements, headers } = locateConfigStatements(text);
+  const byPath = new Map();
+  for (const statement of statements) {
+    const full = [...statement.sectionPath, ...statement.keyPath];
+    const key = full.join('\u0000');
+    if (byPath.has(key)) {
+      throw new ConfigEditError(`config key ${full.join('.')} appears more than once; refusing to edit in place`);
+    }
+    byPath.set(key, statement);
+  }
+
+  const operations = [];
+  const insertions = new Map();
+  for (const edit of edits) {
+    const full = edit.path;
+    const statement = byPath.get(full.join('\u0000'));
+    if (statement) {
+      if (statement.multiline) {
+        throw new ConfigEditError(
+          `cannot edit ${full.join('.')} in place: its value in config.toml spans more than one line; edit the file by hand`
+        );
+      }
+      operations.push({ start: statement.valueStart, end: statement.valueEnd, text: serializeInlineValue(edit.value) });
+      continue;
+    }
+    if (!overrideHas(overrides, full)) continue;
+    const sectionPath = full.slice(0, -1);
+    const sectionKey = sectionPath.join('\u0000');
+    if (!insertions.has(sectionKey)) insertions.set(sectionKey, { sectionPath, entries: [] });
+    insertions.get(sectionKey).entries.push({ key: full[full.length - 1], value: edit.value });
+  }
+
+  const appended = [];
+  for (const { sectionPath, entries } of insertions.values()) {
+    const block = entries.map(({ key, value }) => `${key} = ${serializeInlineValue(value)}\n`).join('');
+    const header = headers.find((candidate) => candidate.path.join('\u0000') === sectionPath.join('\u0000'));
+    if (!header) {
+      appended.push(`[${sectionPath.join('.')}]\n${block}`);
+      continue;
+    }
+    // Insert directly after the last statement that belongs to this section (or the
+    // header itself when the section is empty), so trailing comments stay attached to
+    // the key above them and the next section is not pushed down.
+    let last = header.end;
+    for (const statement of statements) {
+      if (statement.sectionPath.join('\u0000') === sectionPath.join('\u0000')) last = Math.max(last, statement.valueEnd);
+    }
+    const start = lineEndAfter(text, last);
+    const prefix = start > 0 && text[start - 1] !== '\n' ? '\n' : '';
+    operations.push({ start, end: start, text: `${prefix}${block}` });
+  }
+  if (appended.length > 0) {
+    let block = appended.join('\n');
+    if (text.length > 0) {
+      if (text.endsWith('\n\n')) {
+        // already a blank line between the old content and the new section
+      } else if (text.endsWith('\n')) {
+        block = `\n${block}`;
+      } else {
+        block = `\n\n${block}`;
+      }
+    }
+    operations.push({ start: text.length, end: text.length, text: block });
+  }
+
+  operations.sort((a, b) => b.start - a.start || b.end - a.end);
+  let out = text;
+  for (const operation of operations) {
+    out = out.slice(0, operation.start) + operation.text + out.slice(operation.end);
+  }
+  return out;
+}
+
+function overrideHas(overrides, path) {
+  let node = overrides;
+  for (let i = 0; i < path.length; i += 1) {
+    if (node == null || typeof node !== 'object') return false;
+    if (i === path.length - 1) return Object.prototype.hasOwnProperty.call(node, path[i]);
+    node = node[path[i]];
+  }
+  return false;
+}
+
+/**
  * The atomically-written config file. The old file is copied to `<path>.bak` before
  * the rename so a rejected or bad edit is recoverable; the temp file lives in the
  * same directory so the rename is on one filesystem.
+ *
+ * With `edits` and an existing file, only the changed values are written in place
+ * (`editConfigInPlace`); everything else is byte-identical. Without it - a missing
+ * file, or a direct caller that passes only `config` - the whole config is serialised.
  */
 export function writeConfigAtomically({
   path,
   config,
+  edits = null,
   backupPath = `${path}.bak`,
   writeFile = writeFileSync,
+  readFile = readFileSync,
   copyFile = copyFileSync,
   rename = renameSync,
   exists = existsSync,
@@ -286,12 +645,18 @@ export function writeConfigAtomically({
   pid = process.pid,
 } = {}) {
   if (!path || String(path).trim() === '') throw new Error('writeConfigAtomically needs a path');
-  const text = stringify(config);
+  // Build the bytes before touching anything: a locator refusal must leave the file
+  // and its backup exactly as they were.
+  const fileExists = exists(path);
+  const text =
+    fileExists && Array.isArray(edits)
+      ? editConfigInPlace(readFile(path, 'utf8'), edits, config)
+      : stringify(config);
   const dir = dirname(path);
   mkdir(dir, { recursive: true });
 
   let backedUp = false;
-  if (exists(path)) {
+  if (fileExists) {
     copyFile(path, backupPath);
     backedUp = true;
   }
@@ -433,7 +798,13 @@ export function createSettingsEditor({
     }
 
     let written = null;
-    if (nextConfig) written = writeConfig({ path: configPath, config: configToOverrides(nextConfig) });
+    if (nextConfig) {
+      // The keys the user actually changed, with their new values. The writer edits
+      // these in place; `configToOverrides(nextConfig)` is still passed so a key that
+      // is absent from the file is only inserted when it is a non-default override.
+      const edits = [...configChanges.keys()].map((id) => ({ path: getSetting(id).path, value: configChanges.get(id) }));
+      written = writeConfig({ path: configPath, config: configToOverrides(nextConfig), edits });
+    }
 
     let secretsSaved = [];
     if (Object.keys(secretEntries).length > 0) {
