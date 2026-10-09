@@ -666,6 +666,48 @@ each enforced in code and in a test:
 - The listener is closed and the port released on save, cancel or timeout, so the window of exposure
   is the editing session rather than the process uptime.
 
+**Issue #65 widens the bind and adds a solve page, under one access rule.** The UI can now be
+reached from a configured CIDR range (`web_ui.allowed_cidrs`) and can solve an upload. Both are
+gated by a single check that runs before `Host`, before any token and before any handler, so a route
+added later cannot ship with a weaker rule by accident. The address is the **socket's** remote
+address; `X-Forwarded-For` is caller-supplied and is never read. The matcher (`src/ui/access.js`) parses
+addresses to bytes and compares bits, so the #47 hole (`isLoopbackHost('127.evil.example')` was true
+because it compared a string prefix) cannot recur in a CIDR. It folds `::ffff:192.168.1.5` down to
+`192.168.1.5` and a mapped CIDR to its IPv4 form, so a client cannot bypass an IPv4 allowlist by
+connecting through the mapped spelling. `0.0.0.0/0` and `::/0` are refused at config load with a
+message that points at an authenticated reverse proxy; a range wider than loopback is warned about at
+the same time.
+
+**Widening the bind does not loosen the `Host` check.** A session is scoped to a hostname, so a page
+that resolves its own name to the UI's address would have the browser send that name (and any cookie)
+to it. The legitimate names therefore stay **explicitly enumerated** - the bound address, the loopback
+names, and `web_ui.allowed_hosts` (default deny) - and a wildcard bind contributes no name at all; the
+operator must list the name they actually type. This is the opposite of "accept any `Host` once the
+bind is non-loopback", which would reopen the DNS-rebinding attack the check exists to stop.
+
+**Remote access requires a credential configured outside `config.toml`.** Loopback keeps the one-time
+token. A non-loopback range additionally requires a **salt + `scrypt` verifier** in the credential
+store (`web_ui_password_hash`); the app **refuses to start** if a range is admitted without one, naming
+`web_ui.password`. The verifier is created by `hashWebUiPassword` (the editor's `prepare` hook, so the
+password itself never reaches a store) and checked by `verifyWebUiPassword` in constant time via
+`node:crypto`. Failed logins reuse the #47 backoff, a success clears the record, and the refusal is the
+same generic message whether the verifier is malformed or the password is wrong. An authenticated
+session is bound to the address that authenticated, so a leaked session URL does not work from another
+host. **The honest limit:** the UI is plain HTTP, so a password on a non-loopback connection is
+cleartext and the session cannot be `Secure`; the credential raises the bar against casual LAN browsing
+and is not transport security. A TLS reverse proxy is the answer on an untrusted network, and the
+README says exactly that.
+
+**The solve page is the ingress, not a second path.** `POST /solve` reuses `classifyRequest` and
+`resolveImage` from `src/http/server.js` (raw body, multipart and base64 - #61 made the declared
+`Content-Type` advisory) and calls the same shared core, so one solve lock, the admission bound (#43)
+and the body/pixel/width caps (#41) are the ones already tested. The result is rendered from
+`formatSolveResponse`, the ingress's serialiser, so the answer, method, confidence and timing agree
+with the statistics page by construction. An unresolved or withheld answer shows the acknowledgement
+wording and never a guess, so the one invariant holds on this egress too. The admission counter itself
+moved into `createSolveCore` so the HTTP ingress and the solve page meter the same bound; a scripted
+test core without slots falls back to a local counter.
+
 **The terminal path is unchanged and a failed UI does not take the tray down.** `runApp`'s default
 `settingsDialog` is `defaultWebSettingsDialog`, but an injected dialog still wins, so the reachability
 test and a fake UI keep working; `src/config-cli.js` still defaults `config edit` to the terminal

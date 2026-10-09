@@ -1,70 +1,84 @@
 /**
- * Loopback web UI for editing settings and first-run setup (issue #56).
+ * Web UI for editing settings, first-run setup, and solving an uploaded image (issue
+ * #56, extended by #65).
  *
  * On Windows the launcher runs the tray with the window hidden (`shell.Run ..., 0`),
  * so the process has no console and the `readline` editor in `settings-dialog.js`
  * has no stdin. This module is the graphical surface for that case: a `node:http`
- * server on an ephemeral loopback port, opened in the default browser. It is
- * deliberately *not* a native widget, because a real HTTP request, a real form post
- * and a real assertion are checkable in CI on this host, and a WinForms window is not.
+ * server on an ephemeral port, opened in the default browser. It is deliberately
+ * *not* a native widget, because a real HTTP request, a real form post and a real
+ * assertion are checkable in CI on this host, and a WinForms window is not.
  *
  * The UI owns no setting knowledge. It renders whatever `controller.list()` returns
  * and persists through `controller.set()`/`controller.save()`. The descriptor list in
  * `src/ui/settings.js` is the single source of truth, and the same controller is the
  * terminal editor, so the two cannot drift.
  *
- * Security is the point, because this endpoint can write the config *and* the
- * credential store - a more sensitive surface than the solve endpoint:
+ * The solve page is not a second solve path: it feeds the *same* `classifyRequest` /
+ * `resolveImage` from the HTTP ingress (#61) into the *same* shared core, so the one
+ * solve lock, the admission bound (#43) and the body/pixel/width caps (#41) all apply.
+ * The rendered result is `formatSolveResponse`, the ingress's own serialiser, so the
+ * answer, method, confidence and timing agree by construction.
  *
- *  - the listener binds `127.0.0.1` on port 0 and that is **not configurable here**;
+ * Security is the point, because this endpoint can write the config, spend provider
+ * credits and solve images:
+ *
+ *  - **one access rule for every page** (config, solve and any future route): the
+ *    socket's remote address must be loopback or fall in `web_ui.allowed_cidrs`. The
+ *    check runs before `Host`, before any token and before any handler. The remote
+ *    address is the socket's, never `X-Forwarded-For`;
+ *  - **the `Host` header is explicitly enumerated**: loopback names, the concrete bind
+ *    address and `web_ui.allowed_hosts` (default deny). Widening the bind does not
+ *    loosen this, because a session is scoped to a hostname and DNS rebinding is
+ *    exactly the attack it defends (#56);
+ *  - the listener binds `web_ui.bind` (loopback by default), and a non-loopback range
+ *    is refused unless a credential verifier is configured;
  *  - the URL the app opens carries a **one-time launch token** that is single-use,
- *    short-lived (5 minutes) and distinct from the HTTP ingress token. It is redeemed
- *    for a per-session token embedded in the page, so the launch token never has to
- *    survive in a browser history or a `Referer` header;
- *  - the `Host` header is validated against the loopback address and the bound port,
- *    which is what stops a malicious page reaching the UI through DNS rebinding;
- *  - every response carries `Cache-Control: no-store`, so a token or a setting is not
- *    left in the browser cache;
- *  - a secret value is never rendered - presence and source only, exactly as
- *    `config list` does;
- *  - the listener is closed when the editor finishes (save, cancel or timeout), so
- *    the window of exposure is the editing session rather than the process uptime.
- *
- * A failed start returns an actionable outcome instead of throwing, because the tray
- * must keep running when the UI cannot.
+ *    short-lived (5 minutes) and distinct from the HTTP ingress token; on loopback it
+ *    is redeemed for a session token embedded in the page. A non-loopback client must
+ *    instead log in with the configured credential, and its session is bound to the
+ *    address that authenticated;
+ *  - every response carries `Cache-Control: no-store`; a secret value is never rendered
+ *    (presence and source only); and the listener is closed when the editor finishes.
  */
 import { createServer as createHttpServerImpl } from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 
+import { DEFAULT_MAX_BODY_BYTES } from '../http/defaults.js';
+import { DEFAULT_MAX_HEIGHT, DEFAULT_MIN_HEIGHT } from '../imaging/limits.js';
+import { createAuthThrottle } from '../http/throttle.js';
 import { openPath } from './open-path.js';
 import { createSetupSettingsController, getSetting, parseSettingValue, serializeSettingValue } from './settings.js';
+import {
+  addressAllowed,
+  isAllowedHostHeader,
+  isLoopbackAddress,
+  parseAllowedCidrs,
+  verifyWebUiPassword,
+  webUiAdmitsNonLoopback,
+  WEB_UI_CREDENTIAL_SETTING,
+} from './access.js';
 
-/** The only address this UI ever binds. Not read from config, by design. */
+/** The default bind. `web_ui.bind` may widen it; see the module comment. */
 export const WEB_UI_BIND = '127.0.0.1';
-/** The body is a settings form, never an image; a small cap is plenty. */
+/** The settings body is a form, never an image; a small cap is plenty. */
 export const WEB_UI_MAX_BODY_BYTES = 256 * 1024;
 /** The launch link is worthless after this long even if it was never clicked. */
 export const DEFAULT_LAUNCH_TOKEN_TTL_MS = 5 * 60 * 1000;
 /** How long a session may sit idle before the server closes itself. */
 export const DEFAULT_SESSION_TIMEOUT_MS = 15 * 60 * 1000;
+/** The generic refusal a failed login gets. It never says which part was wrong. */
+export const LOGIN_FAILED_MESSAGE = 'Incorrect credentials.';
+
+export { isAllowedHostHeader };
 
 /**
- * True when `hostHeader` names this loopback UI and the bound port.
- *
- * The whole header is checked, including the port, and only a loopback literal or
- * `localhost` qualifies. A DNS-rebinding page makes the browser send the attacker's
- * hostname (`evil.example`) in `Host` even though the connection lands on 127.0.0.1;
- * rejecting anything else is the control that stops it. A missing or malformed
- * header is refused rather than assumed loopback.
+ * The only trusted client address: the socket's. `X-Forwarded-For` is caller-supplied
+ * and trivially spoofed, so honouring it would turn the allowlist into a formality.
+ * A proxy deployment must be configured explicitly; the header is never consulted.
  */
-export function isAllowedHostHeader(hostHeader, port) {
-  if (typeof hostHeader !== 'string' || hostHeader.trim() === '') return false;
-  if (!Number.isInteger(Number(port)) || Number(port) <= 0) return false;
-  const match = /^(\[[^\]]+\]|[^:]+):(\d+)$/.exec(hostHeader.trim().toLowerCase());
-  if (!match) return false;
-  if (Number(match[2]) !== Number(port)) return false;
-  const host = match[1].replace(/^\[|\]$/g, '');
-  return host === WEB_UI_BIND || host === 'localhost' || host === '::1';
+export function remoteAddressOf(req) {
+  return req?.socket?.remoteAddress ?? null;
 }
 
 /** Constant-time comparison for the two opaque tokens. */
@@ -120,7 +134,7 @@ function page({ body, configPath = null, credentialPath = null }) {
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PuzzleSolver settings</title><style>${STYLE}</style></head>
-<body><h1>PuzzleSolver settings</h1>${where ? `<p>${where}</p>` : ''}${body}</body></html>`;
+<body><h1>PuzzleSolver</h1>${where ? `<p>${where}</p>` : ''}${body}</body></html>`;
 }
 
 function messagePage(title, message, options = {}) {
@@ -173,10 +187,57 @@ export function renderSettingsPage({ items, session, configPath = null, credenti
   ].join('');
   const body =
     banners +
+    `<p><a href="/solve?session=${escapeHtml(session)}">Solve an uploaded image &rarr;</a></p>` +
     `<form method="post" action="/save"><input type="hidden" name="session" value="${escapeHtml(session)}">` +
     `<table><thead><tr><th>Setting</th><th>Value</th><th>Current</th><th></th></tr></thead><tbody>${rows.join('')}</tbody></table>` +
     `<div class="actions"><button type="submit">Save</button>` +
     `<button type="submit" formaction="/cancel" formnovalidate>Cancel</button></div></form>`;
+  return page({ body, configPath, credentialPath });
+}
+
+/** The solve form and, after a post, the result. Exported for a direct render test. */
+export function renderSolvePage({ session, result = null, timingMs = null, error = null, configPath = null, credentialPath = null }) {
+  const banners = error ? `<div class="banner error"><strong>Rejected:</strong> ${escapeHtml(error)}</div>` : '';
+  let outcome = '';
+  if (result) {
+    if (result.answer != null) {
+      outcome =
+        '<div class="banner ok"><strong>Solved.</strong></div>' +
+        '<table><tbody>' +
+        `<tr><th>answer</th><td>${escapeHtml(result.answer)}</td></tr>` +
+        `<tr><th>method</th><td>${escapeHtml(result.method ?? 'unknown')}</td></tr>` +
+        `<tr><th>confident</th><td>${result.confident === true ? 'true' : 'false'}</td></tr>` +
+        `<tr><th>took</th><td>${timingMs == null ? 'unknown' : `${Math.round(timingMs)} ms`}</td></tr>` +
+        '</tbody></table>';
+    } else {
+      // Never a guess: an unresolved puzzle (or one withheld for lack of corroboration)
+      // shows the acknowledgement wording, the same text a Pushbullet reply would use.
+      const acknowledgement =
+        result.unresolvedReply?.text ??
+        'No answer passed validation, so nothing was sent. The image was left unresolved.';
+      outcome = `<div class="banner test"><strong>Not solved.</strong> ${escapeHtml(acknowledgement)}</div>`;
+    }
+  }
+  const form =
+    '<h2>Solve an image</h2>' +
+    '<p>Uploaded through the same paths the HTTP ingress accepts and solved by the same core: ' +
+    'one solve lock, the same queue bound and the same image caps.</p>' +
+    `<form method="post" action="/solve?session=${escapeHtml(session)}" enctype="multipart/form-data">` +
+    '<input type="file" name="image" accept="image/*" required> ' +
+    '<button type="submit">Solve</button></form>';
+  return page({ body: banners + form + outcome, configPath, credentialPath });
+}
+
+/** The login form for a non-loopback client. No username: only a password exists. */
+export function renderLoginPage({ error = null, configPath = null, credentialPath = null } = {}) {
+  const banner = error ? `<div class="banner error">${escapeHtml(error)}</div>` : '';
+  const body =
+    banner +
+    '<h2>Sign in</h2>' +
+    '<p>This web UI is reachable from a non-loopback address, so it requires the configured credential.</p>' +
+    '<form method="post" action="/login">' +
+    '<input type="password" name="password" autocomplete="current-password" required> ' +
+    '<button type="submit">Sign in</button></form>';
   return page({ body, configPath, credentialPath });
 }
 
@@ -253,7 +314,9 @@ function readBodyCapped(req, maxBytes) {
       if (settled) return;
       size += chunk.length;
       if (size > maxBytes) {
-        fail(new Error(`request body exceeds ${maxBytes} bytes`));
+        const err = new Error(`request body exceeds ${maxBytes} bytes`);
+        err.status = 413;
+        fail(err);
         return;
       }
       chunks.push(chunk);
@@ -268,8 +331,16 @@ function readBodyCapped(req, maxBytes) {
   });
 }
 
+/** Host to put in the URL the browser is handed. A wildcard bind is probed on loopback. */
+function hostForUrl(bindHost) {
+  const value = String(bindHost ?? WEB_UI_BIND);
+  if (value === '0.0.0.0') return '127.0.0.1';
+  if (value === '::') return '[::1]';
+  return value.includes(':') ? `[${value}]` : value;
+}
+
 /**
- * Build the loopback UI server. It owns a listener of its own: `start()` binds and
+ * Build the web UI server. It owns a listener of its own: `start()` binds and
  * generates the one-time launch token, `stop()` closes the listener and every open
  * connection. `waitForOutcome()` resolves with the editor outcome (or a cancel /
  * timeout / external close).
@@ -284,18 +355,56 @@ export function createWebSettingsServer({
   now = () => Date.now(),
   randomToken = () => randomBytes(32).toString('hex'),
   createServerImpl = createHttpServerImpl,
+  // Access control (#65).
+  webUi = null,
+  credentialVerifier = null,
+  getRemoteAddress = remoteAddressOf,
+  // Solve page (#65). Without a core the route is a 404; the config editor does not
+  // need one, but the tray/app passes the shared core.
+  solveCore = null,
+  config = null,
+  inboxDir = null,
 } = {}) {
   if (!controller || typeof controller.list !== 'function' || typeof controller.save !== 'function') {
     throw new Error('createWebSettingsServer needs a settings controller (list/save)');
   }
 
+  const bindHost = String(webUi?.bind ?? WEB_UI_BIND);
+  const allowedCidrs = parseAllowedCidrs(webUi?.allowed_cidrs);
+  const allowedHosts = Array.isArray(webUi?.allowed_hosts) ? webUi.allowed_hosts : [];
+  // `isAllowedHostHeader` ignores a wildcard bind (it is not a Host anyone can type)
+  // and adds the other entries explicitly. The bound address is the one name the
+  // operator typed to reach this exact socket, so it is legitimate by construction.
+  const boundAddress = bindHost;
+  const exposesRemote = webUiAdmitsNonLoopback({ allowed_cidrs: webUi?.allowed_cidrs });
+
+  // Refuse to listen wider than loopback without a credential. This is the "both are
+  // set up or nothing is exposed" rule: no silent fall back to token-only.
+  if (exposesRemote && !credentialVerifier) {
+    throw new Error(
+      `web_ui.allowed_cidrs admits addresses beyond loopback but no web UI credential is configured. ` +
+        `Set ${WEB_UI_CREDENTIAL_SETTING} (stored as a scrypt verifier in the credential store) or the web UI will not start.`
+    );
+  }
+
+  const solveMaxBytes = config?.http?.max_body_bytes ?? DEFAULT_MAX_BODY_BYTES;
+  const requireConfidence = config?.reply?.require_confidence === true;
+  const unresolvedReply =
+    config?.reply?.enabled === true && String(config.reply.unresolved_text ?? '').trim() !== ''
+      ? { title: config.reply.unresolved_title ?? null, text: config.reply.unresolved_text }
+      : null;
+  const modelNames = { text: config?.solver?.llm_text_model ?? null, vision: config?.solver?.llm_vision_model ?? null };
+
   let address = null;
   let launchToken = null; // { token, issuedAt, used }
   let sessionToken = null;
+  let sessionRemote = null;
   let stopped = false;
   let settled = false;
   let timeoutTimer = null;
   let resolveOutcome;
+  let httpModulePromise = null;
+  const loginThrottle = createAuthThrottle({ now });
   const outcome = new Promise((resolve) => {
     resolveOutcome = resolve;
   });
@@ -330,35 +439,200 @@ export function createWebSettingsServer({
 
   const view = () => ({ items: controller.list(), configPath, credentialPath });
 
+  function openSession(remote) {
+    sessionToken = randomToken();
+    sessionRemote = remote;
+    return sessionToken;
+  }
+
+  function sessionValid(provided, remote) {
+    return (
+      sessionToken != null &&
+      constantTimeEqual(String(provided ?? ''), sessionToken) &&
+      sessionRemote === remote
+    );
+  }
+
+  function httpModule() {
+    // Imported lazily so a settings-only run never loads the image gate (`sharp`), and
+    // cached so the solve path does not re-resolve it per request.
+    httpModulePromise ??= import('../http/server.js');
+    return httpModulePromise;
+  }
+
+  async function handleLogin(req, res, remote) {
+    if (!credentialVerifier) {
+      return send(res, 403, messagePage('Refused', 'Login is not configured on this web UI.'));
+    }
+    const gate = loginThrottle.check(remote);
+    if (!gate.allowed) {
+      return send(
+        res,
+        429,
+        renderLoginPage({ error: `Too many failed attempts. Try again in ${gate.retryAfterSec}s.`, configPath, credentialPath }),
+        { 'retry-after': String(gate.retryAfterSec) }
+      );
+    }
+    const body = await readBodyCapped(req, WEB_UI_MAX_BODY_BYTES);
+    const form = new URLSearchParams(body.toString('utf8'));
+    const offered = form.get('password') ?? '';
+    // The same generic message whether the verifier is malformed or the password is
+    // simply wrong: a login must not become an oracle for which part failed.
+    if (!verifyWebUiPassword(offered, credentialVerifier)) {
+      const outcome = loginThrottle.fail(remote);
+      if (!outcome.allowed) {
+        return send(
+          res,
+          429,
+          renderLoginPage({ error: `Too many failed attempts. Try again in ${outcome.retryAfterSec}s.`, configPath, credentialPath }),
+          { 'retry-after': String(outcome.retryAfterSec) }
+        );
+      }
+      return send(res, 401, renderLoginPage({ error: LOGIN_FAILED_MESSAGE, configPath, credentialPath }));
+    }
+    loginThrottle.succeed(remote);
+    openSession(remote);
+    return send(res, 200, renderSettingsPage({ ...view(), session: sessionToken }));
+  }
+
+  async function handleSolve(req, res, url, remote) {
+    if (!solveCore || typeof solveCore.solve !== 'function') {
+      return send(res, 404, messagePage('Not found', 'Solving is not available from this web UI.'));
+    }
+    let slot = false;
+    const acquire = typeof solveCore.acquireSlot === 'function' ? solveCore.acquireSlot : () => true;
+    const release = typeof solveCore.releaseSlot === 'function' ? solveCore.releaseSlot : () => {};
+    try {
+      const body = await readBodyCapped(req, solveMaxBytes);
+      const { classifyRequest, resolveImage, formatSolveResponse, imageErrorStatus } = await httpModule();
+      let image;
+      try {
+        const parsed = await classifyRequest(req, body);
+        image = await resolveImage(parsed, {
+          inboxDir,
+          maxBodyBytes: solveMaxBytes,
+          // Same shared gate as the ingress (#41): the body cap is the HTTP cap, and
+          // the width/pixel caps are the live config values.
+          imageLimits: {
+            minHeight: DEFAULT_MIN_HEIGHT,
+            maxHeight: DEFAULT_MAX_HEIGHT,
+            maxWidth: config?.image?.max_width,
+            maxPixels: config?.image?.max_pixels,
+          },
+          // image_url is an SSRF surface and is never fetched from the UI; uploading
+          // is the only input the form offers.
+          imageUrlPolicy: { enabled: false, hosts: [] },
+        });
+      } catch (err) {
+        const status = Number.isInteger(err?.status) ? err.status : imageErrorStatus(err);
+        const reason = err?.reason ?? err?.message ?? 'the image was rejected';
+        logger?.warn?.(`web ui solve rejected: ${reason}`);
+        return send(res, status, renderSolvePage({ session: sessionToken, error: reason, configPath, credentialPath }));
+      }
+
+      if (!acquire()) {
+        return send(
+          res,
+          503,
+          renderSolvePage({ session: sessionToken, error: 'The solver queue is full; try again shortly.', configPath, credentialPath }),
+          { 'retry-after': '1' }
+        );
+      }
+      slot = true;
+      const startedAt = now();
+      let result;
+      try {
+        result = await solveCore.solve(image.path, { subject: image.iden });
+      } finally {
+        if (slot) {
+          slot = false;
+          release();
+        }
+      }
+      const timingMs = now() - startedAt;
+      const formatted = formatSolveResponse(result, { image, unresolvedReply, requireConfidence, modelNames });
+      logger?.info?.(
+        `web ui: ${formatted.answer != null ? formatted.answer : 'unresolved'} in ${Math.round(timingMs)}ms (${formatted.method ?? 'no method'})`
+      );
+      return send(res, 200, renderSolvePage({ session: sessionToken, result: formatted, timingMs, configPath, credentialPath }));
+    } catch (err) {
+      logger?.warn?.(`web ui solve failed: ${err?.message ?? err}`);
+      return send(res, Number.isInteger(err?.status) ? err.status : 500, renderSolvePage({ session: sessionToken, error: 'The solve failed; check the log.', configPath, credentialPath }));
+    }
+  }
+
   async function handle(req, res) {
     try {
-      // The Host check runs before anything else, including token handling: a
-      // rebinding request must not even learn whether a token is valid.
-      if (!isAllowedHostHeader(req.headers.host, address?.port)) {
-        return send(res, 403, messagePage('Refused', 'This settings UI only answers requests addressed to loopback on its own port.'));
+      const remote = getRemoteAddress(req);
+      // 1. The one access rule, before Host, before token, before any handler. Every
+      //    page and every POST goes through it by construction, including an unknown
+      //    path (the 404 default is below).
+      if (!remote || !addressAllowed(remote, allowedCidrs)) {
+        return send(res, 403, messagePage('Refused', 'This web UI only answers requests from an allowed address.'));
+      }
+      // 2. DNS-rebinding defence. Widening the bind enumerates more names, never "any".
+      if (!isAllowedHostHeader(req.headers.host, address?.port, { boundAddress, allowedHosts })) {
+        return send(
+          res,
+          403,
+          messagePage('Refused', 'This web UI only answers requests addressed to an allowed hostname (loopback by default) on its own port.')
+        );
       }
       const url = new URL(req.url ?? '/', `http://${WEB_UI_BIND}`);
       const method = String(req.method ?? 'GET').toUpperCase();
+      const loopbackClient = isLoopbackAddress(remote);
+
+      if (method === 'GET' && url.pathname === '/login') {
+        return send(res, 200, renderLoginPage({ configPath, credentialPath }));
+      }
+      if (method === 'POST' && url.pathname === '/login') {
+        return handleLogin(req, res, remote);
+      }
 
       if (method === 'GET' && url.pathname === '/') {
-        const provided = url.searchParams.get('token') ?? '';
-        const fresh = launchToken && !launchToken.used && now() - launchToken.issuedAt <= launchTokenTtlMs;
-        if (!fresh || !constantTimeEqual(provided, launchToken.token)) {
-          return send(
-            res,
-            403,
-            messagePage('Link no longer valid', 'The one-time settings link was already used or has expired. Open Settings again to get a new one.')
-          );
+        if (loopbackClient) {
+          // Loopback keeps #56's behaviour: the one-time launch token is enough.
+          const provided = url.searchParams.get('token') ?? '';
+          const fresh = launchToken && !launchToken.used && now() - launchToken.issuedAt <= launchTokenTtlMs;
+          if (!fresh || !constantTimeEqual(provided, launchToken.token)) {
+            return send(
+              res,
+              403,
+              messagePage('Link no longer valid', 'The one-time settings link was already used or has expired. Open Settings again to get a new one.')
+            );
+          }
+          launchToken.used = true;
+          openSession(remote);
+          return send(res, 200, renderSettingsPage({ ...view(), session: sessionToken }));
         }
-        launchToken.used = true;
-        sessionToken = randomToken();
-        return send(res, 200, renderSettingsPage({ ...view(), session: sessionToken }));
+        // Non-loopback already authenticated (session in the query) gets the page;
+        // otherwise it must log in. The launch token is not enough there.
+        if (sessionValid(url.searchParams.get('session') ?? '', remote)) {
+          return send(res, 200, renderSettingsPage({ ...view(), session: sessionToken }));
+        }
+        return send(res, 200, renderLoginPage({ configPath, credentialPath }));
+      }
+
+      if (method === 'GET' && url.pathname === '/solve') {
+        if (!sessionValid(url.searchParams.get('session') ?? '', remote)) {
+          return loopbackClient
+            ? send(res, 403, messagePage('Session expired', 'Reopen Settings to get a fresh session.'))
+            : send(res, 200, renderLoginPage({ configPath, credentialPath }));
+        }
+        return send(res, 200, renderSolvePage({ session: sessionToken, configPath, credentialPath }));
+      }
+
+      if (method === 'POST' && url.pathname === '/solve') {
+        if (!sessionValid(url.searchParams.get('session') ?? '', remote)) {
+          return send(res, 403, messagePage('Session expired', 'Reopen Settings to get a fresh session.'));
+        }
+        return handleSolve(req, res, url, remote);
       }
 
       if (method === 'POST' && (url.pathname === '/save' || url.pathname === '/test' || url.pathname === '/cancel')) {
         const body = await readBodyCapped(req, WEB_UI_MAX_BODY_BYTES);
         const form = new URLSearchParams(body.toString('utf8'));
-        if (!sessionToken || !constantTimeEqual(form.get('session') ?? '', sessionToken)) {
+        if (!sessionValid(form.get('session') ?? '', remote)) {
           return send(res, 403, messagePage('Session expired', 'Reopen Settings to get a fresh session.'));
         }
 
@@ -407,7 +681,7 @@ export function createWebSettingsServer({
       return send(res, 404, messagePage('Not found', 'There is nothing at that address.'));
     } catch (err) {
       logger?.warn?.(`settings UI request failed: ${err?.message ?? err}`);
-      return send(res, 500, messagePage('Error', 'The settings UI hit an error. Check the log, then reopen Settings.'));
+      return send(res, Number.isInteger(err?.status) ? err.status : 500, messagePage('Error', 'The settings UI hit an error. Check the log, then reopen Settings.'));
     }
   }
 
@@ -445,8 +719,8 @@ export function createWebSettingsServer({
       };
       server.once('error', onError);
       server.once('listening', onListening);
-      // Port 0: an ephemeral port, and `127.0.0.1` only. Not configurable.
-      server.listen({ host: WEB_UI_BIND, port: 0 });
+      // An ephemeral port, on the configured bind (loopback unless widened).
+      server.listen({ host: bindHost, port: 0 });
     });
   }
 
@@ -474,7 +748,11 @@ export function createWebSettingsServer({
     },
     get url() {
       if (!address || !launchToken) return null;
-      return `http://${WEB_UI_BIND}:${address.port}/?token=${launchToken.token}`;
+      return `http://${hostForUrl(bindHost)}:${address.port}/?token=${launchToken.token}`;
+    },
+    /** The one access rule and its inputs, for diagnostics and tests. */
+    accessRule() {
+      return { bind: bindHost, allowedCidrs: allowedCidrs.map((c) => c.text), allowedHosts: [...allowedHosts], requiresCredential: exposesRemote };
     },
     waitForOutcome: () => outcome,
   };
@@ -499,13 +777,33 @@ export async function openWebSettingsDialog({
   timeoutMs = DEFAULT_SESSION_TIMEOUT_MS,
   launchTokenTtlMs = DEFAULT_LAUNCH_TOKEN_TTL_MS,
   createServerImpl,
+  webUi = null,
+  credentialVerifier = null,
+  getRemoteAddress,
+  solveCore = null,
+  config = null,
+  inboxDir = null,
 } = {}) {
   let server;
   try {
-    server = createWebSettingsServer({ controller, configPath, credentialPath, logger, timeoutMs, launchTokenTtlMs, createServerImpl });
+    server = createWebSettingsServer({
+      controller,
+      configPath,
+      credentialPath,
+      logger,
+      timeoutMs,
+      launchTokenTtlMs,
+      createServerImpl,
+      webUi,
+      credentialVerifier,
+      ...(getRemoteAddress ? { getRemoteAddress } : {}),
+      solveCore,
+      config,
+      inboxDir,
+    });
     await server.start();
   } catch (err) {
-    const detail = `could not start the settings web UI on 127.0.0.1: ${err?.message ?? err}`;
+    const detail = `could not start the settings web UI on ${webUi?.bind ?? WEB_UI_BIND}: ${err?.message ?? err}`;
     logger?.warn?.(detail);
     return { saved: false, failed: true, detail };
   }

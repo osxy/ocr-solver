@@ -33,6 +33,7 @@ import { VARIANTS } from '../imaging/preprocess.js';
 import { HISTORY_MODES } from '../pushbullet/listener.js';
 import { STRATEGIES } from '../pushbullet/respond.js';
 import { describeSecret } from '../secrets.js';
+import { hashWebUiPassword, WEB_UI_CREDENTIAL_SETTING } from './access.js';
 import { createSetup, defaultTestModel, defaultTestPushbullet, hasInternalWhitespace } from './setup.js';
 
 /** A value the editor refused before it could reach any store. Names the setting. */
@@ -105,6 +106,13 @@ export const SETTINGS = Object.freeze([
   Object.freeze({ id: 'http.max_queue', label: 'HTTP max queue', path: ['http', 'max_queue'], type: 'integer', min: 1, restart: true }),
   Object.freeze({ id: 'http.allow_image_url', label: 'Allow image_url fetching (SSRF risk)', path: ['http', 'allow_image_url'], type: 'boolean', restart: true }),
   Object.freeze({ id: 'http.image_url_hosts', label: 'Allowed image_url hosts (default deny)', path: ['http', 'image_url_hosts'], type: 'string-array', restart: true }),
+
+  Object.freeze({ id: 'web_ui.bind', label: 'Web UI bind address', path: ['web_ui', 'bind'], type: 'string', restart: true }),
+  Object.freeze({ id: 'web_ui.allowed_cidrs', label: 'Web UI allowed CIDR ranges (blank = loopback only)', path: ['web_ui', 'allowed_cidrs'], type: 'string-array', allowEmpty: true, restart: true }),
+  Object.freeze({ id: 'web_ui.allowed_hosts', label: 'Web UI extra Host names (blank = default deny)', path: ['web_ui', 'allowed_hosts'], type: 'string-array', allowEmpty: true, restart: true }),
+  // The only secret whose stored value is not the entered value: `prepare` hashes it to
+  // a scrypt verifier first, so the credential store never holds the password (#65).
+  Object.freeze({ id: WEB_UI_CREDENTIAL_SETTING, label: 'Web UI remote-access password', secret: 'web_ui', type: 'secret', restart: true, testable: false, prepare: hashWebUiPassword }),
 
   Object.freeze({ id: 'ui.tray', label: 'Show the tray', path: ['ui', 'tray'], type: 'boolean', restart: true }),
   Object.freeze({ id: 'ui.notify_on_unresolved', label: 'Notify on an unresolved puzzle', path: ['ui', 'notify_on_unresolved'], type: 'boolean', restart: false }),
@@ -181,7 +189,12 @@ export function parseSettingValue(setting, text) {
         .split(',')
         .map((entry) => entry.trim())
         .filter(Boolean);
-      if (entries.length === 0) throw new SettingValueError(`${setting.id} must not be empty`);
+      // `allowEmpty` is meaningful for the web UI ranges/hosts, where "none" is the
+      // secure default and must be expressible. The other arrays still refuse empty.
+      if (entries.length === 0) {
+        if (setting.allowEmpty) return [];
+        throw new SettingValueError(`${setting.id} must not be empty`);
+      }
       for (const entry of entries) {
         if (setting.choices && !setting.choices.includes(entry)) {
           throw new SettingValueError(`${setting.id} contains unknown value "${entry}"; known values: ${setting.choices.join(', ')}`);
@@ -201,7 +214,9 @@ export function parseSettingValue(setting, text) {
         const problem = setting.check(value);
         if (problem) throw new SettingValueError(`${setting.id} is not usable: ${problem}`);
       }
-      return value;
+      // `prepare` is the write transform: the web UI password becomes a verifier here,
+      // before it can reach any store.
+      return typeof setting.prepare === 'function' ? setting.prepare(value) : value;
     }
     case 'string': {
       const value = String(text ?? '');

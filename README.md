@@ -239,6 +239,56 @@ The editor covers the HTTP ingress too — `http.enabled`, `http.bind`, `http.po
 `http.token` — so enabling the endpoint no longer means hand-editing TOML **and** writing
 the credential by some other route.
 
+### Solve an uploaded image in the web UI
+
+The same web UI has a **Solve an uploaded image** page. It is not a second solve path:
+the upload goes through the HTTP ingress's own `classifyRequest`/`resolveImage` (a raw
+body, a `multipart/form-data` file or a base64 body), and the solve runs on the same
+shared core, so the one solve lock, the queue bound (`http.max_queue`) and the image caps
+(`http.max_body_bytes`, `image.max_width`, `image.max_pixels`) all apply. The result
+shows the **answer**, the **method** (`tier0`, `model:text` or `model:vision`),
+**confidence** and **how long it took** — the same fields the HTTP response carries,
+because it is the same serialiser. An unresolved puzzle shows the configured
+acknowledgement text; a guess is never displayed.
+
+### Exposing the web UI beyond loopback (read this before doing it)
+
+By default the web UI binds `127.0.0.1` and only loopback may reach it. That is the
+recommended setting. If you genuinely need it from another machine, two things must be
+configured together, in `config.toml`:
+
+```toml
+[web_ui]
+bind = "0.0.0.0"                 # or a specific LAN address
+allowed_cidrs = ["192.168.1.0/24"]
+allowed_hosts = ["puzzle.lan"]    # every Host name you will type, default deny
+```
+
+The access rule is a **single control for every page** (settings and solve alike): the
+socket's remote address must be loopback or fall inside one of `allowed_cidrs`.
+`X-Forwarded-For` is ignored — it is caller-supplied. `0.0.0.0/0` and `::/0` are refused
+at load; if the UI must be reachable from everywhere, put it behind your own
+authenticated reverse proxy. A range wider than loopback also **requires a credential**:
+set it once with
+
+```bash
+node src/cli.js config set web_ui.password 'a long passphrase'
+node src/cli.js config edit --gui        # or set it in the Settings page
+```
+
+That stores a **salt + `scrypt` verifier** in `credentials.json` (never the password,
+never `config.toml`); a non-loopback client must sign in, and failed logins are
+throttled. With a non-loopback range and no credential the service **refuses to start**,
+naming `web_ui.password`, rather than listen unauthenticated.
+
+**This is plain HTTP.** A password sent over a non-loopback connection travels in
+cleartext, and the session token cannot be marked `Secure`. The credential raises the bar
+against someone casually browsing the LAN; it does **not** make an untrusted network
+safe, and it is not a substitute for transport encryption. For access from anywhere you
+do not fully control, terminate TLS at a reverse proxy and reach the UI through that. A
+LAN hostname or the proxy's `Host` must be listed in `allowed_hosts`, and the proxy's
+address in `allowed_cidrs`.
+
 **Some settings need a restart.** The editor marks each one `[live]` or `[restart]`, and
 the headless command prints which applies:
 
@@ -514,6 +564,11 @@ folders. Manually: `schtasks /Delete /TN PuzzleSolver /F`, then delete
   install/uninstall PowerShell and the packaged `node.exe` are written and tested at
   their seams, but this project is developed on Linux. Treat the first Windows install as
   unverified; `--headless` is the supported fallback.
+- **The web UI is plain HTTP and its non-loopback credential is transport-unprotected.**
+  A remote-access password is verified as a `scrypt` verifier and failed logins are
+  throttled, but the HTTP connection itself is not encrypted and the session token cannot
+  be `Secure`. On an untrusted network, use a TLS-terminating reverse proxy; the password
+  is not a substitute for one. See [Exposing the web UI beyond loopback](#exposing-the-web-ui-beyond-loopback-read-this-before-doing-it).
 - **The settings and first-run UI opens in the default browser; the browser hand-off itself
   is not exercised on Windows.** On a desktop session the tray's **Settings** item and the
   first-run setup (no token configured) start a loopback-only web UI on an ephemeral port and

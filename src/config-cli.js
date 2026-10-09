@@ -202,7 +202,17 @@ export async function runConfig(
         credentialPath,
         secrets,
         logger,
-        ...(opts.gui ? { openBrowser, output: stdout } : { input: stdin, output: stdout }),
+        // #65: the GUI is gated by the same access rule and refuses to start on a
+        // non-loopback range without a configured credential, exactly like the tray.
+        ...(opts.gui
+          ? {
+              openBrowser,
+              output: stdout,
+              config: loaded.config,
+              webUi: loaded.config.web_ui,
+              credentialVerifier: secrets.web_ui?.value ?? null,
+            }
+          : { input: stdin, output: stdout }),
       });
       if (outcome?.failed) {
         stderr.write(`${outcome.detail ?? 'the settings editor failed'}\n`);
