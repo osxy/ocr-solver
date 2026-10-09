@@ -124,8 +124,11 @@ install -> task registered and inspected -> packaged app starts under ``--headle
     }
 }
 finally {
-    # Never let cleanup mask a real failure, and never leave a task behind on the runner.
+    # Best-effort cleanup. The delete is expected to fail when uninstall.ps1 already
+    # removed the task, and that non-zero $LASTEXITCODE must not become the script's
+    # exit code (a passing run was reported red by exactly that in the first CI run).
     & schtasks.exe /Delete /TN $taskName /F 2>&1 | Out-Null
+    $LASTEXITCODE = 0
     Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
         Where-Object { $_.CommandLine -and $_.CommandLine.Contains($installDir) } |
         ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
