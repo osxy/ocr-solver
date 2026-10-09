@@ -19,7 +19,7 @@ import { homedir as osHomedir } from 'node:os';
 import { readdirSync, statSync } from 'node:fs';
 import { join, basename, extname } from 'node:path';
 import { loadConfig, defaultStatePath } from './config.js';
-import { loadSecrets, describeSecret } from './secrets.js';
+import { loadSecrets, describeSecret, saveSecrets, defaultCredentialPath } from './secrets.js';
 import { createLogger, defaultLogPath } from './logging.js';
 import { openStore } from './state/db.js';
 import { createPushbulletClient } from './pushbullet/client.js';
@@ -33,7 +33,36 @@ import { createOcrWorker } from './ocr/recognize.js';
 import { solveImage } from './solver/pipeline.js';
 import { createNotifier } from './ui/notifications.js';
 import { resolveTrayMode } from './ui/mode.js';
+import { createSetup } from './ui/setup.js';
+import { defaultSetupDialog } from './ui/setup-dialog.js';
 import { storeReport, loadReportCache, defaultAccuracyCachePath } from './accuracy.js';
+
+/**
+ * No token could be resolved and there was no dialog to ask for one. The CLI turns
+ * the message into the exit line, so it names both routes rather than a stack.
+ */
+export class MissingTokenError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'MissingTokenError';
+  }
+}
+
+/** The first-run dialog ended without saving, or could not present at all. */
+export class SetupCancelledError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'SetupCancelledError';
+  }
+}
+
+/** The dialog itself threw, or reported a save that did not actually resolve a token. */
+export class SetupFailedError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'SetupFailedError';
+  }
+}
 
 /**
  * Build one reasoner from config, or `null` when the model tiers are off.
@@ -119,6 +148,12 @@ export async function createApp({
   providers = null,
   logger: providedLogger = null,
 
+  // M3 first run. `trayRequested` is the caller's wish; `ui.tray = false` can still
+  // veto it (resolveTrayMode decides). `setupDialog` is the UI seam: the wiring only
+  // exists when a dialog can actually be presented, so `--headless` never reaches it.
+  trayRequested = false,
+  setupDialog = null,
+
   // Dependency injection - everything below can be replaced by a test.
   store: providedStore = null,
   client: providedClient = null,
@@ -158,7 +193,7 @@ export async function createApp({
 
   let notificationSink = notifier;
 
-  const secrets = await loadSecrets({
+  let secrets = await loadSecrets({
     explicit: explicitSecrets,
     env,
     providers,
@@ -166,8 +201,8 @@ export async function createApp({
     homedir,
     logger,
   });
-  const pushbulletToken = secrets.pushbullet.value;
-  const llmApiKey = secrets.llm.value;
+  let pushbulletToken = secrets.pushbullet.value;
+  let llmApiKey = secrets.llm.value;
   logger.debug?.(`secrets: pushbullet=${JSON.stringify(describeSecret(secrets.pushbullet))} llm=${JSON.stringify(describeSecret(secrets.llm))}`);
 
   // Open the store before pruning: the prune is housekeeping and the store is what
@@ -187,12 +222,56 @@ export async function createApp({
     : 0;
   if (prunedAttempts) logger.info(`pruned ${prunedAttempts} attempt row(s) older than ${config.storage.retain_days} day(s)`);
 
+  const wantTray = resolveTrayMode({ requested: trayRequested === true, configTray: config.ui.tray });
+  const credentialPath = defaultCredentialPath({ platform, env, homedir });
+
   if (!providedClient && !pushbulletToken) {
-    if (ownsStore) store.close();
-    throw new Error(
-      'no Pushbullet token found. Set PUSHBULLET_TOKEN, pass --token, or put it in the credential store; ' +
-        'secrets are never read from config.toml.'
-    );
+    // Tray mode is the only place a dialog can be shown, so that is the only place
+    // the first-run path exists. --headless (and every test that injects no dialog)
+    // falls through to the actionable error below rather than a silent no-op.
+    if (wantTray && setupDialog) {
+      const setup = createSetup({
+        // The dialog writes through the same provider interface the app reads through,
+        // so the reload below proves the credential round-tripped. The model key is
+        // optional, matching the documented behaviour.
+        saveSecrets: (args) => saveSecrets({ ...args, providers, platform, env, homedir, logger }),
+        requireModelKey: false,
+        logger,
+      });
+      let outcome;
+      try {
+        outcome = await setupDialog({ setup, logger, credentialPath });
+      } catch (err) {
+        if (ownsStore) store.close();
+        throw new SetupFailedError(`the first-run setup dialog failed: ${err?.message ?? err}`);
+      }
+      if (!outcome?.saved) {
+        if (ownsStore) store.close();
+        throw new SetupCancelledError(
+          'first-run setup ended without a Pushbullet token; the service was not started. ' +
+            `Set PUSHBULLET_TOKEN, or add "pushbullet_token" to ${credentialPath}.`
+        );
+      }
+
+      // Re-resolve through the same providers the dialog wrote through. Trusting the
+      // dialog's "saved" flag would make a broken credential store look configured.
+      secrets = await loadSecrets({ explicit: explicitSecrets, env, providers, platform, homedir, logger });
+      pushbulletToken = secrets.pushbullet.value;
+      llmApiKey = secrets.llm.value;
+      logger.debug?.(`secrets after setup: pushbullet=${JSON.stringify(describeSecret(secrets.pushbullet))} llm=${JSON.stringify(describeSecret(secrets.llm))}`);
+      if (!pushbulletToken) {
+        if (ownsStore) store.close();
+        throw new SetupFailedError(
+          `the setup dialog reported success but no token was resolvable; add "pushbullet_token" to ${credentialPath}`
+        );
+      }
+    } else {
+      if (ownsStore) store.close();
+      throw new MissingTokenError(
+        'no Pushbullet token found. Set PUSHBULLET_TOKEN (or pass --token), or add ' +
+          `"pushbullet_token" to ${credentialPath}; secrets are never read from config.toml.`
+      );
+    }
   }
 
   const client = providedClient ?? createClient({ token: pushbulletToken });
@@ -389,7 +468,15 @@ export async function createApp({
  * The signal handlers close the listener socket and the database (DESIGN 5).
  */
 export async function runApp(options = {}) {
-  const app = await createApp(options);
+  // Tray mode is decided inside `createApp` from the config it loads, because the
+  // first-run dialog is part of assembly: it must run before the listener starts and
+  // must not exist under `--headless`. The requested tray flag and the dialog seam
+  // travel together so the two decisions cannot drift.
+  const app = await createApp({
+    ...options,
+    trayRequested: options.tray === true,
+    setupDialog: options.setupDialog ?? defaultSetupDialog,
+  });
   let closing = false;
   let tray = null;
 

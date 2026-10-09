@@ -18,6 +18,7 @@ import { createApp, buildReasonerFromConfig, runApp } from '../src/app.js';
 import { validateConfig } from '../src/config.js';
 import { defaultLogPath } from '../src/logging.js';
 import { createPushbulletClient } from '../src/pushbullet/client.js';
+import { createFileCredentialProvider } from '../src/secrets.js';
 
 const realSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -370,6 +371,204 @@ test('a listen-mode app with no token refuses with a clear message', async (t) =
       }),
     /no Pushbullet token/i
   );
+});
+
+// ---------------------------------------------------------------------------
+// M3 first run: the dialog must be reached, not just tested in isolation
+// ---------------------------------------------------------------------------
+
+/**
+ * `createApp` options for a first-run scenario. No `client` is injected on purpose:
+ * an injected client satisfies the `!providedClient` guard and skips the missing-token
+ * branch entirely, so the dialog would never be reached. The real client is built only
+ * after the token resolves and makes no request until the listener starts.
+ */
+function firstRunOptions(dir, overrides = {}) {
+  return {
+    config: validateConfig({}).config,
+    env: {},
+    reasoner: null,
+    solveImage: scriptedSolve(),
+    createWorker: async () => ({ terminate: async () => {} }),
+    inboxDir: join(dir, 'inbox'),
+    statePath: join(dir, 'state.db'),
+    logger: collectingLogger(),
+    ...overrides,
+  };
+}
+
+// The reachability test: remove the `setupDialog` call from `createApp` and this one
+// fails, because startup rejects instead of asking. Its siblings below cover the
+// documented cancel, headless and no-re-prompt behaviours.
+test('tray-mode startup with no token reaches the injected dialog and starts after it saves', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'puzzlesolver-app-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const credentialPath = join(dir, 'credentials.json');
+  const provider = createFileCredentialProvider({ path: credentialPath });
+  const shown = [];
+
+  const app = await createApp(
+    firstRunOptions(dir, {
+      providers: [provider],
+      trayRequested: true,
+      setupDialog: async ({ setup, credentialPath: shownPath }) => {
+        shown.push(shownPath);
+        const result = await setup.apply({ pushbulletToken: 'o.first-run', llmApiKey: 'sk-first-run' });
+        return { saved: result.saved, savedNames: result.savedNames };
+      },
+    })
+  );
+  t.after(() => app.stop());
+
+  assert.equal(shown.length, 1, 'startup must present the dialog exactly once');
+  assert.match(shown[0], /credentials\.json$/, 'the dialog is told where the default credential store is');
+  assert.equal(provider.get('pushbullet'), 'o.first-run', 'the dialog wrote through the real saveSecrets');
+  assert.equal(provider.get('llm'), 'sk-first-run');
+  assert.equal(app.secrets.pushbullet.present, true, 'the app re-resolved the saved token');
+  assert.equal(app.secrets.llm.present, true);
+});
+
+test('tray-mode startup with no token and no dialog provider refuses instead of proceeding', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'puzzlesolver-app-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  await assert.rejects(
+    () => createApp(firstRunOptions(dir, { providers: [], trayRequested: true })),
+    (err) => {
+      assert.equal(err.name, 'MissingTokenError');
+      assert.match(err.message, /PUSHBULLET_TOKEN/);
+      return true;
+    }
+  );
+});
+
+test('headless startup with no token names the environment variable and the credential-store file', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'puzzlesolver-app-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  let dialogCalls = 0;
+  await assert.rejects(
+    () =>
+      createApp(
+        firstRunOptions(dir, {
+          providers: [],
+          env: {},
+          platform: 'linux',
+          homedir: () => join(dir, 'home'),
+          trayRequested: false,
+          setupDialog: async () => {
+            dialogCalls += 1;
+            return { saved: false };
+          },
+        })
+      ),
+    (err) => {
+      assert.equal(err.name, 'MissingTokenError');
+      assert.match(err.message, /PUSHBULLET_TOKEN/);
+      assert.match(err.message, /credentials\.json/, 'the message must name the credential-store file');
+      return true;
+    }
+  );
+  assert.equal(dialogCalls, 0, '--headless must never present the dialog');
+});
+
+test('a cancelled first-run dialog exits cleanly and leaves no half-configuration', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'puzzlesolver-app-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const provider = createFileCredentialProvider({ path: join(dir, 'credentials.json') });
+  await assert.rejects(
+    () =>
+      createApp(
+        firstRunOptions(dir, {
+          providers: [provider],
+          trayRequested: true,
+          setupDialog: async () => ({ saved: false, cancelled: true }),
+        })
+      ),
+    (err) => {
+      assert.equal(err.name, 'SetupCancelledError');
+      assert.match(err.message, /pushbullet_token/);
+      assert.match(err.message, /PUSHBULLET_TOKEN/);
+      return true;
+    }
+  );
+  assert.equal(provider.get('pushbullet'), null, 'a cancelled dialog must not write anything');
+});
+
+test('a dialog that throws becomes a clean SetupFailedError, not a crash', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'puzzlesolver-app-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  await assert.rejects(
+    () =>
+      createApp(
+        firstRunOptions(dir, {
+          providers: [createFileCredentialProvider({ path: join(dir, 'credentials.json') })],
+          trayRequested: true,
+          setupDialog: async () => {
+            throw new Error('the dialog window closed');
+          },
+        })
+      ),
+    (err) => {
+      assert.equal(err.name, 'SetupFailedError');
+      assert.match(err.message, /the dialog window closed/);
+      return true;
+    }
+  );
+});
+
+test('a second start with a stored token does not prompt again', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'puzzlesolver-app-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const provider = createFileCredentialProvider({ path: join(dir, 'credentials.json') });
+
+  let firstCalls = 0;
+  const first = await createApp(
+    firstRunOptions(dir, {
+      providers: [provider],
+      trayRequested: true,
+      setupDialog: async ({ setup }) => {
+        firstCalls += 1;
+        const result = await setup.apply({ pushbulletToken: 'o.persisted' });
+        return { saved: result.saved };
+      },
+    })
+  );
+  await first.stop();
+  assert.equal(firstCalls, 1);
+
+  let secondCalls = 0;
+  const second = await createApp(
+    firstRunOptions(dir, {
+      providers: [provider],
+      trayRequested: true,
+      setupDialog: async () => {
+        secondCalls += 1;
+        return { saved: false };
+      },
+    })
+  );
+  t.after(() => second.stop());
+  assert.equal(secondCalls, 0, 'a resolvable token must not re-open the dialog');
+  assert.equal(second.secrets.pushbullet.present, true);
+});
+
+test('runApp supplies the dialog seam in tray mode, before the tray starts', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'puzzlesolver-app-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const provider = createFileCredentialProvider({ path: join(dir, 'credentials.json') });
+  let calls = 0;
+  await assert.rejects(
+    () =>
+      runApp({
+        ...firstRunOptions(dir, { providers: [provider] }),
+        tray: true,
+        setupDialog: async () => {
+          calls += 1;
+          return { saved: false, cancelled: true };
+        },
+      }),
+    (err) => err.name === 'SetupCancelledError'
+  );
+  assert.equal(calls, 1, 'runApp must forward the dialog; the tray must not run before setup');
 });
 
 // ---------------------------------------------------------------------------

@@ -398,9 +398,14 @@ if (argv[0] === 'accuracy') {
   });
 } else if (argv[0] === 'listen' || argv.includes('--listen') || argv.includes('--headless')) {
   runListen(argv).catch((err) => {
-    // The missing-tray case is expected on a machine without systray2; a stack trace
-    // there reads as a crash, so surface only the actionable line.
+    // These are expected, actionable startup outcomes: the missing tray, and the
+    // first-run outcomes (no token, dialog cancelled, dialog/credential failure).
+    // A stack trace would read as a crash, so surface only the message.
     if (err?.name === 'TrayUnavailableError') {
+      console.error(err.message);
+      process.exit(1);
+    }
+    if (err?.name === 'MissingTokenError' || err?.name === 'SetupCancelledError' || err?.name === 'SetupFailedError') {
       console.error(err.message);
       process.exit(1);
     }

@@ -476,6 +476,20 @@ provider interface — `saveSecrets` calls `provider.set`, which M3 added to the
 Credential-Manager providers. There is no second credential file. The Windows dialog itself is
 not built here; its logic is, and that is what is tested.
 
+**Wiring (issue #25).** The dialog was built and tested but imported by nothing — a tested
+function with no caller, the `pruneInbox` pattern again. It is now reached from `createApp`:
+when tray mode is on (`resolveTrayMode`, so `ui.tray = false` still vetoes) and no Pushbullet
+token resolves, `createApp` builds a `createSetup` over the *same* injected providers and calls
+the `setupDialog` seam **before** the client, worker and listener are built. The dialog writes
+through `saveSecrets`; `createApp` then re-resolves through `loadSecrets`, so a broken write
+cannot masquerade as a configured app. `runApp` supplies the default terminal prompt
+(`src/ui/setup-dialog.js`) and forwards the tray request. `--headless` passes no dialog, and a
+cancel or a failed save throws `SetupCancelledError`/`SetupFailedError`, which the CLI prints as
+the exit line rather than a stack. Because the credential is resolved before the dialog is ever
+considered, a second start with a stored token does not prompt. The dialog itself is injectable,
+which is what makes the startup path testable on Linux without `systray2` or a display; the
+native tray widget remains unverified (see **§11**).
+
 **Watchdog.** `src/ui/watchdog.js` is a pure, clock-injectable state machine. The listener now
 exposes `lastActivityAt` (advanced by a socket `open`, any stream message, or a completed poll)
 and the tray feeds it in on a timer; ten minutes without evidence flips the icon to grey. The
@@ -681,7 +695,7 @@ captchasolver/
 
 ## 10. Testing
 
-**Working now — 363 tests (357 pass, 6 skip), none needing a network or an API key:**
+**Working now — 370 tests (364 pass, 6 skip), none needing a network or an API key:**
 
 1. **Offline unit (37):** Dutch number words and compounds including diaereses, all four
    operators, precedence, division by zero; transcript normalisation and every repair rule;
