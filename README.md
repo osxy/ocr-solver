@@ -51,10 +51,14 @@ puzzlesolver listen --headless
 
 ```bash
 npm install
-npm test                                                    # all 41 tests
+npm test                                                    # all 363 tests (offline, no key)
 node src/cli.js corpus                                      # solve the sample puzzles
 node src/cli.js corpus --json                               # machine-readable output
 node src/cli.js "corpus/001-count-kleuren.png" --dump-masks /tmp/masks
+
+# accuracy: offline corpus + whatever real traffic the store has recorded
+npm run accuracy
+node src/cli.js accuracy --no-images                        # text fixtures only (fast)
 
 # model tiers, without needing a provider key
 node src/cli.js corpus/needs-model --fake-answer Amsterdam
@@ -146,8 +150,11 @@ src/
   solver/pipeline.js        end-to-end orchestration
   state/db.js               node:sqlite attempts log
 config/prompts/             editable prompts (no rebuild needed)
-corpus/                     sample puzzles + expected answers
+corpus/                     real puzzles + expected answers
 corpus/needs-model/         a puzzle outside the lexicon (exercises the model path)
+corpus/synthetic/           generated images with known answers (M4)
+corpus/manifest.json        every item labelled real | synthetic | derived (M4)
+corpus/recorded/            solved/unresolved puzzles promoted to regressions (M4)
 scripts/tune-preprocessing.js  parameter sweep for the preprocessing constants
 ```
 

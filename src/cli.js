@@ -29,6 +29,7 @@ const AUTO_ROUTER_SLUG = 'openrouter/auto';
 import { createFakeClient } from './model/fake.js';
 import { createReasoner } from './solver/reason.js';
 import { openStore } from './state/db.js';
+import { runAccuracy } from './accuracy-cli.js';
 
 const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.bmp', '.webp', '.tif', '.tiff', '.gif']);
 
@@ -267,6 +268,7 @@ async function main() {
       '  --samples <n>          samples per puzzle for self-consistency\n' +
       '  --store <file.db>      record every attempt to SQLite\n' +
       '  --attempts <file.db>   print recorded attempts and exit\n' +
+      '  accuracy               offline accuracy report (corpus + recorded traffic)\n' +
       '  listen                 run the Pushbullet service (see also --listen)\n' +
       '  --headless             skip the tray and notifications (for a service/unattended run)\n' +
       '  --config <path>        TOML config file (or PUZZLESOLVER_CONFIG)\n' +
@@ -389,7 +391,12 @@ async function runListen(argv) {
 }
 
 const argv = process.argv.slice(2);
-if (argv[0] === 'listen' || argv.includes('--listen') || argv.includes('--headless')) {
+if (argv[0] === 'accuracy') {
+  runAccuracy(argv.slice(1)).catch((err) => {
+    console.error(err.stack ?? String(err));
+    process.exit(1);
+  });
+} else if (argv[0] === 'listen' || argv.includes('--listen') || argv.includes('--headless')) {
   runListen(argv).catch((err) => {
     // The missing-tray case is expected on a machine without systray2; a stack trace
     // there reads as a crash, so surface only the actionable line.

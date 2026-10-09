@@ -23,6 +23,7 @@ import { createReasoner } from '../src/solver/reason.js';
 import { createChatClient } from '../src/model/client.js';
 import { parsePuzzle } from '../src/solver/puzzle.js';
 import { normalizeTranscript } from '../src/solver/transcript.js';
+import { OBSERVED_OCR_DAMAGE } from '../src/corpus/observed.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const corpusDir = join(root, 'corpus');
@@ -56,16 +57,13 @@ const reasoner = createReasoner({
 /**
  * Realistic OCR damage, not synthetic sabotage.
  *
- * Each of these is an error Tesseract actually produced on that exact image during
- * tuning. The worst-ranked variant is NOT used for this: on some images it is only a
- * word or two ("en"), and asking a model to answer from that measures nothing about
- * repairing OCR - it just fails, which proves nothing.
+ * The strings live in `src/corpus/observed.js` so the derived corpus fixtures and
+ * this evaluation share one source of truth. Each is an error Tesseract actually
+ * produced on that exact image during tuning. The worst-ranked variant is NOT used
+ * for this: on some images it is only a word or two ("en"), and asking a model to
+ * answer from that measures nothing about repairing OCR - it just fails, which
+ * proves nothing.
  */
-const OBSERVED_OCR_DAMAGE = {
-  '001-count-kleuren.png': 'Hoeveel kleuren in lijst wit kw: hoofd paars olifant aap?',
-  '002-ordinal-lichaamsdeel.png': 'In de lijst lijst hoofd buik citroen borst olifant paard wat 1s de/het eerste lichaamsdeel?',
-  '003-arithmetic-acht-min-een.png': 'Wat js acht min een?',
-};
 
 /** Raw assistant replies from the most recent batch of client calls. */
 function rawReplies(calls, since) {

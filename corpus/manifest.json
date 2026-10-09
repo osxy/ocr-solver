@@ -1,0 +1,4129 @@
+{
+  "version": 1,
+  "generated": {
+    "seed": 20240501,
+    "images": 36,
+    "text": 245,
+    "derived": 3,
+    "real": 3,
+    "verified": true
+  },
+  "items": [
+    {
+      "id": "001-count-kleuren",
+      "provenance": "real",
+      "kind": "image",
+      "class": "count",
+      "category": "kleur",
+      "list": [
+        "wit",
+        "kiwi",
+        "hoofd",
+        "paars",
+        "olifant",
+        "aap"
+      ],
+      "transcript": "hoeveel kleuren in lijst wit kiwi hoofd paars olifant aap",
+      "expected": "2",
+      "file": "001-count-kleuren.png",
+      "note": "count how many list items are colours: wit + paars"
+    },
+    {
+      "id": "002-ordinal-lichaamsdeel",
+      "provenance": "real",
+      "kind": "image",
+      "class": "ordinal-pick",
+      "category": "lichaamsdeel",
+      "list": [
+        "lijst",
+        "hoofd",
+        "buik",
+        "citroen",
+        "borst",
+        "olifant",
+        "paard"
+      ],
+      "transcript": "in de lijst lijst hoofd buik citroen borst olifant paard wat is de/het eerste lichaamsdeel",
+      "expected": "hoofd",
+      "file": "002-ordinal-lichaamsdeel.png",
+      "note": "first body part in the list; note 'lijst' is itself a list item here"
+    },
+    {
+      "id": "003-arithmetic-acht-min-een",
+      "provenance": "real",
+      "kind": "image",
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is acht min een",
+      "expected": "7",
+      "file": "003-arithmetic-acht-min-een.png",
+      "note": "arithmetic written in Dutch number words"
+    },
+    {
+      "id": "synthetic-count-0",
+      "provenance": "synthetic",
+      "kind": "image",
+      "class": "count",
+      "category": "lichaamsdeel",
+      "list": [
+        "maag",
+        "lichtblauw",
+        "meloen",
+        "nagel",
+        "muzikant",
+        "schouder"
+      ],
+      "transcript": "hoeveel lichaamsdelen in lijst maag lichtblauw meloen nagel muzikant schouder",
+      "expected": "3",
+      "file": "synthetic/synthetic-count-0.png",
+      "seed": 20240501000,
+      "verified": true
+    },
+    {
+      "id": "synthetic-ordinal-1",
+      "provenance": "synthetic",
+      "kind": "image",
+      "class": "ordinal-pick",
+      "category": "dier",
+      "list": [
+        "haan",
+        "das",
+        "geel",
+        "leeuw",
+        "kip"
+      ],
+      "transcript": "in de lijst haan das geel leeuw kip wat is de/het laatste dier",
+      "expected": "kip",
+      "file": "synthetic/synthetic-ordinal-1.png",
+      "seed": 20240501001,
+      "verified": true
+    },
+    {
+      "id": "synthetic-count-2",
+      "provenance": "synthetic",
+      "kind": "image",
+      "class": "count",
+      "category": "vrucht",
+      "list": [
+        "regenjas",
+        "kat",
+        "geel",
+        "slang"
+      ],
+      "transcript": "hoeveel vruchten in lijst regenjas kat geel slang",
+      "expected": "0",
+      "file": "synthetic/synthetic-count-2.png",
+      "seed": 20240501002,
+      "verified": true
+    },
+    {
+      "id": "synthetic-arith-3",
+      "provenance": "synthetic",
+      "kind": "image",
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is vier keer een",
+      "expected": "4",
+      "file": "synthetic/synthetic-arith-3.png",
+      "seed": 20240501003,
+      "verified": true
+    },
+    {
+      "id": "synthetic-count-4",
+      "provenance": "synthetic",
+      "kind": "image",
+      "class": "count",
+      "category": "kleding",
+      "list": [
+        "twintig",
+        "regenjas",
+        "zeven",
+        "wang",
+        "bank"
+      ],
+      "transcript": "hoeveel kleding in lijst twintig regenjas zeven wang bank",
+      "expected": "1",
+      "file": "synthetic/synthetic-count-4.png",
+      "seed": 20240501004,
+      "verified": true
+    },
+    {
+      "id": "synthetic-ordinal-5",
+      "provenance": "synthetic",
+      "kind": "image",
+      "class": "ordinal-pick",
+      "category": "meubel",
+      "list": [
+        "nachtkastje",
+        "muts",
+        "bed"
+      ],
+      "transcript": "in de lijst nachtkastje muts bed wat is de/het laatste meubel",
+      "expected": "bed",
+      "file": "synthetic/synthetic-ordinal-5.png",
+      "seed": 20240501005,
+      "verified": true
+    },
+    {
+      "id": "synthetic-count-6",
+      "provenance": "synthetic",
+      "kind": "image",
+      "class": "count",
+      "category": "beroep",
+      "list": [
+        "agent",
+        "wenkbrauw",
+        "boer",
+        "politieagent",
+        "rechter"
+      ],
+      "transcript": "hoeveel beroepen in lijst agent wenkbrauw boer politieagent rechter",
+      "expected": "4",
+      "file": "synthetic/synthetic-count-6.png",
+      "seed": 20240501006,
+      "verified": true
+    },
+    {
+      "id": "synthetic-arith-7",
+      "provenance": "synthetic",
+      "kind": "image",
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is negen min elf",
+      "expected": "-2",
+      "file": "synthetic/synthetic-arith-7.png",
+      "seed": 20240501007,
+      "verified": true
+    },
+    {
+      "id": "synthetic-count-8",
+      "provenance": "synthetic",
+      "kind": "image",
+      "class": "count",
+      "category": "kleur",
+      "list": [
+        "groen",
+        "donkerblauw",
+        "wit",
+        "hersenen"
+      ],
+      "transcript": "hoeveel kleuren in lijst groen donkerblauw wit hersenen",
+      "expected": "3",
+      "file": "synthetic/synthetic-count-8.png",
+      "seed": 20240501008,
+      "verified": true
+    },
+    {
+      "id": "synthetic-ordinal-9",
+      "provenance": "synthetic",
+      "kind": "image",
+      "class": "ordinal-pick",
+      "category": "dier",
+      "list": [
+        "schildpad",
+        "varken",
+        "krokodil",
+        "watermeloen",
+        "beer"
+      ],
+      "transcript": "in de lijst schildpad varken krokodil watermeloen beer wat is de/het tweede dier",
+      "expected": "varken",
+      "file": "synthetic/synthetic-ordinal-9.png",
+      "seed": 20240501009,
+      "verified": true
+    },
+    {
+      "id": "synthetic-count-10",
+      "provenance": "synthetic",
+      "kind": "image",
+      "class": "count",
+      "category": "vrucht",
+      "list": [
+        "taxi",
+        "bosbes",
+        "schoen",
+        "kers",
+        "heup"
+      ],
+      "transcript": "hoeveel vruchten in lijst taxi bosbes schoen kers heup",
+      "expected": "2",
+      "file": "synthetic/synthetic-count-10.png",
+      "seed": 20240501010,
+      "verified": true
+    },
+    {
+      "id": "synthetic-arith-11",
+      "provenance": "synthetic",
+      "kind": "image",
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is twee keer zestig",
+      "expected": "120",
+      "file": "synthetic/synthetic-arith-11.png",
+      "seed": 20240501011,
+      "verified": true
+    },
+    {
+      "id": "synthetic-count-12",
+      "provenance": "synthetic",
+      "kind": "image",
+      "class": "count",
+      "category": "kleding",
+      "list": [
+        "hoed",
+        "muts",
+        "voeten",
+        "blouse",
+        "paard"
+      ],
+      "transcript": "hoeveel kleding in lijst hoed muts voeten blouse paard",
+      "expected": "3",
+      "file": "synthetic/synthetic-count-12.png",
+      "seed": 20240501012,
+      "verified": true
+    },
+    {
+      "id": "synthetic-ordinal-13",
+      "provenance": "synthetic",
+      "kind": "image",
+      "class": "ordinal-pick",
+      "category": "beroep",
+      "list": [
+        "dokter",
+        "conducteur",
+        "advocaat",
+        "muzikant"
+      ],
+      "transcript": "in de lijst dokter conducteur advocaat muzikant wat is de/het tweede beroep",
+      "expected": "conducteur",
+      "file": "synthetic/synthetic-ordinal-13.png",
+      "seed": 20240501013,
+      "verified": true
+    },
+    {
+      "id": "synthetic-count-14",
+      "provenance": "synthetic",
+      "kind": "image",
+      "class": "count",
+      "category": "vervoer",
+      "list": [
+        "helikopter",
+        "hersenen",
+        "voorhoofd"
+      ],
+      "transcript": "hoeveel vervoer in lijst helikopter hersenen voorhoofd",
+      "expected": "1",
+      "file": "synthetic/synthetic-count-14.png",
+      "seed": 20240501014,
+      "verified": true
+    },
+    {
+      "id": "synthetic-arith-15",
+      "provenance": "synthetic",
+      "kind": "image",
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is dertig keer elf",
+      "expected": "330",
+      "file": "synthetic/synthetic-arith-15.png",
+      "seed": 20240501015,
+      "verified": true
+    },
+    {
+      "id": "synthetic-count-16",
+      "provenance": "synthetic",
+      "kind": "image",
+      "class": "count",
+      "category": "lichaamsdeel",
+      "list": [
+        "vinger",
+        "keel",
+        "kousen"
+      ],
+      "transcript": "hoeveel lichaamsdelen in lijst vinger keel kousen",
+      "expected": "2",
+      "file": "synthetic/synthetic-count-16.png",
+      "seed": 20240501016,
+      "verified": true
+    },
+    {
+      "id": "synthetic-ordinal-17",
+      "provenance": "synthetic",
+      "kind": "image",
+      "class": "ordinal-pick",
+      "category": "lichaamsdeel",
+      "list": [
+        "lip",
+        "hand",
+        "been",
+        "enkel"
+      ],
+      "transcript": "in de lijst lip hand been enkel wat is de/het eerste lichaamsdeel",
+      "expected": "lip",
+      "file": "synthetic/synthetic-ordinal-17.png",
+      "seed": 20240501017,
+      "verified": true
+    },
+    {
+      "id": "synthetic-count-18",
+      "provenance": "synthetic",
+      "kind": "image",
+      "class": "count",
+      "category": "dier",
+      "list": [
+        "haai",
+        "ezel",
+        "dolfijn",
+        "vlinder",
+        "kapper",
+        "kersen"
+      ],
+      "transcript": "hoeveel dieren in lijst haai ezel dolfijn vlinder kapper kersen",
+      "expected": "4",
+      "file": "synthetic/synthetic-count-18.png",
+      "seed": 20240501018,
+      "verified": true
+    },
+    {
+      "id": "synthetic-arith-19",
+      "provenance": "synthetic",
+      "kind": "image",
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is tachtig plus twaalf",
+      "expected": "92",
+      "file": "synthetic/synthetic-arith-19.png",
+      "seed": 20240501019,
+      "verified": true
+    },
+    {
+      "id": "synthetic-count-20",
+      "provenance": "synthetic",
+      "kind": "image",
+      "class": "count",
+      "category": "groente",
+      "list": [
+        "lampen",
+        "erwt",
+        "paprika",
+        "wortel"
+      ],
+      "transcript": "hoeveel groenten in lijst lampen erwt paprika wortel",
+      "expected": "3",
+      "file": "synthetic/synthetic-count-20.png",
+      "seed": 20240501020,
+      "verified": true
+    },
+    {
+      "id": "synthetic-ordinal-21",
+      "provenance": "synthetic",
+      "kind": "image",
+      "class": "ordinal-pick",
+      "category": "kleding",
+      "list": [
+        "handschoen",
+        "sokken"
+      ],
+      "transcript": "in de lijst handschoen sokken wat is de/het eerste kleding",
+      "expected": "handschoen",
+      "file": "synthetic/synthetic-ordinal-21.png",
+      "seed": 20240501021,
+      "verified": true
+    },
+    {
+      "id": "synthetic-count-22",
+      "provenance": "synthetic",
+      "kind": "image",
+      "class": "count",
+      "category": "meubel",
+      "list": [
+        "spiegel",
+        "lamp",
+        "sofa",
+        "hoofd",
+        "veerboot",
+        "matras"
+      ],
+      "transcript": "hoeveel meubels in lijst spiegel lamp sofa hoofd veerboot matras",
+      "expected": "4",
+      "file": "synthetic/synthetic-count-22.png",
+      "seed": 20240501022,
+      "verified": true
+    },
+    {
+      "id": "synthetic-arith-23",
+      "provenance": "synthetic",
+      "kind": "image",
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is zeven plus twee",
+      "expected": "9",
+      "file": "synthetic/synthetic-arith-23.png",
+      "seed": 20240501023,
+      "verified": true
+    },
+    {
+      "id": "synthetic-count-24",
+      "provenance": "synthetic",
+      "kind": "image",
+      "class": "count",
+      "category": "vervoer",
+      "list": [
+        "veerboot",
+        "motor",
+        "schaap",
+        "turkoois",
+        "jurk",
+        "veertig"
+      ],
+      "transcript": "hoeveel vervoer in lijst veerboot motor schaap turkoois jurk veertig",
+      "expected": "2",
+      "file": "synthetic/synthetic-count-24.png",
+      "seed": 20240501024,
+      "verified": true
+    },
+    {
+      "id": "synthetic-ordinal-25",
+      "provenance": "synthetic",
+      "kind": "image",
+      "class": "ordinal-pick",
+      "category": "dier",
+      "list": [
+        "tijger",
+        "wolf",
+        "haan",
+        "zeventig",
+        "vijf",
+        "slang"
+      ],
+      "transcript": "in de lijst tijger wolf haan zeventig vijf slang wat is de/het eerste dier",
+      "expected": "tijger",
+      "file": "synthetic/synthetic-ordinal-25.png",
+      "seed": 20240501025,
+      "verified": true
+    },
+    {
+      "id": "synthetic-count-26",
+      "provenance": "synthetic",
+      "kind": "image",
+      "class": "count",
+      "category": "vrucht",
+      "list": [
+        "kersen",
+        "framboos",
+        "kapper",
+        "aardbei",
+        "lip",
+        "salontafel"
+      ],
+      "transcript": "hoeveel vruchten in lijst kersen framboos kapper aardbei lip salontafel",
+      "expected": "3",
+      "file": "synthetic/synthetic-count-26.png",
+      "seed": 20240501026,
+      "verified": true
+    },
+    {
+      "id": "synthetic-arith-27",
+      "provenance": "synthetic",
+      "kind": "image",
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is zes plus zeven",
+      "expected": "13",
+      "file": "synthetic/synthetic-arith-27.png",
+      "seed": 20240501027,
+      "verified": true
+    },
+    {
+      "id": "synthetic-count-28",
+      "provenance": "synthetic",
+      "kind": "image",
+      "class": "count",
+      "category": "kleding",
+      "list": [
+        "kousen",
+        "paard",
+        "trui",
+        "vest",
+        "roodbruin",
+        "vijftig",
+        "peer",
+        "jurk"
+      ],
+      "transcript": "hoeveel kleding in lijst kousen paard trui vest roodbruin vijftig peer jurk",
+      "expected": "4",
+      "file": "synthetic/synthetic-count-28.png",
+      "seed": 20240501028,
+      "verified": true
+    },
+    {
+      "id": "synthetic-ordinal-29",
+      "provenance": "synthetic",
+      "kind": "image",
+      "class": "ordinal-pick",
+      "category": "vervoer",
+      "list": [
+        "vingers",
+        "auto",
+        "schip"
+      ],
+      "transcript": "in de lijst vingers auto schip wat is de/het laatste vervoer",
+      "expected": "schip",
+      "file": "synthetic/synthetic-ordinal-29.png",
+      "seed": 20240501029,
+      "verified": true
+    },
+    {
+      "id": "synthetic-count-30",
+      "provenance": "synthetic",
+      "kind": "image",
+      "class": "count",
+      "category": "kleur",
+      "list": [
+        "tijger",
+        "tafels",
+        "boekenkast"
+      ],
+      "transcript": "hoeveel kleuren in lijst tijger tafels boekenkast",
+      "expected": "0",
+      "file": "synthetic/synthetic-count-30.png",
+      "seed": 20240501030,
+      "verified": true
+    },
+    {
+      "id": "synthetic-arith-31",
+      "provenance": "synthetic",
+      "kind": "image",
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is negentig min veertig",
+      "expected": "50",
+      "file": "synthetic/synthetic-arith-31.png",
+      "seed": 20240501031,
+      "verified": true
+    },
+    {
+      "id": "synthetic-count-32",
+      "provenance": "synthetic",
+      "kind": "image",
+      "class": "count",
+      "category": "dier",
+      "list": [
+        "dokter",
+        "kip",
+        "geit",
+        "aardappel"
+      ],
+      "transcript": "hoeveel dieren in lijst dokter kip geit aardappel",
+      "expected": "2",
+      "file": "synthetic/synthetic-count-32.png",
+      "seed": 20240501032,
+      "verified": true
+    },
+    {
+      "id": "synthetic-ordinal-33",
+      "provenance": "synthetic",
+      "kind": "image",
+      "class": "ordinal-pick",
+      "category": "kleding",
+      "list": [
+        "handschoenen",
+        "laars",
+        "zwembroek"
+      ],
+      "transcript": "in de lijst handschoenen laars zwembroek wat is de/het tweede kleding",
+      "expected": "laars",
+      "file": "synthetic/synthetic-ordinal-33.png",
+      "seed": 20240501033,
+      "verified": true
+    },
+    {
+      "id": "synthetic-count-34",
+      "provenance": "synthetic",
+      "kind": "image",
+      "class": "count",
+      "category": "meubel",
+      "list": [
+        "hoed"
+      ],
+      "transcript": "hoeveel meubels in lijst hoed",
+      "expected": "0",
+      "file": "synthetic/synthetic-count-34.png",
+      "seed": 20240501034,
+      "verified": true
+    },
+    {
+      "id": "synthetic-arith-35",
+      "provenance": "synthetic",
+      "kind": "image",
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is zestig min negentig",
+      "expected": "-30",
+      "file": "synthetic/synthetic-arith-35.png",
+      "seed": 20240501035,
+      "verified": true
+    },
+    {
+      "class": "count",
+      "category": "kleur",
+      "list": [
+        "roze",
+        "lila"
+      ],
+      "transcript": "hoeveel kleuren in lijst roze lila",
+      "expected": "2",
+      "id": "text-count-kleur-0",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "kleur",
+      "list": [
+        "donkerblauw",
+        "schaap",
+        "lila",
+        "zilver",
+        "olifant",
+        "oranje"
+      ],
+      "transcript": "in de lijst donkerblauw schaap lila zilver olifant oranje wat is de/het tweede kleur",
+      "expected": "lila",
+      "ordinal": "tweede",
+      "id": "text-ordinal-kleur-1",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is drie plus nul",
+      "expected": "3",
+      "id": "text-arith-2",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "lichaamsdeel",
+      "list": [
+        "nagel"
+      ],
+      "transcript": "hoeveel lichaamsdelen in lijst nagel",
+      "expected": "1",
+      "id": "text-count-lichaamsdeel-3",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "lichaamsdeel",
+      "list": [
+        "nachtkastje",
+        "radijs",
+        "voet",
+        "lip",
+        "knie"
+      ],
+      "transcript": "in de lijst nachtkastje radijs voet lip knie wat is de/het derde lichaamsdeel",
+      "expected": "knie",
+      "ordinal": "derde",
+      "id": "text-ordinal-lichaamsdeel-4",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is negen keer dertig",
+      "expected": "270",
+      "id": "text-arith-5",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "dier",
+      "list": [
+        "vogel",
+        "spinazie",
+        "hert",
+        "krokodil",
+        "kip",
+        "lippen"
+      ],
+      "transcript": "hoeveel dieren in lijst vogel spinazie hert krokodil kip lippen",
+      "expected": "4",
+      "id": "text-count-dier-6",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "dier",
+      "list": [
+        "paard",
+        "haai",
+        "gans"
+      ],
+      "transcript": "in de lijst paard haai gans wat is de/het tweede dier",
+      "expected": "haai",
+      "ordinal": "tweede",
+      "id": "text-ordinal-dier-7",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is elf keer zeventig",
+      "expected": "770",
+      "id": "text-arith-8",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "vrucht",
+      "list": [
+        "bij",
+        "banaan"
+      ],
+      "transcript": "hoeveel vruchten in lijst bij banaan",
+      "expected": "1",
+      "id": "text-count-vrucht-9",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "vrucht",
+      "list": [
+        "vijf",
+        "abrikoos",
+        "mango",
+        "aardbei"
+      ],
+      "transcript": "in de lijst vijf abrikoos mango aardbei wat is de/het eerste vrucht",
+      "expected": "abrikoos",
+      "ordinal": "eerste",
+      "id": "text-ordinal-vrucht-10",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is twaalf plus vier",
+      "expected": "16",
+      "id": "text-arith-11",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "groente",
+      "list": [
+        "boot",
+        "bloemkool",
+        "radijs",
+        "handen",
+        "aubergine",
+        "duizend",
+        "bonen"
+      ],
+      "transcript": "hoeveel groenten in lijst boot bloemkool radijs handen aubergine duizend bonen",
+      "expected": "4",
+      "id": "text-count-groente-12",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "groente",
+      "list": [
+        "kool",
+        "bus",
+        "courgette",
+        "tand"
+      ],
+      "transcript": "in de lijst kool bus courgette tand wat is de/het eerste groente",
+      "expected": "kool",
+      "ordinal": "eerste",
+      "id": "text-ordinal-groente-13",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is twaalf gedeeld een",
+      "expected": "12",
+      "id": "text-arith-14",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "kleding",
+      "list": [
+        "regenjas",
+        "sok"
+      ],
+      "transcript": "hoeveel kleding in lijst regenjas sok",
+      "expected": "2",
+      "id": "text-count-kleding-15",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "kleding",
+      "list": [
+        "schoen",
+        "agent",
+        "salontafel",
+        "bruin"
+      ],
+      "transcript": "in de lijst schoen agent salontafel bruin wat is de/het eerste kleding",
+      "expected": "schoen",
+      "ordinal": "eerste",
+      "id": "text-ordinal-kleding-16",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is negen plus elf",
+      "expected": "20",
+      "id": "text-arith-17",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "meubel",
+      "list": [
+        "lampen",
+        "bed",
+        "dressoir",
+        "bureau"
+      ],
+      "transcript": "hoeveel meubels in lijst lampen bed dressoir bureau",
+      "expected": "4",
+      "id": "text-count-meubel-18",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "meubel",
+      "list": [
+        "bedden",
+        "matras",
+        "teen"
+      ],
+      "transcript": "in de lijst bedden matras teen wat is de/het laatste meubel",
+      "expected": "matras",
+      "ordinal": "laatste",
+      "id": "text-ordinal-meubel-19",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is twee plus nul",
+      "expected": "2",
+      "id": "text-arith-20",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "beroep",
+      "list": [
+        "zeven",
+        "brandweerman",
+        "slang",
+        "politieagent",
+        "boer",
+        "dokter"
+      ],
+      "transcript": "hoeveel beroepen in lijst zeven brandweerman slang politieagent boer dokter",
+      "expected": "4",
+      "id": "text-count-beroep-21",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "beroep",
+      "list": [
+        "boer",
+        "krokodil",
+        "timmerman",
+        "politieagent",
+        "dokter"
+      ],
+      "transcript": "in de lijst boer krokodil timmerman politieagent dokter wat is de/het eerste beroep",
+      "expected": "boer",
+      "ordinal": "eerste",
+      "id": "text-ordinal-beroep-22",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is zestig min nul",
+      "expected": "60",
+      "id": "text-arith-23",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "vervoer",
+      "list": [
+        "boot"
+      ],
+      "transcript": "hoeveel vervoer in lijst boot",
+      "expected": "1",
+      "id": "text-count-vervoer-24",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "vervoer",
+      "list": [
+        "metro",
+        "helikopter",
+        "skelter"
+      ],
+      "transcript": "in de lijst metro helikopter skelter wat is de/het tweede vervoer",
+      "expected": "helikopter",
+      "ordinal": "tweede",
+      "id": "text-ordinal-vervoer-25",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is vier keer tien",
+      "expected": "40",
+      "id": "text-arith-26",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "kleur",
+      "list": [
+        "roze",
+        "vinger",
+        "bril",
+        "beige",
+        "donkerblauw"
+      ],
+      "transcript": "hoeveel kleuren in lijst roze vinger bril beige donkerblauw",
+      "expected": "3",
+      "id": "text-count-kleur-27",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "kleur",
+      "list": [
+        "appel",
+        "goud",
+        "grijs",
+        "donkerblauw",
+        "paard",
+        "rood",
+        "bosbes"
+      ],
+      "transcript": "in de lijst appel goud grijs donkerblauw paard rood bosbes wat is de/het vierde kleur",
+      "expected": "rood",
+      "ordinal": "vierde",
+      "id": "text-ordinal-kleur-28",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is negen plus twintig",
+      "expected": "29",
+      "id": "text-arith-29",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "lichaamsdeel",
+      "list": [
+        "buik",
+        "wenkbrauw",
+        "paars",
+        "acht",
+        "neus",
+        "tijger"
+      ],
+      "transcript": "hoeveel lichaamsdelen in lijst buik wenkbrauw paars acht neus tijger",
+      "expected": "3",
+      "id": "text-count-lichaamsdeel-30",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "lichaamsdeel",
+      "list": [
+        "tenen",
+        "buik",
+        "wang",
+        "voet"
+      ],
+      "transcript": "in de lijst tenen buik wang voet wat is de/het vierde lichaamsdeel",
+      "expected": "voet",
+      "ordinal": "vierde",
+      "id": "text-ordinal-lichaamsdeel-31",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is zestig plus dertig",
+      "expected": "90",
+      "id": "text-arith-32",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "dier",
+      "list": [
+        "gans",
+        "knie",
+        "pinguïn",
+        "eend",
+        "uil",
+        "arm"
+      ],
+      "transcript": "hoeveel dieren in lijst gans knie pinguïn eend uil arm",
+      "expected": "4",
+      "id": "text-count-dier-33",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "dier",
+      "list": [
+        "sok",
+        "rood",
+        "lampen",
+        "neushoorn"
+      ],
+      "transcript": "in de lijst sok rood lampen neushoorn wat is de/het eerste dier",
+      "expected": "neushoorn",
+      "ordinal": "eerste",
+      "id": "text-ordinal-dier-34",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is veertig min drie",
+      "expected": "37",
+      "id": "text-arith-35",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "vrucht",
+      "list": [
+        "banaan",
+        "kers",
+        "tafels",
+        "groen"
+      ],
+      "transcript": "hoeveel vruchten in lijst banaan kers tafels groen",
+      "expected": "2",
+      "id": "text-count-vrucht-36",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "vrucht",
+      "list": [
+        "pruim",
+        "nectarine",
+        "watermeloen"
+      ],
+      "transcript": "in de lijst pruim nectarine watermeloen wat is de/het tweede vrucht",
+      "expected": "nectarine",
+      "ordinal": "tweede",
+      "id": "text-ordinal-vrucht-37",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is negentig min acht",
+      "expected": "82",
+      "id": "text-arith-38",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "groente",
+      "list": [
+        "broccoli",
+        "tomaat",
+        "sla"
+      ],
+      "transcript": "hoeveel groenten in lijst broccoli tomaat sla",
+      "expected": "3",
+      "id": "text-count-groente-39",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "groente",
+      "list": [
+        "wortel",
+        "zestien",
+        "hoofd",
+        "prei",
+        "dressoir"
+      ],
+      "transcript": "in de lijst wortel zestien hoofd prei dressoir wat is de/het tweede groente",
+      "expected": "prei",
+      "ordinal": "tweede",
+      "id": "text-ordinal-groente-40",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is tien plus vier",
+      "expected": "14",
+      "id": "text-arith-41",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "kleding",
+      "list": [
+        "zestig",
+        "onderzeeboot",
+        "kous",
+        "laars",
+        "nachtkastje",
+        "broek"
+      ],
+      "transcript": "hoeveel kleding in lijst zestig onderzeeboot kous laars nachtkastje broek",
+      "expected": "3",
+      "id": "text-count-kleding-42",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "kleding",
+      "list": [
+        "loodgieter",
+        "geel",
+        "pet",
+        "handschoen",
+        "jas",
+        "muts"
+      ],
+      "transcript": "in de lijst loodgieter geel pet handschoen jas muts wat is de/het laatste kleding",
+      "expected": "muts",
+      "ordinal": "laatste",
+      "id": "text-ordinal-kleding-43",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is acht keer twintig",
+      "expected": "160",
+      "id": "text-arith-44",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "meubel",
+      "list": [
+        "stoelen",
+        "bed",
+        "lamp",
+        "stoel"
+      ],
+      "transcript": "hoeveel meubels in lijst stoelen bed lamp stoel",
+      "expected": "4",
+      "id": "text-count-meubel-45",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "meubel",
+      "list": [
+        "zestien",
+        "bij",
+        "kasten",
+        "slang",
+        "tafel"
+      ],
+      "transcript": "in de lijst zestien bij kasten slang tafel wat is de/het tweede meubel",
+      "expected": "tafel",
+      "ordinal": "tweede",
+      "id": "text-ordinal-meubel-46",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is twaalf gedeeld vier",
+      "expected": "3",
+      "id": "text-arith-47",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "beroep",
+      "list": [
+        "dij",
+        "kapper",
+        "rechter",
+        "overhemd",
+        "winkelier",
+        "schrijver",
+        "paard"
+      ],
+      "transcript": "hoeveel beroepen in lijst dij kapper rechter overhemd winkelier schrijver paard",
+      "expected": "4",
+      "id": "text-count-beroep-48",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "beroep",
+      "list": [
+        "lever",
+        "lerares",
+        "wortel",
+        "ingenieur",
+        "schilder",
+        "rechter"
+      ],
+      "transcript": "in de lijst lever lerares wortel ingenieur schilder rechter wat is de/het vierde beroep",
+      "expected": "rechter",
+      "ordinal": "vierde",
+      "id": "text-ordinal-beroep-49",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is vijf plus vier",
+      "expected": "9",
+      "id": "text-arith-50",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "vervoer",
+      "list": [
+        "bus",
+        "raket",
+        "trein",
+        "auto"
+      ],
+      "transcript": "hoeveel vervoer in lijst bus raket trein auto",
+      "expected": "4",
+      "id": "text-count-vervoer-51",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "vervoer",
+      "list": [
+        "nectarine",
+        "bus",
+        "veertien"
+      ],
+      "transcript": "in de lijst nectarine bus veertien wat is de/het eerste vervoer",
+      "expected": "bus",
+      "ordinal": "eerste",
+      "id": "text-ordinal-vervoer-52",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is tien plus vijftig",
+      "expected": "60",
+      "id": "text-arith-53",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "kleur",
+      "list": [
+        "slang",
+        "groen"
+      ],
+      "transcript": "hoeveel kleuren in lijst slang groen",
+      "expected": "1",
+      "id": "text-count-kleur-54",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "kleur",
+      "list": [
+        "laarzen",
+        "bruin",
+        "lila",
+        "paars",
+        "tenen",
+        "lichtblauw"
+      ],
+      "transcript": "in de lijst laarzen bruin lila paars tenen lichtblauw wat is de/het derde kleur",
+      "expected": "paars",
+      "ordinal": "derde",
+      "id": "text-ordinal-kleur-55",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is twintig gedeeld vijf",
+      "expected": "4",
+      "id": "text-arith-56",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "lichaamsdeel",
+      "list": [
+        "duim",
+        "hiel",
+        "wenkbrauw",
+        "scheen"
+      ],
+      "transcript": "hoeveel lichaamsdelen in lijst duim hiel wenkbrauw scheen",
+      "expected": "4",
+      "id": "text-count-lichaamsdeel-57",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "lichaamsdeel",
+      "list": [
+        "hart",
+        "rok",
+        "hoofd"
+      ],
+      "transcript": "in de lijst hart rok hoofd wat is de/het eerste lichaamsdeel",
+      "expected": "hart",
+      "ordinal": "eerste",
+      "id": "text-ordinal-lichaamsdeel-58",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is zes keer vier",
+      "expected": "24",
+      "id": "text-arith-59",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "dier",
+      "list": [
+        "jurk",
+        "nijlpaard",
+        "mandarijn",
+        "zilver",
+        "uil"
+      ],
+      "transcript": "hoeveel dieren in lijst jurk nijlpaard mandarijn zilver uil",
+      "expected": "2",
+      "id": "text-count-dier-60",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "dier",
+      "list": [
+        "salontafel",
+        "tijger",
+        "koe",
+        "ogen",
+        "varken",
+        "dolfijn"
+      ],
+      "transcript": "in de lijst salontafel tijger koe ogen varken dolfijn wat is de/het vierde dier",
+      "expected": "dolfijn",
+      "ordinal": "vierde",
+      "id": "text-ordinal-dier-61",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is negentig plus nul",
+      "expected": "90",
+      "id": "text-arith-62",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "vrucht",
+      "list": [
+        "bosbes",
+        "kersen",
+        "meloen"
+      ],
+      "transcript": "hoeveel vruchten in lijst bosbes kersen meloen",
+      "expected": "3",
+      "id": "text-count-vrucht-63",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "vrucht",
+      "list": [
+        "druiven",
+        "abrikoos"
+      ],
+      "transcript": "in de lijst druiven abrikoos wat is de/het laatste vrucht",
+      "expected": "abrikoos",
+      "ordinal": "laatste",
+      "id": "text-ordinal-vrucht-64",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is vijf keer tachtig",
+      "expected": "400",
+      "id": "text-arith-65",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "groente",
+      "list": [
+        "asperge",
+        "courgette",
+        "aubergine",
+        "erwten"
+      ],
+      "transcript": "hoeveel groenten in lijst asperge courgette aubergine erwten",
+      "expected": "4",
+      "id": "text-count-groente-66",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "groente",
+      "list": [
+        "erwten",
+        "asperge",
+        "bloemkool"
+      ],
+      "transcript": "in de lijst erwten asperge bloemkool wat is de/het derde groente",
+      "expected": "bloemkool",
+      "ordinal": "derde",
+      "id": "text-ordinal-groente-67",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is tien plus tien",
+      "expected": "20",
+      "id": "text-arith-68",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "kleding",
+      "list": [
+        "pyjama",
+        "kous",
+        "rok",
+        "neus"
+      ],
+      "transcript": "hoeveel kleding in lijst pyjama kous rok neus",
+      "expected": "3",
+      "id": "text-count-kleding-69",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "kleding",
+      "list": [
+        "blouse"
+      ],
+      "transcript": "in de lijst blouse wat is de/het eerste kleding",
+      "expected": "blouse",
+      "ordinal": "eerste",
+      "id": "text-ordinal-kleding-70",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is zes min twaalf",
+      "expected": "-6",
+      "id": "text-arith-71",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "meubel",
+      "list": [
+        "boekenkast",
+        "dokter"
+      ],
+      "transcript": "hoeveel meubels in lijst boekenkast dokter",
+      "expected": "1",
+      "id": "text-count-meubel-72",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "meubel",
+      "list": [
+        "skelter",
+        "stoelen",
+        "lila",
+        "kast",
+        "roze"
+      ],
+      "transcript": "in de lijst skelter stoelen lila kast roze wat is de/het laatste meubel",
+      "expected": "kast",
+      "ordinal": "laatste",
+      "id": "text-ordinal-meubel-73",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is veertig plus nul",
+      "expected": "40",
+      "id": "text-arith-74",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "beroep",
+      "list": [
+        "leeuw",
+        "kip",
+        "brandweerman",
+        "rechter",
+        "architect",
+        "donkerblauw",
+        "advocaat"
+      ],
+      "transcript": "hoeveel beroepen in lijst leeuw kip brandweerman rechter architect donkerblauw advocaat",
+      "expected": "4",
+      "id": "text-count-beroep-75",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "beroep",
+      "list": [
+        "verpleegkundige",
+        "timmerman",
+        "kast",
+        "architect",
+        "wetenschapper"
+      ],
+      "transcript": "in de lijst verpleegkundige timmerman kast architect wetenschapper wat is de/het vierde beroep",
+      "expected": "wetenschapper",
+      "ordinal": "vierde",
+      "id": "text-ordinal-beroep-76",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is acht gedeeld een",
+      "expected": "8",
+      "id": "text-arith-77",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "vervoer",
+      "list": [
+        "skelter",
+        "raket",
+        "bus",
+        "trein"
+      ],
+      "transcript": "hoeveel vervoer in lijst skelter raket bus trein",
+      "expected": "4",
+      "id": "text-count-vervoer-78",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "vervoer",
+      "list": [
+        "trein",
+        "scooter",
+        "auto",
+        "dertien"
+      ],
+      "transcript": "in de lijst trein scooter auto dertien wat is de/het eerste vervoer",
+      "expected": "trein",
+      "ordinal": "eerste",
+      "id": "text-ordinal-vervoer-79",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is vijftig min vier",
+      "expected": "46",
+      "id": "text-arith-80",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "kleur",
+      "list": [
+        "blauw",
+        "kous",
+        "handen"
+      ],
+      "transcript": "hoeveel kleuren in lijst blauw kous handen",
+      "expected": "1",
+      "id": "text-count-kleur-81",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "kleur",
+      "list": [
+        "bruin",
+        "wit"
+      ],
+      "transcript": "in de lijst bruin wit wat is de/het laatste kleur",
+      "expected": "wit",
+      "ordinal": "laatste",
+      "id": "text-ordinal-kleur-82",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is vijf plus zestig",
+      "expected": "65",
+      "id": "text-arith-83",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "lichaamsdeel",
+      "list": [
+        "leeuw",
+        "nek",
+        "duim",
+        "kin"
+      ],
+      "transcript": "hoeveel lichaamsdelen in lijst leeuw nek duim kin",
+      "expected": "3",
+      "id": "text-count-lichaamsdeel-84",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "lichaamsdeel",
+      "list": [
+        "wetenschapper",
+        "oog",
+        "kiwi",
+        "oor",
+        "kin",
+        "maag",
+        "tapijt"
+      ],
+      "transcript": "in de lijst wetenschapper oog kiwi oor kin maag tapijt wat is de/het derde lichaamsdeel",
+      "expected": "kin",
+      "ordinal": "derde",
+      "id": "text-ordinal-lichaamsdeel-85",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is vijf keer elf",
+      "expected": "55",
+      "id": "text-arith-86",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "dier",
+      "list": [
+        "neushoorn",
+        "uil",
+        "negen",
+        "prei"
+      ],
+      "transcript": "hoeveel dieren in lijst neushoorn uil negen prei",
+      "expected": "2",
+      "id": "text-count-dier-87",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "dier",
+      "list": [
+        "eend",
+        "kousen",
+        "kip",
+        "duizend",
+        "haan",
+        "courgette",
+        "uil"
+      ],
+      "transcript": "in de lijst eend kousen kip duizend haan courgette uil wat is de/het vierde dier",
+      "expected": "uil",
+      "ordinal": "vierde",
+      "id": "text-ordinal-dier-88",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is een plus acht",
+      "expected": "9",
+      "id": "text-arith-89",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "vrucht",
+      "list": [
+        "voeten",
+        "vijf",
+        "buik",
+        "sinaasappel"
+      ],
+      "transcript": "hoeveel vruchten in lijst voeten vijf buik sinaasappel",
+      "expected": "1",
+      "id": "text-count-vrucht-90",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "vrucht",
+      "list": [
+        "meloen",
+        "peer",
+        "watermeloen"
+      ],
+      "transcript": "in de lijst meloen peer watermeloen wat is de/het eerste vrucht",
+      "expected": "meloen",
+      "ordinal": "eerste",
+      "id": "text-ordinal-vrucht-91",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is vijf keer vijf",
+      "expected": "25",
+      "id": "text-arith-92",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "groente",
+      "list": [
+        "paprika",
+        "wortel",
+        "asperge",
+        "bonen"
+      ],
+      "transcript": "hoeveel groenten in lijst paprika wortel asperge bonen",
+      "expected": "4",
+      "id": "text-count-groente-93",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "groente",
+      "list": [
+        "spinazie"
+      ],
+      "transcript": "in de lijst spinazie wat is de/het eerste groente",
+      "expected": "spinazie",
+      "ordinal": "eerste",
+      "id": "text-ordinal-groente-94",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is tien plus twintig",
+      "expected": "30",
+      "id": "text-arith-95",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "kleding",
+      "list": [
+        "oor",
+        "muts",
+        "jas",
+        "drie",
+        "schoen"
+      ],
+      "transcript": "hoeveel kleding in lijst oor muts jas drie schoen",
+      "expected": "3",
+      "id": "text-count-kleding-96",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "kleding",
+      "list": [
+        "dij",
+        "dertig",
+        "kousen",
+        "keel",
+        "shirt"
+      ],
+      "transcript": "in de lijst dij dertig kousen keel shirt wat is de/het laatste kleding",
+      "expected": "shirt",
+      "ordinal": "laatste",
+      "id": "text-ordinal-kleding-97",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is twintig gedeeld vier",
+      "expected": "5",
+      "id": "text-arith-98",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "meubel",
+      "list": [
+        "nachtkastje",
+        "lamp",
+        "schildpad",
+        "stoel",
+        "kast"
+      ],
+      "transcript": "hoeveel meubels in lijst nachtkastje lamp schildpad stoel kast",
+      "expected": "4",
+      "id": "text-count-meubel-99",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "meubel",
+      "list": [
+        "bureau",
+        "jas"
+      ],
+      "transcript": "in de lijst bureau jas wat is de/het eerste meubel",
+      "expected": "bureau",
+      "ordinal": "eerste",
+      "id": "text-ordinal-meubel-100",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is twintig plus vijftig",
+      "expected": "70",
+      "id": "text-arith-101",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "beroep",
+      "list": [
+        "advocaat",
+        "muis",
+        "agent",
+        "ingenieur"
+      ],
+      "transcript": "hoeveel beroepen in lijst advocaat muis agent ingenieur",
+      "expected": "3",
+      "id": "text-count-beroep-102",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "beroep",
+      "list": [
+        "boer",
+        "rechter",
+        "lerares",
+        "agent"
+      ],
+      "transcript": "in de lijst boer rechter lerares agent wat is de/het eerste beroep",
+      "expected": "boer",
+      "ordinal": "eerste",
+      "id": "text-ordinal-beroep-103",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is tachtig keer twaalf",
+      "expected": "960",
+      "id": "text-arith-104",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "vervoer",
+      "list": [
+        "voeten",
+        "kersen",
+        "fiets",
+        "radijs",
+        "onderzeeboot"
+      ],
+      "transcript": "hoeveel vervoer in lijst voeten kersen fiets radijs onderzeeboot",
+      "expected": "2",
+      "id": "text-count-vervoer-105",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "vervoer",
+      "list": [
+        "boot",
+        "vliegtuig",
+        "scooter",
+        "tractor"
+      ],
+      "transcript": "in de lijst boot vliegtuig scooter tractor wat is de/het derde vervoer",
+      "expected": "scooter",
+      "ordinal": "derde",
+      "id": "text-ordinal-vervoer-106",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is zes keer negentig",
+      "expected": "540",
+      "id": "text-arith-107",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "kleur",
+      "list": [
+        "arm",
+        "rood",
+        "donkerblauw"
+      ],
+      "transcript": "hoeveel kleuren in lijst arm rood donkerblauw",
+      "expected": "2",
+      "id": "text-count-kleur-108",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "kleur",
+      "list": [
+        "donkergroen",
+        "paars",
+        "bruin"
+      ],
+      "transcript": "in de lijst donkergroen paars bruin wat is de/het derde kleur",
+      "expected": "bruin",
+      "ordinal": "derde",
+      "id": "text-ordinal-kleur-109",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is acht min dertig",
+      "expected": "-22",
+      "id": "text-arith-110",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "lichaamsdeel",
+      "list": [
+        "vingers",
+        "acht",
+        "hiel",
+        "ogen",
+        "hersenen",
+        "paprika"
+      ],
+      "transcript": "hoeveel lichaamsdelen in lijst vingers acht hiel ogen hersenen paprika",
+      "expected": "4",
+      "id": "text-count-lichaamsdeel-111",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "lichaamsdeel",
+      "list": [
+        "schouder",
+        "broek",
+        "heup"
+      ],
+      "transcript": "in de lijst schouder broek heup wat is de/het eerste lichaamsdeel",
+      "expected": "schouder",
+      "ordinal": "eerste",
+      "id": "text-ordinal-lichaamsdeel-112",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is tachtig gedeeld vier",
+      "expected": "20",
+      "id": "text-arith-113",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "dier",
+      "list": [
+        "vos",
+        "raket"
+      ],
+      "transcript": "hoeveel dieren in lijst vos raket",
+      "expected": "1",
+      "id": "text-count-dier-114",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "dier",
+      "list": [
+        "giraffe",
+        "raket",
+        "zes",
+        "ezel"
+      ],
+      "transcript": "in de lijst giraffe raket zes ezel wat is de/het eerste dier",
+      "expected": "giraffe",
+      "ordinal": "eerste",
+      "id": "text-ordinal-dier-115",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is tien min een",
+      "expected": "9",
+      "id": "text-arith-116",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "vrucht",
+      "list": [
+        "braam"
+      ],
+      "transcript": "hoeveel vruchten in lijst braam",
+      "expected": "1",
+      "id": "text-count-vrucht-117",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "vrucht",
+      "list": [
+        "bosbes",
+        "raket",
+        "aardbei"
+      ],
+      "transcript": "in de lijst bosbes raket aardbei wat is de/het laatste vrucht",
+      "expected": "aardbei",
+      "ordinal": "laatste",
+      "id": "text-ordinal-vrucht-118",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is negen keer vijf",
+      "expected": "45",
+      "id": "text-arith-119",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "groente",
+      "list": [
+        "broccoli",
+        "kous",
+        "wortel"
+      ],
+      "transcript": "hoeveel groenten in lijst broccoli kous wortel",
+      "expected": "2",
+      "id": "text-count-groente-120",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "groente",
+      "list": [
+        "radijs",
+        "aubergine",
+        "regenjas",
+        "sla",
+        "tomaat"
+      ],
+      "transcript": "in de lijst radijs aubergine regenjas sla tomaat wat is de/het derde groente",
+      "expected": "sla",
+      "ordinal": "derde",
+      "id": "text-ordinal-groente-121",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is elf keer zestig",
+      "expected": "660",
+      "id": "text-arith-122",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "kleding",
+      "list": [
+        "kous"
+      ],
+      "transcript": "hoeveel kleding in lijst kous",
+      "expected": "1",
+      "id": "text-count-kleding-123",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "kleding",
+      "list": [
+        "schoenen",
+        "sjaal",
+        "aap",
+        "pet",
+        "fauteuil",
+        "muts",
+        "vinger"
+      ],
+      "transcript": "in de lijst schoenen sjaal aap pet fauteuil muts vinger wat is de/het eerste kleding",
+      "expected": "schoenen",
+      "ordinal": "eerste",
+      "id": "text-ordinal-kleding-124",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is acht min zestig",
+      "expected": "-52",
+      "id": "text-arith-125",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "meubel",
+      "list": [
+        "tafels",
+        "agent",
+        "negentig",
+        "spiegel"
+      ],
+      "transcript": "hoeveel meubels in lijst tafels agent negentig spiegel",
+      "expected": "2",
+      "id": "text-count-meubel-126",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "meubel",
+      "list": [
+        "fauteuil",
+        "tafels",
+        "longen",
+        "stoel",
+        "bank"
+      ],
+      "transcript": "in de lijst fauteuil tafels longen stoel bank wat is de/het vierde meubel",
+      "expected": "bank",
+      "ordinal": "vierde",
+      "id": "text-ordinal-meubel-127",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is nul min dertig",
+      "expected": "-30",
+      "id": "text-arith-128",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "beroep",
+      "list": [
+        "postbode",
+        "bakker",
+        "laarzen"
+      ],
+      "transcript": "hoeveel beroepen in lijst postbode bakker laarzen",
+      "expected": "2",
+      "id": "text-count-beroep-129",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "beroep",
+      "list": [
+        "piloot",
+        "buik",
+        "kapper",
+        "dressoir",
+        "verpleegkundige"
+      ],
+      "transcript": "in de lijst piloot buik kapper dressoir verpleegkundige wat is de/het derde beroep",
+      "expected": "verpleegkundige",
+      "ordinal": "derde",
+      "id": "text-ordinal-beroep-130",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is tien gedeeld tien",
+      "expected": "1",
+      "id": "text-arith-131",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "vervoer",
+      "list": [
+        "vliegtuig",
+        "tien",
+        "skelter"
+      ],
+      "transcript": "hoeveel vervoer in lijst vliegtuig tien skelter",
+      "expected": "2",
+      "id": "text-count-vervoer-132",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "vervoer",
+      "list": [
+        "onderzeeboot",
+        "architect",
+        "auto"
+      ],
+      "transcript": "in de lijst onderzeeboot architect auto wat is de/het laatste vervoer",
+      "expected": "auto",
+      "ordinal": "laatste",
+      "id": "text-ordinal-vervoer-133",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is zes keer dertig",
+      "expected": "180",
+      "id": "text-arith-134",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "kleur",
+      "list": [
+        "lila",
+        "skelter",
+        "roodbruin"
+      ],
+      "transcript": "hoeveel kleuren in lijst lila skelter roodbruin",
+      "expected": "2",
+      "id": "text-count-kleur-135",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "kleur",
+      "list": [
+        "paars"
+      ],
+      "transcript": "in de lijst paars wat is de/het laatste kleur",
+      "expected": "paars",
+      "ordinal": "laatste",
+      "id": "text-ordinal-kleur-136",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is tachtig plus nul",
+      "expected": "80",
+      "id": "text-arith-137",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "lichaamsdeel",
+      "list": [
+        "dij",
+        "hart",
+        "hersenen"
+      ],
+      "transcript": "hoeveel lichaamsdelen in lijst dij hart hersenen",
+      "expected": "3",
+      "id": "text-count-lichaamsdeel-138",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "lichaamsdeel",
+      "list": [
+        "kapitein",
+        "lever"
+      ],
+      "transcript": "in de lijst kapitein lever wat is de/het laatste lichaamsdeel",
+      "expected": "lever",
+      "ordinal": "laatste",
+      "id": "text-ordinal-lichaamsdeel-139",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is negen plus dertig",
+      "expected": "39",
+      "id": "text-arith-140",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "dier",
+      "list": [
+        "schaap",
+        "krokodil",
+        "paard",
+        "twintig"
+      ],
+      "transcript": "hoeveel dieren in lijst schaap krokodil paard twintig",
+      "expected": "3",
+      "id": "text-count-dier-141",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "dier",
+      "list": [
+        "ingenieur",
+        "beer",
+        "hond",
+        "krokodil",
+        "vogel",
+        "vijftig"
+      ],
+      "transcript": "in de lijst ingenieur beer hond krokodil vogel vijftig wat is de/het vierde dier",
+      "expected": "vogel",
+      "ordinal": "vierde",
+      "id": "text-ordinal-dier-142",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is twintig keer zeven",
+      "expected": "140",
+      "id": "text-arith-143",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "vrucht",
+      "list": [
+        "ananas",
+        "banaan",
+        "aardbei",
+        "nectarine"
+      ],
+      "transcript": "hoeveel vruchten in lijst ananas banaan aardbei nectarine",
+      "expected": "4",
+      "id": "text-count-vrucht-144",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "vrucht",
+      "list": [
+        "kiwi",
+        "mandarijn",
+        "kers",
+        "peer"
+      ],
+      "transcript": "in de lijst kiwi mandarijn kers peer wat is de/het vierde vrucht",
+      "expected": "peer",
+      "ordinal": "vierde",
+      "id": "text-ordinal-vrucht-145",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is veertig keer vier",
+      "expected": "160",
+      "id": "text-arith-146",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "groente",
+      "list": [
+        "asperge",
+        "aubergine",
+        "bedden",
+        "pruim",
+        "prei"
+      ],
+      "transcript": "hoeveel groenten in lijst asperge aubergine bedden pruim prei",
+      "expected": "3",
+      "id": "text-count-groente-147",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "groente",
+      "list": [
+        "keel",
+        "bonen",
+        "erwt"
+      ],
+      "transcript": "in de lijst keel bonen erwt wat is de/het laatste groente",
+      "expected": "erwt",
+      "ordinal": "laatste",
+      "id": "text-ordinal-groente-148",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is twintig min vijf",
+      "expected": "15",
+      "id": "text-arith-149",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "kleding",
+      "list": [
+        "jurk",
+        "schoen",
+        "kousen",
+        "nectarine"
+      ],
+      "transcript": "hoeveel kleding in lijst jurk schoen kousen nectarine",
+      "expected": "3",
+      "id": "text-count-kleding-150",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "kleding",
+      "list": [
+        "handschoenen",
+        "buik"
+      ],
+      "transcript": "in de lijst handschoenen buik wat is de/het eerste kleding",
+      "expected": "handschoenen",
+      "ordinal": "eerste",
+      "id": "text-ordinal-kleding-151",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is twaalf min een",
+      "expected": "11",
+      "id": "text-arith-152",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "meubel",
+      "list": [
+        "salontafel"
+      ],
+      "transcript": "hoeveel meubels in lijst salontafel",
+      "expected": "1",
+      "id": "text-count-meubel-153",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "meubel",
+      "list": [
+        "asperge",
+        "vlinder",
+        "lampen"
+      ],
+      "transcript": "in de lijst asperge vlinder lampen wat is de/het laatste meubel",
+      "expected": "lampen",
+      "ordinal": "laatste",
+      "id": "text-ordinal-meubel-154",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is tachtig min negentig",
+      "expected": "-10",
+      "id": "text-arith-155",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "beroep",
+      "list": [
+        "schilder",
+        "politieagent",
+        "longen",
+        "brandweerman"
+      ],
+      "transcript": "hoeveel beroepen in lijst schilder politieagent longen brandweerman",
+      "expected": "3",
+      "id": "text-count-beroep-156",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "beroep",
+      "list": [
+        "conducteur",
+        "kok",
+        "ingenieur",
+        "wetenschapper"
+      ],
+      "transcript": "in de lijst conducteur kok ingenieur wetenschapper wat is de/het tweede beroep",
+      "expected": "kok",
+      "ordinal": "tweede",
+      "id": "text-ordinal-beroep-157",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is zeven keer acht",
+      "expected": "56",
+      "id": "text-arith-158",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "vervoer",
+      "list": [
+        "vrachtwagen",
+        "vliegtuig",
+        "onderzeeboot"
+      ],
+      "transcript": "hoeveel vervoer in lijst vrachtwagen vliegtuig onderzeeboot",
+      "expected": "3",
+      "id": "text-count-vervoer-159",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "vervoer",
+      "list": [
+        "donkergroen",
+        "schip",
+        "dolfijn",
+        "scooter"
+      ],
+      "transcript": "in de lijst donkergroen schip dolfijn scooter wat is de/het tweede vervoer",
+      "expected": "scooter",
+      "ordinal": "tweede",
+      "id": "text-ordinal-vervoer-160",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is vijf min nul",
+      "expected": "5",
+      "id": "text-arith-161",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "kleur",
+      "list": [
+        "goud",
+        "konijn",
+        "roodbruin",
+        "rok",
+        "lichtgroen",
+        "lichtblauw"
+      ],
+      "transcript": "hoeveel kleuren in lijst goud konijn roodbruin rok lichtgroen lichtblauw",
+      "expected": "4",
+      "id": "text-count-kleur-162",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "kleur",
+      "list": [
+        "nachtkastje",
+        "lichtgroen",
+        "hart",
+        "tractor"
+      ],
+      "transcript": "in de lijst nachtkastje lichtgroen hart tractor wat is de/het laatste kleur",
+      "expected": "lichtgroen",
+      "ordinal": "laatste",
+      "id": "text-ordinal-kleur-163",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is negen plus zestig",
+      "expected": "69",
+      "id": "text-arith-164",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "lichaamsdeel",
+      "list": [
+        "nagel",
+        "lippen",
+        "paard",
+        "voet",
+        "abrikoos"
+      ],
+      "transcript": "hoeveel lichaamsdelen in lijst nagel lippen paard voet abrikoos",
+      "expected": "3",
+      "id": "text-count-lichaamsdeel-165",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "lichaamsdeel",
+      "list": [
+        "wenkbrauw",
+        "scheen",
+        "tand"
+      ],
+      "transcript": "in de lijst wenkbrauw scheen tand wat is de/het tweede lichaamsdeel",
+      "expected": "scheen",
+      "ordinal": "tweede",
+      "id": "text-ordinal-lichaamsdeel-166",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is tachtig min vijftig",
+      "expected": "30",
+      "id": "text-arith-167",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "dier",
+      "list": [
+        "leeuw",
+        "pinguïn",
+        "bus"
+      ],
+      "transcript": "hoeveel dieren in lijst leeuw pinguïn bus",
+      "expected": "2",
+      "id": "text-count-dier-168",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "dier",
+      "list": [
+        "vos",
+        "schildpad",
+        "schrijver",
+        "vinger",
+        "nek"
+      ],
+      "transcript": "in de lijst vos schildpad schrijver vinger nek wat is de/het laatste dier",
+      "expected": "schildpad",
+      "ordinal": "laatste",
+      "id": "text-ordinal-dier-169",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is twaalf plus drie",
+      "expected": "15",
+      "id": "text-arith-170",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "vrucht",
+      "list": [
+        "kers",
+        "bosbes",
+        "nectarine",
+        "aardbei",
+        "pyjama"
+      ],
+      "transcript": "hoeveel vruchten in lijst kers bosbes nectarine aardbei pyjama",
+      "expected": "4",
+      "id": "text-count-vrucht-171",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "vrucht",
+      "list": [
+        "pinguïn",
+        "pruim",
+        "bosbes",
+        "paard"
+      ],
+      "transcript": "in de lijst pinguïn pruim bosbes paard wat is de/het laatste vrucht",
+      "expected": "bosbes",
+      "ordinal": "laatste",
+      "id": "text-ordinal-vrucht-172",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is elf min tien",
+      "expected": "1",
+      "id": "text-arith-173",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "groente",
+      "list": [
+        "spinazie",
+        "broccoli",
+        "sla",
+        "asperge"
+      ],
+      "transcript": "hoeveel groenten in lijst spinazie broccoli sla asperge",
+      "expected": "4",
+      "id": "text-count-groente-174",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "groente",
+      "list": [
+        "bloemkool",
+        "tomaat",
+        "aardappel",
+        "spin",
+        "giraffe",
+        "laars"
+      ],
+      "transcript": "in de lijst bloemkool tomaat aardappel spin giraffe laars wat is de/het eerste groente",
+      "expected": "bloemkool",
+      "ordinal": "eerste",
+      "id": "text-ordinal-groente-175",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is zeventig min tien",
+      "expected": "60",
+      "id": "text-arith-176",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "kleding",
+      "list": [
+        "riem",
+        "motor"
+      ],
+      "transcript": "hoeveel kleding in lijst riem motor",
+      "expected": "1",
+      "id": "text-count-kleding-177",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "kleding",
+      "list": [
+        "tafels",
+        "zeventien",
+        "schildpad",
+        "sok",
+        "pyjama"
+      ],
+      "transcript": "in de lijst tafels zeventien schildpad sok pyjama wat is de/het eerste kleding",
+      "expected": "sok",
+      "ordinal": "eerste",
+      "id": "text-ordinal-kleding-178",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is twaalf keer een",
+      "expected": "12",
+      "id": "text-arith-179",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "id": "edge-count-zero",
+      "class": "count",
+      "category": "kleur",
+      "transcript": "hoeveel kleuren in lijst hond tafel stoel",
+      "expected": "0",
+      "list": [
+        "hond",
+        "tafel",
+        "stoel"
+      ],
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "id": "edge-count-all",
+      "class": "count",
+      "category": "dier",
+      "transcript": "hoeveel dieren in lijst hond kat paard koe",
+      "expected": "4",
+      "list": [
+        "hond",
+        "kat",
+        "paard",
+        "koe"
+      ],
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "id": "edge-ordinal-last",
+      "class": "ordinal-pick",
+      "category": "kleur",
+      "transcript": "in de lijst rood hond blauw kat groen wat is de/het laatste kleur",
+      "expected": "groen",
+      "list": [
+        "rood",
+        "hond",
+        "blauw",
+        "kat",
+        "groen"
+      ],
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "id": "edge-arith-divide",
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is twintig gedeeld door vijf",
+      "expected": "4",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "id": "edge-arith-negative",
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is drie min tien",
+      "expected": "-7",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "kleur",
+      "list": [
+        "donkerblauw",
+        "goud",
+        "wit"
+      ],
+      "transcript": "hoeveel kleuren in lijst donkerblauvv goud wit",
+      "expected": "3",
+      "id": "damaged-count-kleur-0",
+      "undamaged": "hoeveel kleuren in lijst donkerblauw goud wit",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "kleur",
+      "list": [
+        "groen"
+      ],
+      "transcript": "in de lijst groen wat is de/het eer5te kleur",
+      "expected": "groen",
+      "ordinal": "eerste",
+      "id": "damaged-ordinal-kleur-1",
+      "undamaged": "in de lijst groen wat is de/het eerste kleur",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is twintig rnin elf",
+      "expected": "9",
+      "id": "damaged-arith-2",
+      "undamaged": "wat is twintig min elf",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "lichaamsdeel",
+      "list": [
+        "tand"
+      ],
+      "transcript": "hoeveel lichaamsdelen in ljjst tand",
+      "expected": "1",
+      "id": "damaged-count-lichaamsdeel-3",
+      "undamaged": "hoeveel lichaamsdelen in lijst tand",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "lichaamsdeel",
+      "list": [
+        "scheen",
+        "voorhoofd"
+      ],
+      "transcript": "in de lijst scheen voorhoofd wat is de/het laatste licljaamsdeel",
+      "expected": "voorhoofd",
+      "ordinal": "laatste",
+      "id": "damaged-ordinal-lichaamsdeel-4",
+      "undamaged": "in de lijst scheen voorhoofd wat is de/het laatste lichaamsdeel",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "vvat is tachtig keer vijf",
+      "expected": "400",
+      "id": "damaged-arith-5",
+      "undamaged": "wat is tachtig keer vijf",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "dier",
+      "list": [
+        "brandweerman",
+        "olifant",
+        "raket",
+        "tijger",
+        "haai"
+      ],
+      "transcript": "hoeveel dieren in lijst branclweerman olifant raket tijger haai",
+      "expected": "3",
+      "id": "damaged-count-dier-6",
+      "undamaged": "hoeveel dieren in lijst brandweerman olifant raket tijger haai",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "dier",
+      "list": [
+        "krokodil",
+        "kiwi",
+        "heup"
+      ],
+      "transcript": "in de lijst krokodjl kiwi heup wat is de/het eerste dier",
+      "expected": "krokodil",
+      "ordinal": "eerste",
+      "id": "damaged-ordinal-dier-7",
+      "undamaged": "in de lijst krokodil kiwi heup wat is de/het eerste dier",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "vvat is twaalf plus tachtig",
+      "expected": "92",
+      "id": "damaged-arith-8",
+      "undamaged": "wat is twaalf plus tachtig",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "vrucht",
+      "list": [
+        "fiets",
+        "oranje",
+        "kiwi",
+        "aardbei",
+        "kers",
+        "appel"
+      ],
+      "transcript": "hoeveel vruchten in ljjst fiets oranje kiwi aardbei kers appel",
+      "expected": "4",
+      "id": "damaged-count-vrucht-9",
+      "undamaged": "hoeveel vruchten in lijst fiets oranje kiwi aardbei kers appel",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "vrucht",
+      "list": [
+        "oranje",
+        "aardbei",
+        "twee",
+        "mango",
+        "achttien",
+        "meloen"
+      ],
+      "transcript": "in de lijst oranje aardbei twee mango achttien mel0en wat is de/het eerste vrucht",
+      "expected": "aardbei",
+      "ordinal": "eerste",
+      "id": "damaged-ordinal-vrucht-10",
+      "undamaged": "in de lijst oranje aardbei twee mango achttien meloen wat is de/het eerste vrucht",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is vijftig min zestjg",
+      "expected": "-10",
+      "id": "damaged-arith-11",
+      "undamaged": "wat is vijftig min zestig",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "groente",
+      "list": [
+        "aubergine",
+        "lampen",
+        "watermeloen",
+        "ui",
+        "aardappel"
+      ],
+      "transcript": "hoeveel groenten in lijst aiibergine lampen watermeloen ui aardappel",
+      "expected": "3",
+      "id": "damaged-count-groente-12",
+      "undamaged": "hoeveel groenten in lijst aubergine lampen watermeloen ui aardappel",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "groente",
+      "list": [
+        "papaya",
+        "komkommer",
+        "courgette",
+        "broccoli",
+        "erwt"
+      ],
+      "transcript": "in de lijst papaya komkommer courgette br0ccoli erwt wat is de/het derde groente",
+      "expected": "broccoli",
+      "ordinal": "derde",
+      "id": "damaged-ordinal-groente-13",
+      "undamaged": "in de lijst papaya komkommer courgette broccoli erwt wat is de/het derde groente",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "vvat is zeven keer zestig",
+      "expected": "420",
+      "id": "damaged-arith-14",
+      "undamaged": "wat is zeven keer zestig",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "kleding",
+      "list": [
+        "motor",
+        "riem",
+        "framboos",
+        "jurk",
+        "das",
+        "pyjama"
+      ],
+      "transcript": "h0eveel kleding in lijst motor riem framboos jurk das pyjama",
+      "expected": "4",
+      "id": "damaged-count-kleding-15",
+      "undamaged": "hoeveel kleding in lijst motor riem framboos jurk das pyjama",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "kleding",
+      "list": [
+        "sokken",
+        "taxi",
+        "haai",
+        "kousen",
+        "politieagent"
+      ],
+      "transcript": "in de lijst sokken taxi haai k0usen politieagent wat is de/het laatste kleding",
+      "expected": "kousen",
+      "ordinal": "laatste",
+      "id": "damaged-ordinal-kleding-16",
+      "undamaged": "in de lijst sokken taxi haai kousen politieagent wat is de/het laatste kleding",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is tien rnin zeven",
+      "expected": "3",
+      "id": "damaged-arith-17",
+      "undamaged": "wat is tien min zeven",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "meubel",
+      "list": [
+        "spiegel",
+        "benen",
+        "stoel",
+        "schaap",
+        "sofa"
+      ],
+      "transcript": "hoeveel meubel5 in lijst spiegel benen stoel schaap sofa",
+      "expected": "3",
+      "id": "damaged-count-meubel-18",
+      "undamaged": "hoeveel meubels in lijst spiegel benen stoel schaap sofa",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "meubel",
+      "list": [
+        "sofa",
+        "dressoir",
+        "matras",
+        "laarzen",
+        "lippen"
+      ],
+      "transcript": "in de lijst sofa dre5soir matras laarzen lippen wat is de/het eerste meubel",
+      "expected": "sofa",
+      "ordinal": "eerste",
+      "id": "damaged-ordinal-meubel-19",
+      "undamaged": "in de lijst sofa dressoir matras laarzen lippen wat is de/het eerste meubel",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is negen keer tacljtig",
+      "expected": "720",
+      "id": "damaged-arith-20",
+      "undamaged": "wat is negen keer tachtig",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "beroep",
+      "list": [
+        "advocaat",
+        "brandweerman",
+        "agent",
+        "schilder"
+      ],
+      "transcript": "h0eveel beroepen in lijst advocaat brandweerman agent schilder",
+      "expected": "4",
+      "id": "damaged-count-beroep-21",
+      "undamaged": "hoeveel beroepen in lijst advocaat brandweerman agent schilder",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "beroep",
+      "list": [
+        "rood",
+        "schrijver",
+        "brandweerman",
+        "piloot",
+        "lerares"
+      ],
+      "transcript": "in de lijst rood 5chrijver brandweerman piloot lerares wat is de/het eerste beroep",
+      "expected": "schrijver",
+      "ordinal": "eerste",
+      "id": "damaged-ordinal-beroep-22",
+      "undamaged": "in de lijst rood schrijver brandweerman piloot lerares wat is de/het eerste beroep",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is tien plus tvvintig",
+      "expected": "30",
+      "id": "damaged-arith-23",
+      "undamaged": "wat is tien plus twintig",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "vervoer",
+      "list": [
+        "roodbruin",
+        "kousen",
+        "hoed",
+        "skelter",
+        "scooter"
+      ],
+      "transcript": "hoeveel vervoer in lijst roodbrujn kousen hoed skelter scooter",
+      "expected": "2",
+      "id": "damaged-count-vervoer-24",
+      "undamaged": "hoeveel vervoer in lijst roodbruin kousen hoed skelter scooter",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "vervoer",
+      "list": [
+        "helikopter",
+        "tractor",
+        "schaap",
+        "rat",
+        "onderzeeboot",
+        "bus"
+      ],
+      "transcript": "in de lijst helikopter tractor schaap rat onclerzeeboot bus wat is de/het vierde vervoer",
+      "expected": "bus",
+      "ordinal": "vierde",
+      "id": "damaged-ordinal-vervoer-25",
+      "undamaged": "in de lijst helikopter tractor schaap rat onderzeeboot bus wat is de/het vierde vervoer",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is zestig pliis twee",
+      "expected": "62",
+      "id": "damaged-arith-26",
+      "undamaged": "wat is zestig plus twee",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "kleur",
+      "list": [
+        "pet",
+        "lila",
+        "sjaal",
+        "bruin"
+      ],
+      "transcript": "hoeveel kleuren in lijst pet lila sjaal brujn",
+      "expected": "2",
+      "id": "damaged-count-kleur-27",
+      "undamaged": "hoeveel kleuren in lijst pet lila sjaal bruin",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "kleur",
+      "list": [
+        "blauw"
+      ],
+      "transcript": "in de lijst blaiiw wat is de/het eerste kleur",
+      "expected": "blauw",
+      "ordinal": "eerste",
+      "id": "damaged-ordinal-kleur-28",
+      "undamaged": "in de lijst blauw wat is de/het eerste kleur",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is dertig min negentjg",
+      "expected": "-60",
+      "id": "damaged-arith-29",
+      "undamaged": "wat is dertig min negentig",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "lichaamsdeel",
+      "list": [
+        "politieagent",
+        "voeten",
+        "hersenen",
+        "scheen"
+      ],
+      "transcript": "hoeveel lichaamsdelen in lijst poljtieagent voeten hersenen scheen",
+      "expected": "3",
+      "id": "damaged-count-lichaamsdeel-30",
+      "undamaged": "hoeveel lichaamsdelen in lijst politieagent voeten hersenen scheen",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "lichaamsdeel",
+      "list": [
+        "been",
+        "schoen",
+        "rug",
+        "voet"
+      ],
+      "transcript": "in de ljjst been schoen rug voet wat is de/het tweede lichaamsdeel",
+      "expected": "rug",
+      "ordinal": "tweede",
+      "id": "damaged-ordinal-lichaamsdeel-31",
+      "undamaged": "in de lijst been schoen rug voet wat is de/het tweede lichaamsdeel",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is elf keer tvvee",
+      "expected": "22",
+      "id": "damaged-arith-32",
+      "undamaged": "wat is elf keer twee",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "dier",
+      "list": [
+        "beer",
+        "honderd",
+        "kasten",
+        "walvis",
+        "leeuw"
+      ],
+      "transcript": "hoeveel dieren in lijst beer honderd kasten walvis leeiiw",
+      "expected": "3",
+      "id": "damaged-count-dier-33",
+      "undamaged": "hoeveel dieren in lijst beer honderd kasten walvis leeuw",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "dier",
+      "list": [
+        "olifant",
+        "nek",
+        "conducteur",
+        "roze",
+        "rat",
+        "mier"
+      ],
+      "transcript": "in de lijst olifant nek conducteur roze rat mier wat is de/het clerde dier",
+      "expected": "mier",
+      "ordinal": "derde",
+      "id": "damaged-ordinal-dier-34",
+      "undamaged": "in de lijst olifant nek conducteur roze rat mier wat is de/het derde dier",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is negentig gedeeld clertig",
+      "expected": "3",
+      "id": "damaged-arith-35",
+      "undamaged": "wat is negentig gedeeld dertig",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "vrucht",
+      "list": [
+        "mandarijn",
+        "abrikoos"
+      ],
+      "transcript": "hoeveel vruchten in lijst manclarijn abrikoos",
+      "expected": "2",
+      "id": "damaged-count-vrucht-36",
+      "undamaged": "hoeveel vruchten in lijst mandarijn abrikoos",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "vrucht",
+      "list": [
+        "peer",
+        "laars",
+        "erwten",
+        "druif",
+        "mango"
+      ],
+      "transcript": "in de lijst peer laars erwten clruif mango wat is de/het eerste vrucht",
+      "expected": "peer",
+      "ordinal": "eerste",
+      "id": "damaged-ordinal-vrucht-37",
+      "undamaged": "in de lijst peer laars erwten druif mango wat is de/het eerste vrucht",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "vvat is negen min tien",
+      "expected": "-1",
+      "id": "damaged-arith-38",
+      "undamaged": "wat is negen min tien",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "groente",
+      "list": [
+        "bloemkool",
+        "radijs",
+        "tomaat",
+        "bonen"
+      ],
+      "transcript": "ljoeveel groenten in lijst bloemkool radijs tomaat bonen",
+      "expected": "4",
+      "id": "damaged-count-groente-39",
+      "undamaged": "hoeveel groenten in lijst bloemkool radijs tomaat bonen",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "groente",
+      "list": [
+        "aardappel",
+        "pols",
+        "kat",
+        "bonen"
+      ],
+      "transcript": "in de lijst aardappel p0ls kat bonen wat is de/het eerste groente",
+      "expected": "aardappel",
+      "ordinal": "eerste",
+      "id": "damaged-ordinal-groente-40",
+      "undamaged": "in de lijst aardappel pols kat bonen wat is de/het eerste groente",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is vier plu5 tachtig",
+      "expected": "84",
+      "id": "damaged-arith-41",
+      "undamaged": "wat is vier plus tachtig",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "kleding",
+      "list": [
+        "turkoois",
+        "kous"
+      ],
+      "transcript": "hoeveel klecling in lijst turkoois kous",
+      "expected": "1",
+      "id": "damaged-count-kleding-42",
+      "undamaged": "hoeveel kleding in lijst turkoois kous",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "kleding",
+      "list": [
+        "neushoorn",
+        "metro",
+        "laars",
+        "laarzen",
+        "pet"
+      ],
+      "transcript": "in de lijst neushoorn metro laar5 laarzen pet wat is de/het derde kleding",
+      "expected": "pet",
+      "ordinal": "derde",
+      "id": "damaged-ordinal-kleding-43",
+      "undamaged": "in de lijst neushoorn metro laars laarzen pet wat is de/het derde kleding",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is vijf rnin nul",
+      "expected": "5",
+      "id": "damaged-arith-44",
+      "undamaged": "wat is vijf min nul",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "meubel",
+      "list": [
+        "stoel"
+      ],
+      "transcript": "hoeveel meubel5 in lijst stoel",
+      "expected": "1",
+      "id": "damaged-count-meubel-45",
+      "undamaged": "hoeveel meubels in lijst stoel",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "meubel",
+      "list": [
+        "salontafel",
+        "spiegel",
+        "boekenkast"
+      ],
+      "transcript": "in de lijst salontafel spiegel boekenkast wat is de/het tweecle meubel",
+      "expected": "spiegel",
+      "ordinal": "tweede",
+      "id": "damaged-ordinal-meubel-46",
+      "undamaged": "in de lijst salontafel spiegel boekenkast wat is de/het tweede meubel",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is elf keer tjen",
+      "expected": "110",
+      "id": "damaged-arith-47",
+      "undamaged": "wat is elf keer tien",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "beroep",
+      "list": [
+        "muzikant",
+        "veertig",
+        "schrijver",
+        "bakker",
+        "kapper"
+      ],
+      "transcript": "hoeveel beroepen in lijst miizikant veertig schrijver bakker kapper",
+      "expected": "4",
+      "id": "damaged-count-beroep-48",
+      "undamaged": "hoeveel beroepen in lijst muzikant veertig schrijver bakker kapper",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "beroep",
+      "list": [
+        "matras",
+        "advocaat",
+        "veerboot",
+        "schrijver",
+        "loodgieter"
+      ],
+      "transcript": "in de lijst matras advocaat veerb0ot schrijver loodgieter wat is de/het tweede beroep",
+      "expected": "schrijver",
+      "ordinal": "tweede",
+      "id": "damaged-ordinal-beroep-49",
+      "undamaged": "in de lijst matras advocaat veerboot schrijver loodgieter wat is de/het tweede beroep",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is negen keer zestjg",
+      "expected": "540",
+      "id": "damaged-arith-50",
+      "undamaged": "wat is negen keer zestig",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "vervoer",
+      "list": [
+        "onderzeeboot"
+      ],
+      "transcript": "hoeveel vervoer in lijst onclerzeeboot",
+      "expected": "1",
+      "id": "damaged-count-vervoer-51",
+      "undamaged": "hoeveel vervoer in lijst onderzeeboot",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "vervoer",
+      "list": [
+        "aardappel",
+        "raket",
+        "boot",
+        "tractor"
+      ],
+      "transcript": "in de lijst aardappel raket b0ot tractor wat is de/het tweede vervoer",
+      "expected": "boot",
+      "ordinal": "tweede",
+      "id": "damaged-ordinal-vervoer-52",
+      "undamaged": "in de lijst aardappel raket boot tractor wat is de/het tweede vervoer",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is vijf keer tjen",
+      "expected": "50",
+      "id": "damaged-arith-53",
+      "undamaged": "wat is vijf keer tien",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "kleur",
+      "list": [
+        "lichtgroen",
+        "bruin",
+        "hond",
+        "geel",
+        "blauw"
+      ],
+      "transcript": "hoeveel kleuren in lijst lichtgroen brujn hond geel blauw",
+      "expected": "4",
+      "id": "damaged-count-kleur-54",
+      "undamaged": "hoeveel kleuren in lijst lichtgroen bruin hond geel blauw",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "kleur",
+      "list": [
+        "heup",
+        "donkerblauw",
+        "zilver",
+        "beige",
+        "borst",
+        "turkoois",
+        "elf"
+      ],
+      "transcript": "in de lijst heup donkerblauw zilver beige borst turkoois elf wat is de/het tvveede kleur",
+      "expected": "zilver",
+      "ordinal": "tweede",
+      "id": "damaged-ordinal-kleur-55",
+      "undamaged": "in de lijst heup donkerblauw zilver beige borst turkoois elf wat is de/het tweede kleur",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "wat is twee rnin drie",
+      "expected": "-1",
+      "id": "damaged-arith-56",
+      "undamaged": "wat is twee min drie",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "count",
+      "category": "lichaamsdeel",
+      "list": [
+        "hoofd",
+        "watermeloen",
+        "ogen",
+        "voet"
+      ],
+      "transcript": "hoeveel licljaamsdelen in lijst hoofd watermeloen ogen voet",
+      "expected": "3",
+      "id": "damaged-count-lichaamsdeel-57",
+      "undamaged": "hoeveel lichaamsdelen in lijst hoofd watermeloen ogen voet",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "ordinal-pick",
+      "category": "lichaamsdeel",
+      "list": [
+        "kersen",
+        "neushoorn",
+        "tenen",
+        "nek"
+      ],
+      "transcript": "in de lijst kersen neushoorn tenen nek wat is de/het tweede ljchaamsdeel",
+      "expected": "nek",
+      "ordinal": "tweede",
+      "id": "damaged-ordinal-lichaamsdeel-58",
+      "undamaged": "in de lijst kersen neushoorn tenen nek wat is de/het tweede lichaamsdeel",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "vvat is acht plus elf",
+      "expected": "19",
+      "id": "damaged-arith-59",
+      "undamaged": "wat is acht plus elf",
+      "provenance": "synthetic",
+      "kind": "text"
+    },
+    {
+      "id": "derived-001-count-kleuren",
+      "provenance": "derived",
+      "kind": "text",
+      "class": "count",
+      "category": "kleur",
+      "list": [
+        "wit",
+        "kiwi",
+        "hoofd",
+        "paars",
+        "olifant",
+        "aap"
+      ],
+      "transcript": "Hoeveel kleuren in lijst wit kw: hoofd paars olifant aap?",
+      "expected": "2",
+      "derivedFrom": "001-count-kleuren.png"
+    },
+    {
+      "id": "derived-002-ordinal-lichaamsdeel",
+      "provenance": "derived",
+      "kind": "text",
+      "class": "ordinal-pick",
+      "category": "lichaamsdeel",
+      "list": [
+        "lijst",
+        "hoofd",
+        "buik",
+        "citroen",
+        "borst",
+        "olifant",
+        "paard"
+      ],
+      "transcript": "In de lijst lijst hoofd buik citroen borst olifant paard wat 1s de/het eerste lichaamsdeel?",
+      "expected": "hoofd",
+      "derivedFrom": "002-ordinal-lichaamsdeel.png"
+    },
+    {
+      "id": "derived-003-arithmetic-acht-min-een",
+      "provenance": "derived",
+      "kind": "text",
+      "class": "arithmetic",
+      "category": null,
+      "list": [],
+      "transcript": "Wat js acht min een?",
+      "expected": "7",
+      "derivedFrom": "003-arithmetic-acht-min-een.png"
+    }
+  ]
+}
