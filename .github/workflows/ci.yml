@@ -1,0 +1,32 @@
+# CI: the offline suite, on every push and on PRs to main.
+#
+# No secrets are configured. The live model tests in tests/live-model.test.js skip
+# themselves when LLM_API_KEY is absent, so a fork's pull request runs green rather
+# than failing on a key it cannot have.
+#
+# 22.13.0 is the true floor: `node:sqlite` is behind `--experimental-sqlite` on
+# 22.12.0 and earlier, and unflagged from 22.13.0 (verified against the official
+# nodejs.org binaries, checking process.execPath, not `npx node@22` which silently
+# runs the ambient Node). The second entry tests the current LTS line too.
+name: CI
+
+on:
+  push:
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ['22.13.0', '24.x']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+      - run: npm ci
+      - run: npm test

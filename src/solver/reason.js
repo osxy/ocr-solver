@@ -19,6 +19,7 @@
  *    the arithmetic wins - it cannot be wrong about `9 - 4`.
  */
 import { extractJson, visionMessage, ModelError, normalizeModelChain } from '../model/client.js';
+import { isPermanentFailure } from '../model/breaker.js';
 import { loadPrompt } from './prompts.js';
 import { validateAnswer } from './validate.js';
 import { PUZZLE_CLASS, parsePuzzle } from './puzzle.js';
@@ -234,6 +235,9 @@ export function createReasoner({
   promptDir,
   store = null,
   subject = 'unknown',
+  // Per-tier circuit breakers, e.g. `{ text, vision }`. Optional: with none
+  // supplied the reasoner behaves exactly as it did before (M1).
+  breakers = null,
   logger = null,
 } = {}) {
   if (!client) throw new Error('createReasoner requires a model client');
@@ -262,9 +266,29 @@ export function createReasoner({
     // A single sample is a deterministic lookup, so run it cold. Multiple samples
     // need some spread or they would all be identical and the vote meaningless.
     const sampleTemperature = n > 1 ? temperature : 0;
+    // One breaker per tier: a dead text route must not disable the vision fallback.
+    const breaker = breakers?.[stage === 'model-vision' ? 'vision' : 'text'] ?? null;
     const out = [];
     for (let i = 0; i < n; i++) {
       const started = Date.now();
+
+      // The breaker is checked BEFORE the client call: that is what bounds a dead
+      // provider to `threshold` calls per cooldown rather than one per puzzle.
+      if (breaker && !breaker.allow()) {
+        const message = `circuit breaker open for ${stage}`;
+        store?.record({
+          subject,
+          stage,
+          variant: model,
+          payload: { sample: i, error: message, breaker: breaker.stats() },
+          ok: false,
+          ms: 0,
+        });
+        logger?.warn?.(`${stage} sample ${i + 1}/${n} skipped: ${message}`);
+        out.push({ ok: false, error: message, breakerOpen: true, ms: 0 });
+        continue;
+      }
+
       try {
         const send = (budget) =>
           client.chat({
@@ -289,6 +313,7 @@ export function createReasoner({
           truncated = reply.finishReason === 'length';
         }
 
+        breaker?.success();
         const ms = Date.now() - started;
         store?.record({
           subject,
@@ -318,6 +343,7 @@ export function createReasoner({
         });
       } catch (err) {
         const ms = Date.now() - started;
+        breaker?.failure({ permanent: isPermanentFailure(err), error: err });
         const message = err instanceof ModelError ? `${err.message}${err.body ? ` - ${err.body}` : ''}` : String(err?.message ?? err);
         store?.record({ subject, stage, variant: model, payload: { sample: i, error: message }, ok: false, ms });
         logger?.warn?.(`${stage} sample ${i + 1}/${n} failed: ${message}`);
@@ -366,6 +392,7 @@ export function createReasoner({
     textChain,
     visionChain,
     samplesFor,
+    breakers,
 
     /** Tier 1: reason over the OCR transcript. */
     async solveText({ transcript, parsed }) {

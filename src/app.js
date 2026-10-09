@@ -25,6 +25,7 @@ import { createListener } from './pushbullet/listener.js';
 import { fetchImage as fetchImageImpl, pruneInbox, defaultInboxDir } from './pushbullet/files.js';
 import { createResponder } from './pushbullet/respond.js';
 import { createChatClient } from './model/client.js';
+import { createCircuitBreaker } from './model/breaker.js';
 import { createReasoner } from './solver/reason.js';
 import { createOcrWorker } from './ocr/recognize.js';
 import { solveImage } from './solver/pipeline.js';
@@ -56,11 +57,38 @@ export function buildReasonerFromConfig(config, { llmApiKey, store, logger, crea
     'ordinal-pick': n,
     unknown: n,
   };
+
+  // One breaker per tier. Transitions go to the attempts store (so a silence can be
+  // explained after the fact) and a trip notifies once, here through the logger;
+  // M3 swaps the log line for a desktop notification without touching this logic.
+  const makeBreaker = (name) =>
+    createCircuitBreaker({
+      name,
+      threshold: config.solver.breaker_threshold,
+      cooldownMs: config.solver.breaker_cooldown_sec * 1000,
+      onStateChange: (t) => {
+        store?.record({
+          subject: 'circuit-breaker',
+          stage: 'breaker',
+          variant: name,
+          payload: { from: t.from, to: t.to, reason: t.reason, failures: t.failures, at: t.at },
+          ok: t.to !== 'open',
+        });
+      },
+      onTrip: (t) =>
+        logger?.warn?.(
+          `model tier ${name} circuit opened (${t.reason}); ` +
+            `Tier 0 only for ${config.solver.breaker_cooldown_sec}s`
+        ),
+    });
+  const breakers = { text: makeBreaker('text'), vision: makeBreaker('vision') };
+
   const built = createReasonerImpl({
     client,
     textModel: config.solver.llm_text_model,
     visionModel: config.solver.llm_vision_model,
     sampleCounts,
+    breakers,
     store,
   });
 
@@ -141,6 +169,14 @@ export async function createApp({
   const removed = pruneInbox({ inboxDir: effectiveInbox, retainDays: config.storage.retain_days, now });
   if (removed.length) logger.info(`pruned ${removed.length} inbox file(s) older than ${config.storage.retain_days} day(s)`);
 
+  // Retention is enforced, not just documented. `attempts` hold transcripts, which
+  // are the rows with privacy value; pushes/outbox are the dedupe and duplicate-send
+  // guards and are deliberately kept (DESIGN 8).
+  const prunedAttempts = store.pruneAttempts
+    ? store.pruneAttempts({ retainDays: config.storage.retain_days, now })
+    : 0;
+  if (prunedAttempts) logger.info(`pruned ${prunedAttempts} attempt row(s) older than ${config.storage.retain_days} day(s)`);
+
   if (!providedClient && !pushbulletToken) {
     if (ownsStore) store.close();
     throw new Error(
@@ -189,6 +225,7 @@ export async function createApp({
       subject: push.iden,
       logger,
       useTier0: config.solver.tier0,
+      logImages: config.storage.log_images,
     });
 
     let response;

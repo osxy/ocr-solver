@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Reads Pushbullet puzzle images, solves them, replies with the answer",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.13.0"
   },
   "bin": {
     "puzzlesolver": "src/cli.js"
@@ -17,7 +17,7 @@
     "tesseract.js": "^7.0.0"
   },
   "scripts": {
-    "test": "node --test tests/",
+    "test": "node --test \"tests/**/*.test.js\"",
     "test:unit": "node --test tests/numbers.test.js tests/transcript.test.js tests/puzzle.test.js tests/validate.test.js tests/model-client.test.js tests/reason.test.js tests/pipeline-model.test.js tests/state.test.js",
     "test:corpus": "node --test tests/corpus.test.js",
     "solve": "node src/cli.js",

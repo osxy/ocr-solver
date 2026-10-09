@@ -57,6 +57,11 @@ export const DEFAULTS = {
     llm_vision_model: 'gpt-4o',
     llm_base_url: 'https://api.openai.com/v1',
     offline_only: false,
+    // Circuit breaker per model tier (DESIGN 7). Three consecutive transient failures
+    // trip it; a permanent one (bad key/model/cost tier) trips it immediately. It then
+    // stays open for this many seconds and Tier 0 carries the puzzle alone.
+    breaker_threshold: 3,
+    breaker_cooldown_sec: 600,
   },
   ocr: {
     languages: ['nld'],
@@ -74,6 +79,10 @@ export const DEFAULTS = {
   },
   storage: {
     retain_days: 7,
+    // Image bytes are never written to a log or the attempts table. This only
+    // records a durable reference to the retained image, and only for puzzles that
+    // ended unresolved, so a failure can be looked at later (DESIGN 8).
+    log_images: false,
   },
   ui: {
     tray: true,
@@ -254,6 +263,8 @@ export function validateConfig(raw = {}) {
   requireString(config, 'solver', 'llm_vision_model');
   requireString(config, 'solver', 'llm_base_url');
   requireBoolean(config, 'solver', 'offline_only');
+  requireNumber(config, 'solver', 'breaker_threshold', { min: 1, integer: true });
+  requireNumber(config, 'solver', 'breaker_cooldown_sec', { min: 0 });
 
   requireStringArray(config, 'ocr', 'languages', { nonEmpty: true });
   requireNumber(config, 'ocr', 'min_confidence', { min: 0, max: 100 });
@@ -268,6 +279,7 @@ export function validateConfig(raw = {}) {
   requireNumber(config, 'reply', 'max_per_hour', { min: 0, integer: true });
 
   requireNumber(config, 'storage', 'retain_days', { min: 0 });
+  requireBoolean(config, 'storage', 'log_images');
 
   requireBoolean(config, 'ui', 'tray');
   requireBoolean(config, 'ui', 'notify_on_unresolved');

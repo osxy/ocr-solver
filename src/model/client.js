@@ -7,13 +7,21 @@
  * fake without touching the reasoning logic.
  */
 
+import { redact } from '../redact.js';
+
+export { redact };
+
 export class ModelError extends Error {
-  constructor(message, { status = null, retryable = false, body = null } = {}) {
+  constructor(message, { status = null, retryable = false, body = null, permanent = false } = {}) {
     super(message);
     this.name = 'ModelError';
     this.status = status;
     this.retryable = retryable;
     this.body = body;
+    // A permanent failure is a configuration error (bad key, unknown model, bad
+    // cost tier). It fails immediately and trips the tier's circuit breaker on the
+    // first occurrence rather than waiting for the transient failure budget.
+    this.permanent = permanent;
   }
 }
 
@@ -73,7 +81,10 @@ export function autoRouterPlugin(model, { costTier, allowedModels, excludedModel
   const plugin = { id };
   if (costTier) {
     if (!COST_TIERS.includes(costTier)) {
-      throw new Error(`unknown cost tier ${JSON.stringify(costTier)}; expected one of ${COST_TIERS.join(', ')}`);
+      throw new ModelError(`unknown cost tier ${JSON.stringify(costTier)}; expected one of ${COST_TIERS.join(', ')}`, {
+        retryable: false,
+        permanent: true,
+      });
     }
     plugin.cost_tier = costTier;
   }
@@ -87,15 +98,10 @@ function sleep(ms) {
 }
 
 /**
- * Hide anything that looks like an API key before it reaches a log file.
- * Only a three-character prefix survives, which is enough to tell two keys apart
- * when debugging and far too little to be useful to anyone reading the log.
+ * `redact` now lives in `../redact.js` so the log sink, the state store and this
+ * client share one implementation. Re-exported here because this module's public
+ * surface (and its tests) have always exposed it.
  */
-export function redact(text) {
-  return String(text ?? '')
-    .replace(/(sk-[A-Za-z0-9]{3})[A-Za-z0-9_-]+/g, '$1…')
-    .replace(/(Bearer\s+[A-Za-z0-9]{3})[A-Za-z0-9_-]+/gi, '$1…');
-}
 
 /**
  * Create a chat client.

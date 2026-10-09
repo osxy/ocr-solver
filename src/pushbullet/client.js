@@ -13,7 +13,9 @@
  * Every error body that leaves this module is redacted, because Pushbullet echoes
  * request context back in error messages and the token travels in the headers.
  */
-import { redact } from '../model/client.js';
+import { redactPushbullet } from '../redact.js';
+
+export { redactPushbullet };
 
 export class PushbulletError extends Error {
   constructor(message, { status = null, retryable = false, body = null } = {}) {
@@ -30,17 +32,6 @@ const RETRYABLE_STATUS = new Set([408, 409, 425, 429, 500, 502, 503, 504, 522, 5
 export const DEFAULT_BASE_URL = 'https://api.pushbullet.com';
 export const DEFAULT_STREAM_BASE_URL = 'wss://stream.pushbullet.com';
 const DEFAULT_BASE_HOST = new URL(DEFAULT_BASE_URL).hostname;
-
-/**
- * Redact both OpenAI-style keys (via the shared helper) and Pushbullet tokens.
- * Pushbullet tokens look like `o.GFb9...`, and an error body is exactly where one
- * would otherwise end up in a log file.
- */
-export function redactPushbullet(text) {
-  return redact(String(text ?? ''))
-    .replace(/(o\.[A-Za-z0-9]{3})[A-Za-z0-9]+/g, '$1…')
-    .replace(/(access-token\s*[:=]\s*)([A-Za-z0-9]{3})[A-Za-z0-9._-]*/gi, '$1$2…');
-}
 
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 

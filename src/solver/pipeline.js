@@ -90,6 +90,9 @@ export async function solveImage(worker, image, options = {}) {
     // can. The offline parse is still computed because the transcript feeds the
     // text tier; only its answer is withheld as an opinion.
     useTier0 = true,
+    // `storage.log_images`: image bytes are never stored, but when this is on a
+    // reference to the retained file is recorded for UNRESOLVED puzzles only.
+    logImages = false,
   } = options;
 
   const built = await buildVariants(image, variants);
@@ -248,6 +251,18 @@ export async function solveImage(worker, image, options = {}) {
         disputed,
       },
       ok: answer != null,
+    });
+  }
+
+  // Image-byte policy: bytes are never written to the store or the log. The opt-in
+  // records only a path, and only when the puzzle is still unresolved - a resolved
+  // puzzle has no debugging value and should leave nothing behind.
+  if (store && logImages && answer == null) {
+    store.record({
+      subject,
+      stage: 'image-ref',
+      variant: 'source',
+      payload: { path: String(image) },
     });
   }
 
