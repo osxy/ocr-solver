@@ -225,12 +225,23 @@ async function resolveImage(parsed, { inboxDir, maxBodyBytes, fetchImpl, imageLi
   return saveValidated(await validateImageBuffer(parsed.buffer, { maxBytes: maxBodyBytes, ...imageLimits }));
 }
 
-/** Serialise one pipeline result. `answer` is null when unresolved - never a guess. */
+/**
+ * Serialise one pipeline result. `answer` is null when unresolved - never a guess.
+ *
+ * `requireConfidence` mirrors the Pushbullet responder's policy (#42): an answer
+ * that passed the class validator but was never corroborated is withheld from the
+ * body entirely (not merely flagged), so the HTTP and Pushbullet egresses cannot
+ * disagree about whether it may be sent. The unpicked candidate is deliberately not
+ * echoed under an adjacent field - a caller that could read it would be one line
+ * away from using it.
+ */
 export function formatSolveResponse(
   result,
-  { image, deliver = null, delivered = null, modelNames = {}, unresolvedReply = null } = {}
+  { image, deliver = null, delivered = null, modelNames = {}, unresolvedReply = null, requireConfidence = false } = {}
 ) {
-  const answered = result?.answer != null;
+  const candidate = result?.answer != null;
+  const withheld = candidate && requireConfidence && result?.confident !== true;
+  const answered = candidate && !withheld;
   const method = result?.method ?? null;
   const tier = method?.startsWith('model:') ? method.slice('model:'.length) : answered ? 'tier0' : 'none';
   const escalated = Boolean(result?.model);
@@ -250,7 +261,12 @@ export function formatSolveResponse(
     cost: { escalated, tier, model: consulted },
     opinions: result?.opinions?.map((o) => ({ source: o.source, answer: o.answer })) ?? [],
   };
-  if (!answered) {
+  if (withheld) {
+    // The candidate exists but policy withheld it. No acknowledgement: the
+    // Pushbullet responder stays silent for this case too (DESIGN 4.11), and the
+    // reason tag is enough for a programmatic caller to tell it from "no answer".
+    body.reason = 'unconfirmed';
+  } else if (!answered) {
     body.reason = result?.disputed ? 'tiers disagreed; no answer was sent' : 'no tier produced a valid answer';
     // The structured response is the contract for a programmatic caller; the human
     // acknowledgement is offered as an additional field, never as prose replacing it.
@@ -294,12 +310,24 @@ export function createRateLimiter({ limit, windowMs = 60_000, now = () => Date.n
   };
 }
 
-/** Race a promise against a deadline. The losing solve keeps running and is discarded. */
-export function withTimeout(promise, ms) {
+/**
+ * Race a promise against a deadline. The losing solve keeps running and is
+ * discarded - cancellation mid-Tesseract is not possible, and this helper does not
+ * pretend otherwise. `onTimeout` runs when the deadline wins, which is how HTTP
+ * marks a request abandoned so a *queued* task can still be skipped at dequeue.
+ */
+export function withTimeout(promise, ms, onTimeout = null) {
   if (!Number.isFinite(ms) || ms <= 0) return promise;
   let timer;
   const deadline = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new SolveTimeoutError(ms)), ms);
+    timer = setTimeout(() => {
+      try {
+        onTimeout?.();
+      } catch {
+        // A bookkeeping hook must not turn a clean 504 into a 500.
+      }
+      reject(new SolveTimeoutError(ms));
+    }, ms);
     timer.unref?.();
   });
   return Promise.race([promise, deadline]).finally(() => clearTimeout(timer));
@@ -343,18 +371,27 @@ export function createHttpServer({
       ? { title: config.reply.unresolved_title ?? null, text: config.reply.unresolved_text }
       : null;
   const limiter = createRateLimiter({ limit: http.rate_limit_per_min, now });
+  // `reply.require_confidence` is a policy about answers, not a Pushbullet-only
+  // setting: an answer that passed validation but was never corroborated is withheld
+  // on both egresses (#42). It applies even with `reply.enabled = false`, because that
+  // switch stops sending, it does not change what is safe to send.
+  const requireConfidence = config.reply?.require_confidence === true;
 
-  // One solve at a time, exactly as the Pushbullet listener serialises its queue: a
-  // shared Tesseract worker is not safe to drive concurrently, and ordered processing
-  // keeps the attempts store legible.
-  let queue = Promise.resolve();
-  function enqueue(task) {
-    const run = queue.then(task, task);
-    queue = run.then(
-      () => {},
-      () => {}
-    );
-    return run;
+  // Admission control is the HTTP-specific queue bound (#43). Serialisation is the
+  // core's shared lock; this only decides how many HTTP requests may wait on it. A
+  // caller that stops reading cannot leave an unbounded backlog spending provider
+  // credits after it is gone. Pushbullet and the tray are deliberately exempt - a
+  // push is not retried by a buggy loop and must not be dropped.
+  const maxQueue = http.max_queue;
+  const QUEUE_RETRY_AFTER_SEC = 1;
+  let inflight = 0;
+  function acquireSlot() {
+    if (inflight >= maxQueue) return false;
+    inflight += 1;
+    return true;
+  }
+  function releaseSlot() {
+    inflight = Math.max(0, inflight - 1);
   }
 
   function send(res, status, payload, headers = {}) {
@@ -396,6 +433,17 @@ export function createHttpServer({
 
   async function handleRequest(req, res) {
     const startedAt = now();
+    // `slot` is released either when the core's promise settles (the normal path,
+    // including a timeout that already answered the caller) or, if we never handed
+    // the request to the core, on the way out of an error. Releasing on response
+    // rather than on core settlement would under-count a timed-out queued task.
+    let slot = false;
+    let handedToCore = false;
+    const safeRelease = () => {
+      if (!slot) return;
+      slot = false;
+      releaseSlot();
+    };
     try {
       const url = new URL(req.url ?? '/', 'http://localhost');
       if (url.pathname !== SOLVE_PATH) {
@@ -418,6 +466,19 @@ export function createHttpServer({
         );
       }
 
+      // Checked before the body is read so a full queue is refused without decoding
+      // an image. `429` already means the rate limit, so a full queue is its own
+      // `503` with a `Retry-After`; the two are not conflated.
+      if (!acquireSlot()) {
+        return send(
+          res,
+          503,
+          { error: 'queue_full', retryAfterSec: QUEUE_RETRY_AFTER_SEC },
+          { 'retry-after': String(QUEUE_RETRY_AFTER_SEC) }
+        );
+      }
+      slot = true;
+
       const body = await readBodyCapped(req, http.max_body_bytes);
       const parsed = await classifyRequest(req, body);
       const image = await resolveImage(parsed, {
@@ -428,10 +489,23 @@ export function createHttpServer({
       });
 
       const deliver = parsed.deliver ?? (url.searchParams.get('deliver') || null);
-      const result = await withTimeout(
-        enqueue(() => core.solve(image.path, { subject: image.iden })),
-        http.timeout_ms
-      );
+      // The budget starts at arrival and includes queue wait. What #43 changes is not
+      // the clock but the consequence: a task that has not started when its deadline
+      // passes is skipped at dequeue rather than run in full. Once Tesseract is
+      // running, cancellation is not possible and this does not pretend otherwise.
+      let abandoned = false;
+      const markAbandoned = () => {
+        abandoned = true;
+      };
+      // A client that disconnects before the response is written has stopped waiting.
+      // `res` also emits `close` after a normal `end`; `writableEnded` tells those apart.
+      res.on('close', () => {
+        if (!res.writableEnded) markAbandoned();
+      });
+      const solvePromise = core.solve(image.path, { subject: image.iden, canStart: () => !abandoned });
+      solvePromise.then(safeRelease, safeRelease);
+      handedToCore = true;
+      const result = await withTimeout(solvePromise, http.timeout_ms, markAbandoned);
 
       let delivered = null;
       if (deliver === 'pushbullet') {
@@ -454,14 +528,21 @@ export function createHttpServer({
         }
       }
 
-      const status = result.answer != null ? 200 : 422;
+      const withheld = result.answer != null && requireConfidence && result.confident !== true;
+      const status = result.answer != null && !withheld ? 200 : 422;
       logger?.info?.(
-        `http: ${status} ${result.answer ?? 'unresolved'} in ${now() - startedAt}ms ` +
-          `(${result.method ?? 'no method'}, escalated=${Boolean(result.model)})`
+        `http: ${status} ${withheld ? `withheld-unconfirmed (${result.answer})` : result.answer ?? 'unresolved'} ` +
+          `in ${now() - startedAt}ms (${result.method ?? 'no method'}, escalated=${Boolean(result.model)})`
       );
-      return send(res, status, formatSolveResponse(result, { image, deliver, delivered, modelNames, unresolvedReply }));
+      return send(
+        res,
+        status,
+        formatSolveResponse(result, { image, deliver, delivered, modelNames, unresolvedReply, requireConfidence })
+      );
     } catch (err) {
       return sendError(res, err, startedAt);
+    } finally {
+      if (!handedToCore) safeRelease();
     }
   }
 

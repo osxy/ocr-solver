@@ -207,6 +207,72 @@ test('a 422 omits unresolvedReply when replies are disabled', async (t) => {
 });
 
 // ---------------------------------------------------------------------------
+// #42: require_confidence is an answer policy, not a Pushbullet-only setting
+// ---------------------------------------------------------------------------
+
+// The unpicked candidate is a *policy* withholding, not a validation failure. The
+// HTTP egress must not return it as a solved 200 when the Pushbullet responder would
+// stay silent - two transports disagreeing about the same answer is the defect.
+test('an uncorroborated answer is withheld from HTTP exactly as Pushbullet withholds it (#42)', async (t) => {
+  const core = scriptedCore({ answer: 'drie', confident: false, method: 'tier0:x' });
+  const { url } = await startServer(t, { core });
+  const res = await post(url, { body: await smallPng(), contentType: 'image/png' });
+
+  assert.equal(res.status, 422, res.text);
+  assert.equal(res.json.status, 'unresolved');
+  assert.equal(res.json.answer, null, 'the candidate must not be returned when require_confidence withholds it');
+  assert.equal(res.json.confident, false);
+  assert.equal(res.json.reason, 'unconfirmed');
+  assert.equal(
+    res.json.unresolvedReply,
+    undefined,
+    'a withheld answer gets no acknowledgement, matching the Pushbullet responder'
+  );
+});
+
+test('require_confidence=false returns the uncorroborated answer over HTTP (#42)', async (t) => {
+  const config = validateConfig({
+    http: { enabled: true, bind: '127.0.0.1', port: 0 },
+    reply: { require_confidence: false },
+  }).config;
+  const core = scriptedCore({ answer: 'drie', confident: false, method: 'tier0:x' });
+  const { url } = await startServer(t, { core, config });
+  const res = await post(url, { body: await smallPng(), contentType: 'image/png' });
+
+  assert.equal(res.status, 200, res.text);
+  assert.equal(res.json.answer, 'drie', 'the policy is the only thing withholding it');
+  assert.equal(res.json.confident, false, 'the caller still sees that it is uncorroborated');
+});
+
+test('with deliver=pushbullet an uncorroborated answer is a 422 and the note is suppressed (#42)', async (t) => {
+  const store = memoryStore();
+  t.after(() => store.close());
+  const notes = [];
+  const responder = createResponder({
+    client: {
+      createNote: async () => {
+        notes.push('note');
+        return { iden: 'note-1' };
+      },
+    },
+    store,
+    minIntervalMs: 0,
+  });
+  const core = scriptedCore({ answer: 'drie', confident: false, method: 'tier0:x' });
+  const { url } = await startServer(t, { core, responder });
+  const res = await post(url, {
+    body: JSON.stringify({ image_base64: (await smallPng()).toString('base64'), deliver: 'pushbullet' }),
+    contentType: 'application/json',
+  });
+
+  assert.equal(res.status, 422, res.text);
+  assert.equal(res.json.answer, null);
+  assert.equal(res.json.delivery.sent, false);
+  assert.equal(res.json.delivery.reason, 'unconfirmed');
+  assert.equal(notes.length, 0, 'the responder must not send an uncorroborated answer');
+});
+
+// ---------------------------------------------------------------------------
 // Auth is mandatory
 // ---------------------------------------------------------------------------
 
@@ -792,13 +858,15 @@ function solvedResult() {
 // Claim 1: one solve at a time, because the shared Tesseract worker is not safe
 // to drive concurrently.
 
-test('concurrent POST /v1/solve requests are serialised behind the queue', async (t) => {
+test('concurrent POST /v1/solve requests are serialised by the shared solve lock', async (t) => {
   const delayMs = 60;
   let active = 0;
   let maxActive = 0;
   const trace = [];
-  const core = {
-    solve: async () => {
+  const core = createSolveCore({
+    worker: null,
+    config: validateConfig({}).config,
+    solveImage: async () => {
       active += 1;
       maxActive = Math.max(maxActive, active);
       trace.push(`start:${active}`);
@@ -807,7 +875,7 @@ test('concurrent POST /v1/solve requests are serialised behind the queue', async
       trace.push('end');
       return solvedResult();
     },
-  };
+  });
   const { url } = await startServer(t, { core });
   const bytes = await smallPng();
 
@@ -821,6 +889,34 @@ test('concurrent POST /v1/solve requests are serialised behind the queue', async
   assert.equal(maxActive, 1, `the shared worker was driven ${maxActive} times at once`);
   // Pins the shape too: every solve ends before the next begins, all three ran.
   assert.deepEqual(trace, ['start:1', 'end', 'start:1', 'end', 'start:1', 'end']);
+});
+
+// The lock lives on the core, so an ingress that never touches the HTTP queue - the
+// tray's direct `core.solve`, a Pushbullet push - serialises against HTTP too. Before
+// #44 these ran concurrently on one worker.
+test('a direct core.solve and an HTTP request never solve concurrently (#44)', async (t) => {
+  let active = 0;
+  let maxActive = 0;
+  const core = createSolveCore({
+    worker: null,
+    config: validateConfig({}).config,
+    solveImage: async () => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      active -= 1;
+      return solvedResult();
+    },
+  });
+  const { url } = await startServer(t, { core });
+
+  const viaHttp = post(url, { body: await smallPng(), contentType: 'image/png' });
+  const viaTray = core.solve(join(tmpdir(), 'tray-image.png'), { subject: 'tray' });
+  const [httpRes, trayRes] = await Promise.all([viaHttp, viaTray]);
+
+  assert.equal(httpRes.status, 200, httpRes.text);
+  assert.equal(trayRes.answer, '2');
+  assert.equal(maxActive, 1, `two ingress paths drove the worker ${maxActive} times at once`);
 });
 
 // Claim 2: the response never contains a secret or an upstream error body. The
@@ -939,4 +1035,104 @@ test('a solve that finishes after the 504 is discarded, never delivered or claim
   assert.equal(finished, true, 'the abandoned solve did keep running on the worker');
   assert.equal(claims.length, 0, 'a solve that outlived the timeout must not claim an outbox row');
   assert.equal(notes, 0, 'a solve that outlived the timeout must not send a note');
+});
+
+// ---------------------------------------------------------------------------
+// #43: the queue is bounded, and a task whose deadline passed is not started
+// ---------------------------------------------------------------------------
+
+// The rate limit bounds admission per minute; this bounds the backlog behind the one
+// worker, so a client with retry-on-504 logic cannot queue work that outlives its own
+// wait. `429` is already the rate limit, so a full queue is a distinct `503`.
+test('a request over the HTTP queue bound is a 503 with Retry-After (#43)', async (t) => {
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  let started;
+  const startedP = new Promise((resolve) => {
+    started = resolve;
+  });
+  let solves = 0;
+  const core = {
+    solve: async () => {
+      solves += 1;
+      started();
+      await gate;
+      return solvedResult();
+    },
+  };
+  const { url } = await startServer(t, { core, rawHttp: { max_queue: 1, timeout_ms: 5000 } });
+  const bytes = await smallPng();
+
+  const first = post(url, { body: bytes, contentType: 'image/png' });
+  await startedP; // the slot is definitely held
+
+  const second = await post(url, { body: bytes, contentType: 'image/png' });
+  assert.equal(second.status, 503, second.text);
+  assert.equal(second.json.error, 'queue_full');
+  assert.ok(Number(second.headers.get('retry-after')) >= 1, 'a refusal must say when to come back');
+
+  release();
+  const firstRes = await first;
+  assert.equal(firstRes.status, 200, firstRes.text);
+  assert.equal(solves, 1, 'the refused request must never reach the core');
+});
+
+// The budget starts at arrival and includes queue wait, so a request that expires
+// while the lock is busy must be skipped at dequeue, not run in full (and billed).
+test('a request that expires while queued does not start the solve (#43)', async (t) => {
+  const timeoutMs = 60;
+  let releaseFirst;
+  const gate = new Promise((resolve) => {
+    releaseFirst = resolve;
+  });
+  let firstStarted;
+  const firstStartedP = new Promise((resolve) => {
+    firstStarted = resolve;
+  });
+  let solves = 0;
+  const core = createSolveCore({
+    worker: null,
+    config: validateConfig({}).config,
+    solveImage: async () => {
+      solves += 1;
+      if (solves === 1) {
+        firstStarted();
+        await gate;
+      }
+      return solvedResult();
+    },
+  });
+  const { url } = await startServer(t, { core, rawHttp: { timeout_ms: timeoutMs } });
+  const bytes = await smallPng();
+
+  const first = post(url, { body: bytes, contentType: 'image/png' });
+  await firstStartedP; // the lock is held and the first solve is running
+
+  // Arrives while the lock is held; its 60 ms budget expires in the queue.
+  const second = await post(url, { body: bytes, contentType: 'image/png' });
+  assert.equal(second.status, 504, second.text);
+  assert.equal(second.json.error, 'solve_timeout');
+
+  releaseFirst();
+  await first; // the queued task now reaches the lock and is skipped
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(solves, 1, 'the expired request must not start the pipeline');
+});
+
+// The unit-level seam behind the HTTP behaviour: `canStart` is evaluated at dequeue.
+test('createSolveCore skips a task whose canStart is false at dequeue (#43)', async () => {
+  let calls = 0;
+  const core = createSolveCore({
+    worker: null,
+    config: validateConfig({}).config,
+    solveImage: async () => {
+      calls += 1;
+      return solvedResult();
+    },
+  });
+  const result = await core.solve('/inbox/expired.png', { canStart: () => false });
+  assert.equal(calls, 0, 'the pipeline must not run for a caller that already left');
+  assert.equal(result.skipped, true);
 });

@@ -30,6 +30,7 @@ import {
   DEFAULT_HTTP_BIND,
   DEFAULT_HTTP_PORT,
   DEFAULT_MAX_BODY_BYTES,
+  DEFAULT_MAX_QUEUE,
   DEFAULT_RATE_LIMIT_PER_MIN,
   DEFAULT_TIMEOUT_MS,
 } from './http/defaults.js';
@@ -121,6 +122,10 @@ export const DEFAULTS = {
     // is a 504 rather than a 202 the caller has to poll.
     timeout_ms: DEFAULT_TIMEOUT_MS,
     max_body_bytes: DEFAULT_MAX_BODY_BYTES,
+    // HTTP requests running or waiting on the shared solver at once; over the bound
+    // the request is refused (503 + Retry-After) rather than queued to bill for an
+    // answer nobody is waiting for. See DESIGN 4.15 (#43).
+    max_queue: DEFAULT_MAX_QUEUE,
   },
 };
 
@@ -329,6 +334,7 @@ export function validateConfig(raw = {}) {
   requireNumber(config, 'http', 'rate_limit_per_min', { min: 0, integer: true });
   requireNumber(config, 'http', 'timeout_ms', { min: 0, integer: true });
   requireNumber(config, 'http', 'max_body_bytes', { min: 1, integer: true });
+  requireNumber(config, 'http', 'max_queue', { min: 1, integer: true });
 
   return { config, warnings };
 }
