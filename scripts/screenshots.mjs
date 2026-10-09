@@ -236,19 +236,23 @@ async function main() {
   let replayServer = null;
 
   /**
-   * End the BiDi session exactly once. A second `session.end` after the browser has
-   * already closed the session is never answered, and awaiting it hung this command for
-   * ever (#114) - the hang was here, in `finally`, not in the event loop. Ending it once
-   * lets the process reach its cleanup and exit.
+   * End the BiDi session exactly once, and never wait on it without a bound. A second
+   * `session.end` after the browser has already closed the session is never answered, and
+   * awaiting it hung this command for ever (#114) - the hang was here, in `finally`, not in
+   * the event loop. The bound also covers the error path where `session.new` failed and the
+   * browser may answer nothing at all, so cleanup can always reach its end.
    */
   const endSession = async () => {
     if (sessionEnded || !bidi) return;
     sessionEnded = true;
-    try {
-      await bidi('session.end');
-    } catch {
-      // The session may already be gone; the browser is killed below either way.
-    }
+    await new Promise((resolve) => {
+      const timer = setTimeout(resolve, 2000);
+      const done = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+      bidi('session.end').then(done, done);
+    });
   };
   try {
     worker = await createOcrWorker();
