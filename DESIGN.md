@@ -76,6 +76,8 @@ overturned an initial assumption:
 
 This table is the **acceptance gate**. An answer failing its class validator is never
 sent; it escalates instead. A wrong answer on a rate-limited form is worse than silence.
+An unresolved puzzle is no longer silence either: it gets the acknowledgement of §4.11,
+which is explicitly *not* an answer.
 
 ---
 
@@ -357,11 +359,31 @@ Rules:
 - **Rate limit:** minimum 3 s between outgoing pushes, maximum 20/hour, 429 → back off once.
 - **Answer formatting:** the canonical form from the validator (digits as digits, words
   lowercase). Optional prefix/`**bold**` per config.
-- **Never send an unvalidated answer.** Unresolved puzzles notify locally and stay silent on
-  Pushbullet.
+- **Never send an unvalidated answer.** An *unresolved* puzzle - one where no tier produced
+  a valid answer - is acknowledged with `reply.unresolved_title` / `reply.unresolved_text`:
+  a distinct title and a sentence body that cannot be read as a solution. A guess is still
+  never sent (issue #29).
+- **Dutch first, English second.** The default acknowledgement is Dutch, because the puzzle
+  arrives in Dutch and its sender is the most likely reader; the English line covers an
+  operator or recipient who cannot read Dutch. Both lines are replaceable with
+  `reply.unresolved_text`, so a non-Dutch deployment is a config change, not a fork.
+- **No coalescing.** A burst of unsolvable puzzles produces one acknowledgement each, under
+  the same 3 s minimum interval and 20/hour cap as answers, so the cap can drop some. That
+  is acceptable: the fallback is exactly the old behaviour (silence), and merging replies
+  would either skip the first puzzle of a burst or address one conversation from another.
+- **No templating.** `unresolved_text` is sent literally. A placeholder for the failure
+  reason or the OCR transcript would leak internals into a conversation and add a
+  substitution surface; an operator who wants that detail reads the log or the attempts
+  store.
+- **Idempotent by a marker, not a hash.** An acknowledgement has no answer to key on, so it
+  claims `outbox` under the literal `UNRESOLVED_MARKER` (`"unresolved"`), which no
+  `answerHash()` can produce. A restart or duplicate tickle therefore sends it exactly once,
+  and a later real answer for the same push still gets its own row.
 - **`require_confidence` (default true)** suppresses answers that passed validation but were
   never corroborated, e.g. an offline count whose word list contained an unreadable entry.
-  Setting it false trades accuracy for coverage.
+  This case stays silent - neither the answer nor the acknowledgement - because a candidate
+  exists and the setting deliberately withholds it. Setting it false sends the answer and
+  trades accuracy for coverage.
 - **Pluggable:** the responder is an interface with `sms-thread`, `note-push`, and
   `clipboard+notify` strategies, so switching later is a config change.
 
@@ -421,6 +443,10 @@ enabled = true
 strategy = "note-push"           # note-push | sms-thread | clipboard+notify
 title = "Antwoord"
 prefix = ""
+unresolved_title = "Puzzel niet opgelost"
+unresolved_text = """
+Deze puzzel kon niet automatisch worden opgelost, dus er is geen antwoord gegeven.
+This puzzle could not be solved automatically, so no answer is given."""
 require_confidence = true        # only send answers every tier agreed on
 min_interval_sec = 3
 max_per_hour = 20
@@ -550,6 +576,10 @@ store's rule that logging must never break solving.
   model-escalated request costs provider credits even though it sends nothing.
 - **Cost is labelled, not hidden.** Every response carries `cost: { escalated, tier,
   model }`; a model tier is named in the same payload as the answer.
+- **The unresolved human reply is an extra field, not prose.** A `422` keeps its structured
+  shape (`answer: null`, `reason`) and adds `unresolvedReply: { title, text }` with the
+  configured wording (issue #29), so a programmatic caller can relay it without the
+  response contract becoming a sentence. A `200` response never carries the field.
 
 **Reuse, not reimplementation.** `validateImageBuffer` in `src/pushbullet/files.js` is the
 one size-cap/magic-byte/decode/height gate; `downloadImage` and the HTTP resolver both call
@@ -587,7 +617,7 @@ other user sends image ──▶ Pushbullet
    strict majority of opinions?
         │
         ├── yes ──▶ answer, confident = unanimous
-        └── no  ──▶ unresolved: nothing is sent
+        └── no  ──▶ unresolved: acknowledged, never answered
         │
    outbox insert (idempotent) → note push → notify ✔ → status=solved
 ```
@@ -597,7 +627,8 @@ word list contains unrecognised tokens — is precisely the case most likely to 
 Under a plain ladder it would have been returned unverified simply because it existed. Making
 Tier 0 just another opinion means it can be confirmed, outvoted (`hoofd` from tier0 + vision
 beats a hallucinated text answer), or deadlocked — and a deadlock reports **unresolved**
-rather than guessing. A one-against-one split deliberately sends nothing.
+rather than guessing. A one-against-one split deliberately sends no answer; since #29 it
+sends the unresolved acknowledgement instead of going silent.
 
 **Measured latency:** ~0.3–1.4 s per image offline, including OCR and worker startup
 (see the corpus test timings). A text-tier sample adds roughly 1–3 s and a vision sample

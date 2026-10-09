@@ -168,6 +168,42 @@ test('an unresolved puzzle is a 422 with a reason and a null answer', async (t) 
   assert.equal(res.json.cost.escalated, false);
 });
 
+test('an unresolved 422 carries the human reply as an extra field, never as prose', async (t) => {
+  const config = validateConfig({
+    http: { enabled: true, bind: '127.0.0.1', port: 0 },
+    reply: { unresolved_title: 'Niet gelukt', unresolved_text: 'Kon de puzzel niet lezen.' },
+  }).config;
+  const core = scriptedCore({ answer: null, confident: false, method: null });
+  const { url } = await startServer(t, { core, config });
+  const res = await post(url, { body: await smallPng(), contentType: 'image/png' });
+
+  assert.equal(res.status, 422, res.text);
+  assert.equal(res.json.answer, null, 'the human text must not replace the structured answer field');
+  assert.equal(res.json.status, 'unresolved');
+  assert.deepEqual(res.json.unresolvedReply, { title: 'Niet gelukt', text: 'Kon de puzzel niet lezen.' });
+});
+
+test('a solved 200 does not carry an unresolvedReply field', async (t) => {
+  const { url } = await startServer(t);
+  const res = await post(url, { body: await smallPng(), contentType: 'image/png' });
+
+  assert.equal(res.status, 200, res.text);
+  assert.equal(res.json.unresolvedReply, undefined);
+});
+
+test('a 422 omits unresolvedReply when replies are disabled', async (t) => {
+  const config = validateConfig({
+    http: { enabled: true, bind: '127.0.0.1', port: 0 },
+    reply: { enabled: false },
+  }).config;
+  const core = scriptedCore({ answer: null, confident: false, method: null });
+  const { url } = await startServer(t, { core, config });
+  const res = await post(url, { body: await smallPng(), contentType: 'image/png' });
+
+  assert.equal(res.status, 422, res.text);
+  assert.equal(res.json.unresolvedReply, undefined, 'no human reply exists when replies are off');
+});
+
 // ---------------------------------------------------------------------------
 // Auth is mandatory
 // ---------------------------------------------------------------------------

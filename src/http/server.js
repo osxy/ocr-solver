@@ -235,7 +235,10 @@ async function resolveImage(parsed, { inboxDir, maxBodyBytes, fetchImpl }) {
 }
 
 /** Serialise one pipeline result. `answer` is null when unresolved - never a guess. */
-export function formatSolveResponse(result, { image, deliver = null, delivered = null, modelNames = {} } = {}) {
+export function formatSolveResponse(
+  result,
+  { image, deliver = null, delivered = null, modelNames = {}, unresolvedReply = null } = {}
+) {
   const answered = result?.answer != null;
   const method = result?.method ?? null;
   const tier = method?.startsWith('model:') ? method.slice('model:'.length) : answered ? 'tier0' : 'none';
@@ -257,7 +260,12 @@ export function formatSolveResponse(result, { image, deliver = null, delivered =
     opinions: result?.opinions?.map((o) => ({ source: o.source, answer: o.answer })) ?? [],
   };
   if (!answered) {
-    body.reason = result?.disputed ? 'tiers disagreed; nothing was sent' : 'no tier produced a valid answer';
+    body.reason = result?.disputed ? 'tiers disagreed; no answer was sent' : 'no tier produced a valid answer';
+    // The structured response is the contract for a programmatic caller; the human
+    // acknowledgement is offered as an additional field, never as prose replacing it.
+    if (unresolvedReply && String(unresolvedReply.text ?? '').trim() !== '') {
+      body.unresolvedReply = { title: unresolvedReply.title ?? null, text: String(unresolvedReply.text) };
+    }
   }
   if (image) {
     body.image = { bytes: image.bytes, width: image.width, height: image.height };
@@ -328,6 +336,12 @@ export function createHttpServer({
 
   const http = config.http;
   const modelNames = { text: config.solver?.llm_text_model ?? null, vision: config.solver?.llm_vision_model ?? null };
+  // The acknowledgement a human would receive for an unresolved puzzle. It is reported
+  // even when nothing is delivered, so a caller can relay the same wording.
+  const unresolvedReply =
+    config.reply?.enabled === true && String(config.reply.unresolved_text ?? '').trim() !== ''
+      ? { title: config.reply.unresolved_title ?? null, text: config.reply.unresolved_text }
+      : null;
   const limiter = createRateLimiter({ limit: http.rate_limit_per_min, now });
 
   // One solve at a time, exactly as the Pushbullet listener serialises its queue: a
@@ -428,7 +442,12 @@ export function createHttpServer({
         };
         if (responder) {
           const outcome = await responder.respond(syntheticPush, result);
-          delivered = { sent: outcome.sent === true, reason: outcome.reason ?? null, strategy: outcome.strategy ?? null };
+          delivered = {
+            sent: outcome.sent === true,
+            reason: outcome.reason ?? null,
+            strategy: outcome.strategy ?? null,
+            unresolved: outcome.unresolved === true,
+          };
         } else {
           delivered = { sent: false, reason: 'reply-disabled' };
         }
@@ -439,7 +458,7 @@ export function createHttpServer({
         `http: ${status} ${result.answer ?? 'unresolved'} in ${now() - startedAt}ms ` +
           `(${result.method ?? 'no method'}, escalated=${Boolean(result.model)})`
       );
-      return send(res, status, formatSolveResponse(result, { image, deliver, delivered, modelNames }));
+      return send(res, status, formatSolveResponse(result, { image, deliver, delivered, modelNames, unresolvedReply }));
     } catch (err) {
       return sendError(res, err, startedAt);
     }

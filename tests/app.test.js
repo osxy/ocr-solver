@@ -198,6 +198,29 @@ test('an uncorroborated answer is not sent by default', async (t) => {
   assert.equal(fake.notePushes.length, 0, 'require_confidence=true must suppress it');
 });
 
+test('an unresolved push sends the acknowledgement and the toast reports it', async (t) => {
+  const calls = [];
+  const notifier = { notify: async (n) => calls.push(n) };
+  const { fake, app } = await makeApp(t, {
+    rawConfig: { pushbullet: { poll_interval_sec: 0 } },
+    solve: scriptedSolve({ answer: null, confident: true }),
+    notifier,
+  });
+  await app.start();
+  await waitFor(() => app.listener.connected, { label: 'stream connection' });
+
+  const push = fake.pushImage({ iden: 'app-ack', data: await makePng() });
+  fake.tickle();
+
+  await waitFor(() => fake.notePushes.length === 1, { label: 'one acknowledgement' });
+  await waitFor(() => app.store.getPush(push.iden)?.status === 'unresolved', { label: 'unresolved status' });
+  assert.equal(fake.notePushes[0].title, 'Puzzel niet opgelost');
+  assert.match(fake.notePushes[0].body, /niet automatisch worden opgelost/);
+
+  await waitFor(() => calls.length === 1, { label: 'one notification' });
+  assert.match(calls[0].message, /acknowledgement sent/, 'the toast must not claim silence when a reply went out');
+});
+
 // ---------------------------------------------------------------------------
 // offline_only and the reasoner switch
 // ---------------------------------------------------------------------------
