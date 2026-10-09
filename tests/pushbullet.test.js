@@ -6,7 +6,7 @@
  * so the vertical slice is covered end to end: tickle -> fetch -> download ->
  * validate -> note push.
  */
-import { test } from 'node:test';
+import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -18,7 +18,13 @@ import { startFakePushbullet } from './fake-pushbullet.js';
 import { createOcrWorker } from '../src/ocr/recognize.js';
 import { solveImage } from '../src/solver/pipeline.js';
 import { memoryStore, openStore } from '../src/state/db.js';
-import { createPushbulletClient, PushbulletError, redactPushbullet } from '../src/pushbullet/client.js';
+import {
+  createPushbulletClient,
+  DEFAULT_BASE_URL,
+  DEFAULT_STREAM_BASE_URL,
+  PushbulletError,
+  redactPushbullet,
+} from '../src/pushbullet/client.js';
 import { createListener, WATERMARK_KEY, HISTORY_MODES } from '../src/pushbullet/listener.js';
 import { classifyPush, isCandidatePush } from '../src/pushbullet/filter.js';
 import {
@@ -835,6 +841,41 @@ test('a production stream base URL can be given explicitly', () => {
   });
   assert.equal(client.streamUrl, 'wss://stream.pushbullet.com/websocket/o.secret');
   assert.throws(() => createPushbulletClient({ token: '' }), /token/);
+});
+
+describe('production defaults', () => {
+  test('the constants name the real REST and stream hosts', () => {
+    assert.equal(DEFAULT_BASE_URL, 'https://api.pushbullet.com');
+    assert.equal(DEFAULT_STREAM_BASE_URL, 'wss://stream.pushbullet.com');
+  });
+
+  test('a client with no streamBaseUrl derives the real stream host', () => {
+    // Regression: swapping only the scheme from the default baseUrl used to build
+    // wss://api.pushbullet.com/websocket/<token>, a host that serves no stream.
+    const client = createPushbulletClient({ token: 'o.secret' });
+    assert.equal(client.baseUrl, 'https://api.pushbullet.com');
+    assert.equal(client.streamUrl, 'wss://stream.pushbullet.com/websocket/o.secret');
+  });
+});
+
+test('a non-Pushbullet host derives its own stream URL, so the loopback double keeps working', () => {
+  const loopback = createPushbulletClient({ token: 'o.secret', baseUrl: 'http://127.0.0.1:41234' });
+  assert.equal(loopback.streamUrl, 'ws://127.0.0.1:41234/websocket/o.secret');
+
+  const staging = createPushbulletClient({ token: 'o.secret', baseUrl: 'https://api.staging.example' });
+  assert.equal(staging.streamUrl, 'wss://api.staging.example/websocket/o.secret');
+});
+
+test('an explicit streamBaseUrl wins over the derived default', () => {
+  const production = createPushbulletClient({ token: 'o.secret', streamBaseUrl: 'wss://stream.example.test' });
+  assert.equal(production.streamUrl, 'wss://stream.example.test/websocket/o.secret');
+
+  const loopback = createPushbulletClient({
+    token: 'o.secret',
+    baseUrl: 'http://127.0.0.1:41234',
+    streamBaseUrl: 'ws://127.0.0.1:9',
+  });
+  assert.equal(loopback.streamUrl, 'ws://127.0.0.1:9/websocket/o.secret');
 });
 
 test('redactPushbullet never leaves a usable token in a message', () => {

@@ -29,6 +29,7 @@ const RETRYABLE_STATUS = new Set([408, 409, 425, 429, 500, 502, 503, 504, 522, 5
 
 export const DEFAULT_BASE_URL = 'https://api.pushbullet.com';
 export const DEFAULT_STREAM_BASE_URL = 'wss://stream.pushbullet.com';
+const DEFAULT_BASE_HOST = new URL(DEFAULT_BASE_URL).hostname;
 
 /**
  * Redact both OpenAI-style keys (via the shared helper) and Pushbullet tokens.
@@ -46,11 +47,15 @@ const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 /**
  * The stream lives on a different host than the REST API in production
  * (`api.pushbullet.com` vs `stream.pushbullet.com`). Deriving it from `baseUrl`
- * makes a local stub work with one option instead of two, and the caller can pass
- * `streamBaseUrl` explicitly for the real service.
+ * makes a local stub work with one option instead of two, so the known API host
+ * is mapped explicitly by hostname - swapping only the scheme builds
+ * `wss://api.pushbullet.com/websocket/<token>`, which is the wrong host, and a
+ * string-replace of `api.` would rewrite any host that happens to contain it.
+ * Every other host (the loopback double included) keeps its own name.
  */
 function deriveStreamBaseUrl(baseUrl) {
   const url = new URL(baseUrl);
+  if (url.hostname === DEFAULT_BASE_HOST) return DEFAULT_STREAM_BASE_URL;
   const scheme = url.protocol === 'https:' ? 'wss:' : 'ws:';
   return `${scheme}//${url.host}`;
 }
