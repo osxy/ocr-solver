@@ -114,8 +114,11 @@ Windows or `${XDG_CONFIG_HOME:-~/.config}/puzzlesolver/credentials.json` elsewhe
 { "pushbullet_token": "o.xxxxxxxx", "llm_api_key": "sk-xxxxxxxx" }
 ```
 
-The Pushbullet token is required; without it the service refuses to start. The model
-key is optional: with none, the app runs offline-only (Tier 0). On Windows the
+The Pushbullet token is required. In tray mode a missing token opens the first-run
+prompt (token, optional model key, **Test connection**) and stores what you enter in the
+credential store; cancel it and nothing starts. `--headless` has no prompt, so a missing
+token exits non-zero naming both `PUSHBULLET_TOKEN` and the credential-store file. The
+model key is optional: with none, the app runs offline-only (Tier 0). On Windows the
 Credential Manager is tried before the file, but its provider is **unverified** (see
 [Known limitations](#known-limitations)); the file store is the tested fallback.
 
@@ -254,9 +257,13 @@ folders. Manually: `schtasks /Delete /TN PuzzleSolver /F`, then delete
   Manager, the install/uninstall PowerShell and the packaged `node.exe` are written and
   tested at their seams, but this project is developed on Linux. Treat the first Windows
   install as unverified; `--headless` is the supported fallback.
-- **The first-run setup dialog is not wired.** The credential dialog's logic exists and
-  is tested, but the tray does not present it yet. Configure secrets through the
-  environment or the credential-store file (above).
+- **The first-run setup dialog is a terminal prompt, not a native widget.** In tray mode
+  with no token, startup presents the prompt (Pushbullet token, optional model key,
+  **Test connection**) before the listener starts; a cancelled dialog or a failed save
+  exits without starting. `--headless` never prompts — it exits non-zero naming both
+  `PUSHBULLET_TOKEN` and the credential-store file. The prompt is reached through an
+  injected provider in tests; a graphical tray dialog has never run on a real Windows
+  machine, and the tray-launched (no-console) path has not been exercised there either.
 - **Synthetic accuracy is not real accuracy.** See
   [Check accuracy](#check-accuracy-and-read-the-caveat).
 - **No form typing, no image grids.** It reads an image and replies; it does not act in
@@ -286,7 +293,7 @@ plain ESM.
 
 ```bash
 npm install
-npm test              # 363 tests, offline: no network, no token, no key
+npm test              # 370 tests, offline: no network, no token, no key
 npm run test:unit     # fast subset
 npm run test:corpus   # real images through real OCR, ~4s
 npm run test:live     # opt-in; skips unless LLM_API_KEY is set
