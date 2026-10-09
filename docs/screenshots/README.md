@@ -118,8 +118,8 @@ list in `src/ui/settings.js` — **re-run `npm run screenshots` and commit the r
 A reviewer should open the changed images before merging, because there is no automated
 guard: a browser is deliberately absent from the offline suite.
 
-Current cost in the repository: six PNGs, about **1.2 MiB** total (the two settings
-captures are the largest at roughly 360 KiB each; the topic grouping added height rather
+Current cost in the repository: six PNGs, about **1.1 MiB** (1,181,827 bytes) total (the
+two settings captures are the largest at roughly 355 KiB each; the topic grouping added height rather
 than width). They are committed as PNGs because the
 UI is text and flat colour, which compresses well; keep them under ~500 KiB each by
 adjusting `CAPTURE_WIDTH` in `scripts/screenshots.mjs` rather than by lowering quality.

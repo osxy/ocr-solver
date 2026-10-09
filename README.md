@@ -25,7 +25,7 @@ guess (see [What happens to a puzzle](#what-happens-to-a-puzzle)).
 The web UI — settings, solving an uploaded image, and statistics — is shown in the
 sections below and in [`docs/screenshots/`](./docs/screenshots/README.md), which records
 how the images are regenerated (`npm run screenshots`, needs Firefox) and what to do when
-the UI changes. They cost about **1.2 MiB** in the repository. The UI follows the OS
+the UI changes. They cost about **1.1 MiB** (1,181,827 bytes) in the repository. The UI follows the OS
 light/dark preference and carries a **Light / Dark / Auto** toggle that persists in a
 cookie, with no JavaScript. It is drawn from a single CSS custom-property token layer
 (colour roles, spacing, radii, borders, a type ramp), so both themes and all four pages
@@ -836,7 +836,7 @@ plain ESM.
 
 ```bash
 npm install
-npm test              # 754 tests (748 pass, 6 skip), offline: no network, no token, no key
+npm test              # 758 tests (752 pass, 6 skip), offline: no network, no token, no key
 npm run test:unit     # fast subset
 npm run test:corpus   # real images through real OCR, ~4s
 npm run test:live     # opt-in; skips unless LLM_API_KEY is set
@@ -845,6 +845,12 @@ npm run test:live     # opt-in; skips unless LLM_API_KEY is set
 The Windows package is built by CI (`.github/workflows/package.yml`, on
 `windows-latest`): it assembles `dist\payload`, zips it, checks the checksum and
 smoke-tests the extracted artifact. See `packaging/` and `DESIGN.md` §11.
+
+**The offline suite is known to flake on CI.** It has flaked twice during v0.4 — a
+`corpus.test.js` timeout and a job that hung to its 15-minute limit (tracked as
+[issue #110](https://github.com/osxy/ocr-solver/issues/110)). The corpus suite runs in
+~4 s locally, so a red run is not automatically a flake; rerunning one to get green
+should be stated rather than hidden.
 
 [`AGENTS.md`](./AGENTS.md) holds the repo rules and the test/verification workflow;
 [`DESIGN.md`](./DESIGN.md) is the architecture reference.
