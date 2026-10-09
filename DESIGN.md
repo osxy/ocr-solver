@@ -445,13 +445,35 @@ warns. `ocr.languages` is validated but the bundled traineddata is `nld` only, a
 defaults to `false`; it never writes image bytes anywhere (that is refused at the sinks), it only
 records a durable file reference for puzzles that ended unresolved.
 
-### 4.14 UI & logging ⬜ M3
+### 4.14 UI & logging ✅ M3
 
 - Tray via `systray2`, notifications via `node-notifier`; `--headless` skips both.
 - Menu: **Status / Pause / Solve last image / Open log / Open config / Quit**. "Solve last
   image" re-runs the pipeline on the newest image — essential for tuning without a live push.
 - First run: a small setup dialog (token, key, **Test connection**).
 - Rotating log at `%LOCALAPPDATA%\PuzzleSolver\logs\app.log` (5 MB × 3).
+
+**As built in M3.** The widget and the logic are split so the logic is testable on Linux: the
+`src/ui/tray.js` controller holds the menu, pause/status/solve-last/open/quit actions and the
+watchdog bridge, and `src/ui/tray-systray.js` is a forwarder that only renders `menu()` and
+translates a click back by action id. Pause stops and starts the *listener* rather than the
+process, so the database, worker and icon survive; while paused the watchdog is deliberately
+ignored, because an explicitly paused listener is not a silently dead one. `--headless` is the
+default-off switch at the library level (`runApp` starts no tray unless `tray: true`); the CLI
+turns it on, and `ui.tray = false` or `--headless` vetoes it. Notifications default off at the
+`createApp` layer and are installed by `runApp` only in tray mode, which is what makes
+`--headless` skip them *structurally* rather than by a flag checked at each call site.
+
+**First run** is `src/ui/setup.js`: validation (internal whitespace rejected, a trailing newline
+trimmed), an injected `Test connection` probe per field, and a write through the **existing**
+provider interface — `saveSecrets` calls `provider.set`, which M3 added to the file and
+Credential-Manager providers. There is no second credential file. The Windows dialog itself is
+not built here; its logic is, and that is what is tested.
+
+**Watchdog.** `src/ui/watchdog.js` is a pure, clock-injectable state machine. The listener now
+exposes `lastActivityAt` (advanced by a socket `open`, any stream message, or a completed poll)
+and the tray feeds it in on a timer; ten minutes without evidence flips the icon to grey. The
+signal is contact, not a puzzle, so a quiet week does not look like death.
 
 **As built in M2 leg 2.** The rotating logger already exists; the tray/notifications/setup dialog
 remain M3. On non-Windows platforms the log lives at
@@ -527,7 +549,7 @@ dependencies.
 | Model | `openai` SDK against any OpenAI-compatible base URL | swap providers by config |
 | State | `node:sqlite` | built in, no dependency |
 | Config | `smol-toml` | tiny pure-JS TOML parser |
-| Tray | `systray2` + `node-notifier` | no Electron; ~200 MB saved |
+| Tray | `systray2` + `node-notifier` | no Electron; ~200 MB saved; both declared, both imported lazily (M3) |
 | Secrets | Windows Credential Manager via napi binding | native protection; env fallback for dev |
 | Tests | `node:test` + `node:assert` | built in |
 
@@ -538,6 +560,17 @@ starts the app without a console window, with Node's SEA single-executable as a 
 
 **Rejected:** Electron (hundreds of MB for a tray icon), a Windows Service (cannot show a
 tray icon, harder to debug — and the tray form factor was requested).
+
+**Tray dependency, settled in M3.** `systray2` and `node-notifier` are ordinary
+`dependencies`, not optional and not left to a manual install. The concern was CI: `systray2`
+ships prebuilt `tray_windows_release.exe` / `tray_linux_release` / `tray_darwin_release`
+binaries inside the package and has **no install or build script**, so `npm ci` on Ubuntu only
+downloads and unpacks it — measured here as a clean exit 0. Declaring them is what lets a
+packaging build produce a working payload with `npm ci --omit=dev`. The offline concern is
+handled on the import side instead: both are loaded through dynamic `import()` inside
+`tray-systray.js` / `notifications.js`, so the test suite and `--headless` never load a native
+tray binary, and a missing module produces an actionable `--headless` message rather than a
+stack trace.
 
 ---
 
@@ -622,16 +655,18 @@ captchasolver/
 │  ├─ solver/{lexicon,transcript,numbers,puzzle,validate}.js  ✅
 │  ├─ solver/{prompts,reason,pipeline}.js  model tiers + arbitration  ✅
 │  ├─ state/db.js             node:sqlite attempts log         ✅
-│  ├─ pushbullet/{client,listener,filter,files,respond}.js    ⬜ M2
-│  ├─ ui/{tray,setup-dialog}.js                               ⬜ M3
-│  └─ config.js, secrets.js, logging.js                       ⬜ M2
-├─ tests/                     8 unit files + corpus end-to-end  ✅
-└─ packaging/                 launcher shim, scheduled task    ⬜ M3
+│  ├─ pushbullet/{client,listener,filter,files,respond}.js    ✅
+│  ├─ ui/{tray,setup,watchdog,notifications,icons,mode}.js    ✅ M3
+│  ├─ ui/{tray-systray,open-path}.js   native/platform seam   ✅ M3 (unverified on Windows)
+│  ├─ deploy/{launcher,autostart,install,uninstall}.js        ✅ M3 (install/uninstall unverified)
+│  └─ config.js, secrets.js, logging.js                       ✅
+├─ tests/                     23 unit files + live-model + corpus end-to-end  ✅
+└─ packaging/                 PuzzleSolver.vbs + install/uninstall.ps1  ✅ M3 (unverified)
 ```
 
 ## 10. Testing
 
-**Working now — 100 tests, all passing, none needing a network or an API key:**
+**Working now — 312 tests (306 pass, 6 skip), none needing a network or an API key:**
 
 1. **Offline unit (37):** Dutch number words and compounds including diaereses, all four
    operators, precedence, division by zero; transcript normalisation and every repair rule;
@@ -681,6 +716,16 @@ image bytes never reach the log or the attempts table, and that a key in an upst
 body cannot be stored. `tests/tracked.test.js` fails if any `src/` or `tests/` file on disk
 is not tracked by git — the `secrets.*`-hid-`src/secrets.js` trap can no longer come back.
 
+**M3 tests (offline, credential-free).** `tests/watchdog.test.js` drives the quiet rule with an
+injected clock, including the exact boundary. `tests/tray.test.js` exercises every menu action
+against a fake listener. `tests/tray-systray.test.js` asserts the actionable `--headless` failure
+with an injected loader and the click forwarding with a fake `SysTray`. `tests/deploy.test.js`
+asserts the launcher text, the task XML (20 s delay, restart-on-failure, quoted paths), the
+`schtasks` arguments and the PowerShell content, plus the install/uninstall runners against
+injected fs/spawn. `tests/setup.test.js` covers validation, the connection probes and the real
+credential-file round-trip at mode 0600. The whole suite runs on Linux with no tray, no display
+and no key; what a Windows build would do is listed as unverified in §11.
+
 **Planned:**
 
 7. **Fake Pushbullet:** a local HTTP + WebSocket stub so the full pipeline runs with no token.
@@ -697,6 +742,28 @@ is not tracked by git — the `secrets.*`-hid-`src/secrets.js` trap can no longe
 4. First run: setup dialog → secrets stored → tray icon appears.
 5. Stretch goal: Node SEA single executable. Native `sharp` and the WASM traineddata make
    this fiddly, which is why it is not the primary plan.
+
+**As built in M3.** The task is generated as **XML**, not from `schtasks` switches, because
+`schtasks` has no command-line switch for restart-on-failure — it exists only in the XML schema.
+`src/deploy/autostart.js` builds the XML (logon trigger with `<Delay>PT20S</Delay>`,
+`<RestartOnFailure><Interval>PT1M</Interval><Count>3</Count></RestartOnFailure>`,
+`<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>`, `<ExecutionTimeLimit>PT0S</…>`)
+and the `schtasks /Create|/Delete` argument lists; `src/deploy/launcher.js` builds the `wscript`
+shim. Both are asserted as literal text, with a path that contains spaces. The shim is
+location-independent (everything derives from `WScript.ScriptFullName`), which is why the
+checked-in `packaging/PuzzleSolver.vbs` can be asserted byte-for-byte against the generator.
+
+Install layout: `packaging/install.ps1` locates `%LOCALAPPDATA%\Programs\PuzzleSolver`, copies
+the payload, then hands off to `app/src/deploy/install.js` (run by the bundled `node.exe`) to
+write the shim + XML and call `schtasks`. `packaging/uninstall.ps1` delegates the task deletion
+the same way, then removes the three per-user folders. All path and task decisions live in the
+Node modules; the PowerShell is locator/launcher glue.
+
+**Unverifiable on the Linux development host:** `wscript` execution, `schtasks` registration and
+restart-on-failure behaviour, the Credential-Manager `set`, the `_ps1` scripts end to end,
+Explorer opening a log, and the actual tray widget. Every one of those has a testable seam
+(content, arguments or an injected loader) which is asserted; the native execution is not, and is
+labelled as such in each module.
 
 ## 12. Extension points (v2+)
 

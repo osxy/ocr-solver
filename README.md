@@ -33,8 +33,19 @@ Measured against a real provider on the real corpus images (`scripts/live-eval.j
 | Text model, on transcripts carrying real OCR errors | **3/3** |
 | Vision model, OCR suppressed — reads the raw noisy 44px puzzle | **3/3** |
 
-Not built yet: the Pushbullet listener, the reply path, and the Windows
-packaging/tray (M2–M3).
+M2 (Pushbullet listener, reply path, state, config/secrets) is complete. M3 adds the
+tray app with `--headless` mode, the quiet-listener watchdog, first-run secret setup,
+autostart and the Windows install/uninstall scripts under [`packaging/`](./packaging).
+The M3 logic is tested offline; the native Windows execution (`wscript`, `schtasks`,
+the Credential Manager, the tray widget) is unverified on Linux.
+
+```bash
+# run the service with the tray (Windows default)
+puzzlesolver listen
+
+# run unattended: no tray, no notifications
+puzzlesolver listen --headless
+```
 
 ## Quick start
 

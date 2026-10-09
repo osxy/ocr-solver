@@ -90,6 +90,11 @@ export function createListener({
   let reconnects = 0;
   let lastTickleAt = null;
   let lastMessageAt = null;
+  // Evidence the listener is alive, in `now()` seconds. The M3 watchdog greys the
+  // tray icon when this stops advancing for 10 minutes, so it updates on *any*
+  // successful contact - a stream message, a socket open, or a completed poll -
+  // rather than only on a push. A week with no puzzles must not look like death.
+  let lastActivityAt = null;
 
   // One serial queue. A tickle that arrives while a poll is running is queued
   // behind it rather than racing it, so no push is skipped and state stays ordered.
@@ -194,6 +199,7 @@ export function createListener({
       // The watermark advances per push (inside handlePushOnce), so a crash
       // halfway through a batch only replays pushes whose rows do not exist yet.
     }
+    lastActivityAt = now();
     return { fetched: ordered.length, processed };
   }
 
@@ -230,11 +236,13 @@ export function createListener({
     socket.addEventListener('open', () => {
       reconnectAttempts = 0;
       reconnectTimer = null;
+      lastActivityAt = now();
       logger?.info?.('pushbullet stream connected');
     });
 
     socket.addEventListener('message', (event) => {
       lastMessageAt = now();
+      lastActivityAt = now();
       let message;
       try {
         message = JSON.parse(typeof event.data === 'string' ? event.data : String(event.data));
@@ -314,6 +322,7 @@ export function createListener({
       reconnects,
       lastTickleAt,
       lastMessageAt,
+      lastActivityAt,
       watermark,
       historyMode,
     };

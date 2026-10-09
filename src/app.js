@@ -16,6 +16,8 @@
  * no token, no key and no network.
  */
 import { homedir as osHomedir } from 'node:os';
+import { readdirSync, statSync } from 'node:fs';
+import { join, basename, extname } from 'node:path';
 import { loadConfig, defaultStatePath } from './config.js';
 import { loadSecrets, describeSecret } from './secrets.js';
 import { createLogger, defaultLogPath } from './logging.js';
@@ -29,6 +31,8 @@ import { createCircuitBreaker } from './model/breaker.js';
 import { createReasoner } from './solver/reason.js';
 import { createOcrWorker } from './ocr/recognize.js';
 import { solveImage } from './solver/pipeline.js';
+import { createNotifier } from './ui/notifications.js';
+import { resolveTrayMode } from './ui/mode.js';
 
 /**
  * Build one reasoner from config, or `null` when the model tiers are off.
@@ -122,6 +126,9 @@ export async function createApp({
   reasoner: providedReasoner = undefined,
   responder: providedResponder = null,
   listener: providedListener = null,
+  // M3: notifications default off. `runApp` installs the real notifier only in tray
+  // mode, so `--headless` leaves this null and nothing can toast.
+  notifier = null,
   fetchImage = fetchImageImpl,
   solveImage: solveImageImpl = solveImage,
   createWorker = createOcrWorker,
@@ -147,6 +154,8 @@ export async function createApp({
     for (const warning of loaded.warnings) logger.warn(warning);
     logger.info(loaded.loaded ? `config loaded from ${loaded.path}` : `no config file at ${loaded.path}; using defaults`);
   }
+
+  let notificationSink = notifier;
 
   const secrets = await loadSecrets({
     explicit: explicitSecrets,
@@ -240,7 +249,61 @@ export async function createApp({
     // the leg-1 vertical slice. With replies disabled a local answer is still solved.
     const solved = result.answer != null && (responder ? response.sent === true : true);
     handlerStore?.setPushStatus(push.iden, solved ? 'solved' : 'unresolved');
+
+    // An unresolved puzzle is the one outcome worth a toast: a solved one needs no
+    // attention, and a wrong answer is never sent (DESIGN 7). Headless mode passes
+    // no notifier, so it stays completely silent.
+    if (!solved && config.ui.notify_on_unresolved && notificationSink) {
+      await notificationSink.notify?.({
+        title: 'PuzzleSolver: unresolved',
+        message: `${basename(image.path)} - no corroborated answer, nothing sent`,
+      });
+    }
     return { image, result, response };
+  }
+
+  const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.bmp', '.webp', '.tif', '.tiff', '.gif']);
+
+  /** Newest image in the inbox, or null. Drives the tray's "Solve last image". */
+  function lastImagePath() {
+    let names;
+    try {
+      names = readdirSync(effectiveInbox);
+    } catch {
+      return null;
+    }
+    let best = null;
+    for (const name of names) {
+      if (!IMAGE_EXT.has(extname(name).toLowerCase())) continue;
+      const path = join(effectiveInbox, name);
+      let stat;
+      try {
+        stat = statSync(path);
+      } catch {
+        continue;
+      }
+      if (!stat.isFile()) continue;
+      if (!best || stat.mtimeMs > best.mtimeMs) best = { path, mtimeMs: stat.mtimeMs };
+    }
+    return best?.path ?? null;
+  }
+
+  /** Solve the newest inbox image without replying - for tuning without a push. */
+  async function solveLastImage() {
+    const path = lastImagePath();
+    if (!path) return { answer: null, reason: 'no-image', imagePath: null };
+    const result = await solveImageImpl(worker, path, {
+      variants: config.ocr.variants,
+      minConfidence: config.ocr.min_confidence,
+      reasoner,
+      store,
+      subject: basename(path),
+      logger,
+      useTier0: config.solver.tier0,
+      logImages: config.storage.log_images,
+    });
+    logger?.info?.(`tray: re-solved ${basename(path)} -> ${result.answer ?? 'unresolved'}`);
+    return { ...result, imagePath: path, reason: result.answer == null ? 'unresolved' : 'solved' };
   }
 
   const listener =
@@ -305,6 +368,15 @@ export async function createApp({
     inboxDir: effectiveInbox,
     secrets: { pushbullet: describeSecret(secrets.pushbullet), llm: describeSecret(secrets.llm) },
     handlePush,
+    lastImagePath,
+    solveLastImage,
+    /** Install/replace the notification sink; `null` disables toasts. */
+    setNotifier(next) {
+      notificationSink = next;
+    },
+    get notifier() {
+      return notificationSink;
+    },
     start,
     stop,
     status,
@@ -318,11 +390,22 @@ export async function createApp({
 export async function runApp(options = {}) {
   const app = await createApp(options);
   let closing = false;
+  let tray = null;
+
+  // The tray is opt-in at this API level (`tray: true`) and the CLI turns it on by
+  // default. `ui.tray = false` in the config can still veto it. Keeping the default
+  // off here is what lets tests and the corpus run drive runApp without a display.
+  const wantTray = resolveTrayMode({ requested: options.tray === true, configTray: app.config.ui.tray });
 
   const shutdown = async (signal) => {
     if (closing) return;
     closing = true;
     app.logger?.info?.(`received ${signal}; shutting down`);
+    try {
+      await tray?.stop?.();
+    } catch {
+      // a dead tray must not block shutdown
+    }
     try {
       await app.stop();
     } finally {
@@ -333,6 +416,26 @@ export async function runApp(options = {}) {
   process.once('SIGINT', () => void shutdown('SIGINT'));
   process.once('SIGTERM', () => void shutdown('SIGTERM'));
 
+  if (wantTray) {
+    // Tray mode gets the real notifier. Building it is free (the node-notifier import
+    // is lazy inside it), but it is only ever wired here, so --headless and every
+    // test leave it null.
+    app.setNotifier(createNotifier({ logger: app.logger }));
+    // Imported lazily so a machine without `systray2` (and every non-tray run) never
+    // loads it. `TrayUnavailableError` carries the actionable `--headless` message.
+    const { startTray } = await import('./ui/tray-systray.js');
+    tray = await startTray({
+      app,
+      logger: app.logger,
+      quietMs: options.quietMs,
+      openPath: options.openPath,
+      solveLastImage: options.solveLastImage ?? app.solveLastImage,
+      quit: () => shutdown('tray'),
+    });
+    app.logger?.info?.('tray started');
+  }
+
   await app.start();
+  app.tray = tray;
   return app;
 }

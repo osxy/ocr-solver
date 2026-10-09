@@ -450,6 +450,29 @@ test('the watermark advances, survives a restart and blocks a replayed push', as
   second.close();
 });
 
+test('lastActivityAt advances on a successful poll - the M3 watchdog signal', async (t) => {
+  const fake = await startFakePushbullet();
+  t.after(() => fake.close());
+
+  let clock = 1_000;
+  const client = createPushbulletClient({ token: fake.token, baseUrl: fake.baseUrl, sleep: fake.clock.sleep });
+  // Deliberately *no* `start()`: connecting would open a socket whose `open` event
+  // also stamps lastActivityAt, and the test would then pass even if the poll never
+  // did. Only `poll()` may touch it here.
+  const listener = createListener({
+    client,
+    historyMode: 'ignore',
+    pollIntervalMs: 0,
+    now: () => clock,
+  });
+  t.after(() => listener.stop());
+
+  assert.equal(listener.status().lastActivityAt, null, 'nothing has happened yet');
+  clock = 2_000;
+  await listener.poll();
+  assert.equal(listener.status().lastActivityAt, 2_000, 'the watchdog must see the successful poll');
+});
+
 test('history_mode "ignore" does not answer a pre-existing backlog but catches new pushes', async (t) => {
   const { fake, listener, store, outcome } = await makeHarness(t, { historyMode: 'ignore' });
   const old = fake.pushImage({ data: await makePng() });

@@ -16,6 +16,7 @@ import sharp from 'sharp';
 import { startFakePushbullet } from './fake-pushbullet.js';
 import { createApp, buildReasonerFromConfig, runApp } from '../src/app.js';
 import { validateConfig } from '../src/config.js';
+import { defaultLogPath } from '../src/logging.js';
 import { createPushbulletClient } from '../src/pushbullet/client.js';
 
 const realSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -70,6 +71,7 @@ async function makeApp(t, { rawConfig = {}, solve = scriptedSolve(), reasoner = 
   const worker = { terminated: false, async terminate() { this.terminated = true; } };
 
   const app = await createApp({
+    ...overrides,
     config: overrides.config ?? validateConfig(rawConfig).config,
     env: {},
     providers: [],
@@ -427,4 +429,152 @@ test('runApp installs SIGINT/SIGTERM handlers and starts listening', async (t) =
 
   // Silence the "open handle" warning the (now detached) listener would cause.
   await running.stop();
+});
+
+// ---------------------------------------------------------------------------
+// M3: solve-last, the notifier sink and the wired log path
+// ---------------------------------------------------------------------------
+
+test('solveLastImage runs the pipeline on the newest inbox image', async (t) => {
+  const fake = await startFakePushbullet();
+  const dir = mkdtempSync(join(tmpdir(), 'puzzlesolver-app-'));
+  const inboxDir = join(dir, 'inbox');
+  mkdirSync(inboxDir, { recursive: true });
+  t.after(async () => {
+    await fake.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  writeFileSync(join(inboxDir, 'older.png'), 'old');
+  writeFileSync(join(inboxDir, 'newest.png'), 'new');
+  // Must be recent: createApp prunes anything older than retain_days on startup,
+  // so 1970 mtimes would be deleted before solveLastImage ever looked.
+  const nowMs = Date.now();
+  utimesSync(join(inboxDir, 'older.png'), new Date(nowMs - 10_000), new Date(nowMs - 10_000));
+  utimesSync(join(inboxDir, 'newest.png'), new Date(nowMs), new Date(nowMs));
+
+  const seen = [];
+  const app = await createApp({
+    config: validateConfig({}).config,
+    env: {},
+    providers: [],
+    client: fakeClient(fake),
+    reasoner: null,
+    solveImage: async (_worker, file) => {
+      seen.push(file);
+      return { answer: '7', solved: true, method: 'tier0:arithmetic', unresolved: false };
+    },
+    createWorker: async () => ({ terminate: async () => {} }),
+    inboxDir,
+    statePath: join(dir, 'state.db'),
+    logger: collectingLogger(),
+  });
+  t.after(() => app.stop());
+
+  const result = await app.solveLastImage();
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0], join(inboxDir, 'newest.png'), 'the newest image must win, not the first readdir entry');
+  assert.equal(result.answer, '7');
+  assert.equal(result.reason, 'solved');
+});
+
+test('solveLastImage says so when the inbox is empty', async (t) => {
+  const fake = await startFakePushbullet();
+  const dir = mkdtempSync(join(tmpdir(), 'puzzlesolver-app-'));
+  const inboxDir = join(dir, 'inbox');
+  mkdirSync(inboxDir, { recursive: true });
+  t.after(async () => {
+    await fake.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const app = await createApp({
+    config: validateConfig({}).config,
+    env: {},
+    providers: [],
+    client: fakeClient(fake),
+    reasoner: null,
+    solveImage: scriptedSolve(),
+    createWorker: async () => ({ terminate: async () => {} }),
+    inboxDir,
+    statePath: join(dir, 'state.db'),
+    logger: collectingLogger(),
+  });
+  t.after(() => app.stop());
+  assert.deepEqual(await app.solveLastImage(), { answer: null, reason: 'no-image', imagePath: null });
+});
+
+test('an unresolved push notifies the sink in tray mode, and nothing is notified without one', async (t) => {
+  const calls = [];
+  const notifier = { notify: async (n) => calls.push(n) };
+  const { fake, app } = await makeApp(t, {
+    rawConfig: { pushbullet: { poll_interval_sec: 0 } },
+    solve: scriptedSolve({ answer: '2', confident: false }),
+    notifier,
+  });
+  await app.start();
+  await waitFor(() => app.listener.connected, { label: 'stream connection' });
+
+  const push = fake.pushImage({ iden: 'app-notify', data: await makePng() });
+  fake.tickle();
+  await waitFor(() => app.store.getPush(push.iden)?.status === 'unresolved', { label: 'unresolved status' });
+  await waitFor(() => calls.length === 1, { label: 'one notification' });
+  assert.match(calls[0].title, /unresolved/);
+  assert.match(calls[0].message, /nothing sent/);
+
+  // With the sink removed (the --headless default) the same push sends nothing.
+  app.setNotifier(null);
+  const second = fake.pushImage({ iden: 'app-notify-2', data: await makePng() });
+  fake.tickle();
+  await waitFor(() => app.store.getPush(second.iden)?.status === 'unresolved', { label: 'second unresolved' });
+  await realSleep(50);
+  assert.equal(calls.length, 1, 'a null sink must not notify');
+});
+
+test('createApp defaults to no notifier; runApp installs one only in tray mode', async (t) => {
+  const fake = await startFakePushbullet();
+  const dir = mkdtempSync(join(tmpdir(), 'puzzlesolver-app-'));
+  t.after(async () => {
+    await fake.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const app = await createApp({
+    config: validateConfig({}).config,
+    env: {},
+    providers: [],
+    client: fakeClient(fake),
+    reasoner: null,
+    createWorker: async () => ({ terminate: async () => {} }),
+    inboxDir: join(dir, 'inbox'),
+    statePath: join(dir, 'state.db'),
+    logger: collectingLogger(),
+  });
+  t.after(() => app.stop());
+  assert.equal(app.notifier, null, 'the default must not be able to toast on a headless server');
+});
+
+test('createApp wires the platform default log path when no logger is injected', async (t) => {
+  const fake = await startFakePushbullet();
+  const dir = mkdtempSync(join(tmpdir(), 'puzzlesolver-app-'));
+  t.after(async () => {
+    await fake.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const env = { LOCALAPPDATA: 'C:\\Users\\Andre\\AppData\\Local' };
+  const app = await createApp({
+    config: validateConfig({}).config,
+    platform: 'win32',
+    env,
+    homedir: () => 'C:\\Users\\Andre',
+    providers: [],
+    client: fakeClient(fake),
+    reasoner: null,
+    createWorker: async () => ({ terminate: async () => {} }),
+    inboxDir: join(dir, 'inbox'),
+    statePath: join(dir, 'state.db'),
+    // No logger: the app must build the default one.
+  });
+  t.after(() => app.stop());
+  const expected = defaultLogPath({ platform: 'win32', env, homedir: () => 'C:\\Users\\Andre' });
+  assert.equal(app.logger.path, expected, 'the real default path must be wired, not a test path');
+  assert.equal(app.logger.path, join('C:\\Users\\Andre\\AppData\\Local', 'PuzzleSolver', 'logs', 'app.log'));
 });
