@@ -733,6 +733,20 @@ before a lazy image has painted. The solve page is the one page whose result onl
 after a `POST`; its captured response body *and* headers are replayed over loopback HTTP, so
 it is still a real HTTP document rather than a `file://` one.
 
+**The screenshot fixture is a function of a fixed clock, and the command exits by itself (issue #114).**
+Two defects made `npm run screenshots` unusable as a non-interactive guard. Its `finally`
+called `session.end` a second time after the `try` had already ended the session; a duplicate
+BiDi `session.end` is never answered, so the process awaited it for ever (all six `wrote …`
+lines appeared, then nothing). It now ends the session exactly once, closes the BiDi
+`WebSocket` with a bound, and lets the event loop drain instead of calling `process.exit()`
+before writes have flushed. The fixture history was seeded relative to `Date.now()`, so every
+run produced a byte-different `statistics.png` / `statistics-dark.png` and a real UI change was
+indistinguishable from clock noise; the fixture now derives every timestamp from a fixed
+`FIXTURE_NOW` in `scripts/screenshot-fixture.mjs`, a pure function of the instant it is handed
+asserted offline by `tests/screenshots-fixture.test.js`. `solve.png` is the deliberate
+exception: it shows a genuine solve with that run's real duration, and
+`docs/screenshots/README.md` names it as the one file expected to differ on a re-run.
+
 **The upgrade review registry (issue #67).** A new release can add a setting an existing install
 silently never sees. The enabling change is a `since` field on each descriptor in
 `src/ui/settings.js` — the release that introduced the setting — and `securityRelevant` for a
