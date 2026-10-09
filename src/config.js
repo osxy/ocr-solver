@@ -116,6 +116,10 @@ export const DEFAULTS = {
   ui: {
     tray: true,
     notify_on_unresolved: true,
+    // How many recent solves the statistics page lists. Bounded at both ends: an
+    // unbounded limit is a way to dump the attempts table or hang a page load. The
+    // page renders whatever is stored and never re-polls (issue #64).
+    stats_recent_solves: 5,
   },
   // The shared image gate. Both ingresses run it, so its limits are neither
   // Pushbullet-only nor HTTP-only. Byte size and height keep their existing defaults
@@ -395,6 +399,7 @@ export function validateConfig(raw = {}) {
 
   requireBoolean(config, 'ui', 'tray');
   requireBoolean(config, 'ui', 'notify_on_unresolved');
+  requireNumber(config, 'ui', 'stats_recent_solves', { min: 1, max: 100, integer: true });
 
   requireString(config, 'web_ui', 'bind');
   const bindProblem = imageUrlHostProblem(config.web_ui.bind);

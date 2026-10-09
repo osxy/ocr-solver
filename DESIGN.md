@@ -478,6 +478,7 @@ max_pixels = 1000000             # gate: more decoded pixels are a 413
 [ui]
 tray = true
 notify_on_unresolved = true
+stats_recent_solves = 5       # bounded 1-100; how many solves the statistics page lists
 ```
 
 **Secrets are never written to `config.toml`.** The Pushbullet token, the model key and the
@@ -722,6 +723,23 @@ with the statistics page by construction. An unresolved or withheld answer shows
 wording and never a guess, so the one invariant holds on this egress too. The admission counter itself
 moved into `createSolveCore` so the HTTP ingress and the solve page meter the same bound; a scripted
 test core without slots falls back to a local counter.
+
+**The statistics page is read-only and honest about what the numbers are.** `GET /stats` (issue
+#64) reads the recorded `attempts` store and renders it, behind the same single access gate as
+every other route and with no POST branch, so a write is unreachable from the page. It does not
+run `storeReport`'s old shape, which called `attemptsFor` for every subject (O(subjects x attempts));
+instead `store.latestValidationRows()` reduces to one SQL-aggregated row per subject and
+`store.recentSolves(limit)` is a `LIMIT`ed query backed by a new `idx_attempts_created_at` index
+(the only index was on `subject`). The totals therefore come from SQL aggregation plus the shared
+`buildReport`/`summarize`, not a second implementation of the same numbers. The page lists the last
+`ui.stats_recent_solves` (default 5, bounded 1-100) solves and passes each stored verdict through
+`formatSolveResponse`, the same serialiser the solve page uses, so answer/method/confidence/reason
+cannot drift between the two pages. Recorded traffic (real, no ground truth, headlined as the
+sent-able rate) and the offline corpus (our own generated fixtures) are rendered as **two separate
+labelled figures** and are never blended; the corpus is called a regression guard, not real-world
+accuracy. The page names the `storage.retain_days` window so a moving window does not look like
+vanished data, refreshes only on request (no auto-poll), and never renders the OCR transcript or
+image bytes, which stay debugging detail behind the store's policy.
 
 **The terminal path is unchanged and a failed UI does not take the tray down.** `runApp`'s default
 `settingsDialog` is `defaultWebSettingsDialog`, but an injected dialog still wins, so the reachability

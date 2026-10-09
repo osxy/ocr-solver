@@ -755,3 +755,13 @@ test('#69: CRLF line endings are preserved outside the changed line', async (t) 
   const after = readFileSync(path, 'utf8');
   assert.equal(after, '# note\r\n[http]\r\nport = 9999  # inline\r\nenabled = true\r\n');
 });
+
+test('ui.stats_recent_solves is a bounded integer in the editor too (#64)', (t) => {
+  const { editor } = makeEditor(t);
+  for (const bad of ['0', '-1', '1.5', '101', 'five']) {
+    assert.throws(() => editor.set('ui.stats_recent_solves', bad), SettingValueError, `${bad} must be rejected`);
+  }
+  assert.equal(editor.set('ui.stats_recent_solves', '25').value, 25);
+  assert.equal(editor.set('ui.stats_recent_solves', '1').value, 1);
+  assert.equal(editor.set('ui.stats_recent_solves', '100').value, 100);
+});

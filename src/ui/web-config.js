@@ -46,6 +46,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 
 import { DEFAULT_MAX_BODY_BYTES } from '../http/defaults.js';
 import { DEFAULT_MAX_HEIGHT, DEFAULT_MIN_HEIGHT } from '../imaging/limits.js';
+import { percent, storeRecentSolves, storeStats } from '../accuracy.js';
 import { createAuthThrottle } from '../http/throttle.js';
 import { openPath } from './open-path.js';
 import { createSetupSettingsController, getSetting, parseSettingValue, serializeSettingValue } from './settings.js';
@@ -187,7 +188,8 @@ export function renderSettingsPage({ items, session, configPath = null, credenti
   ].join('');
   const body =
     banners +
-    `<p><a href="/solve?session=${escapeHtml(session)}">Solve an uploaded image &rarr;</a></p>` +
+    `<p><a href="/solve?session=${escapeHtml(session)}">Solve an uploaded image &rarr;</a> ` +
+    `<a href="/stats?session=${escapeHtml(session)}">Statistics &rarr;</a></p>` +
     `<form method="post" action="/save"><input type="hidden" name="session" value="${escapeHtml(session)}">` +
     `<table><thead><tr><th>Setting</th><th>Value</th><th>Current</th><th></th></tr></thead><tbody>${rows.join('')}</tbody></table>` +
     `<div class="actions"><button type="submit">Save</button>` +
@@ -226,6 +228,138 @@ export function renderSolvePage({ session, result = null, timingMs = null, error
     '<input type="file" name="image" accept="image/*" required> ' +
     '<button type="submit">Solve</button></form>';
   return page({ body: banners + form + outcome, configPath, credentialPath });
+}
+
+function formatWhen(at) {
+  if (at == null || !Number.isFinite(Number(at))) return 'unknown';
+  return new Date(Number(at) * 1000)
+    .toISOString()
+    .replace('T', ' ')
+    .replace(/\.\d+Z$/, ' UTC');
+}
+
+/**
+ * One recorded solve's delivery verdict. The reason comes from the responder row
+ * when there is one, otherwise from `formatSolveResponse`'s own reason, so the page
+ * and the solve page name the same cause. `sent === null` means no responder row was
+ * recorded (an HTTP or CLI solve), not that nothing was sent (#64).
+ */
+export function deliveryLabel(row) {
+  if (row.sent === true) return 'sent';
+  const reason = row.respondReason ?? row.reason ?? 'no valid answer';
+  // A responder records `sent: false` both for a withheld candidate and for an
+  // unresolved puzzle. The answer field is what tells them apart.
+  if (row.answer == null) return `nothing sent - ${reason}`;
+  if (row.sent === false || row.reason === 'unconfirmed') return `withheld - ${reason}`;
+  return 'answer recorded (no reply path recorded)';
+}
+
+function summaryRows(group) {
+  return Object.entries(group ?? {})
+    .sort()
+    .map(([name, summary]) =>
+      `<tr><th>${escapeHtml(name)}</th><td>${summary.seen}</td><td>${summary.valid}</td>` +
+      `<td>${summary.withheld}</td><td>${summary.sentable}/${summary.seen} (${escapeHtml(percent(summary.sentableRate))})</td></tr>`
+    )
+    .join('');
+}
+
+function summaryTable(title, group) {
+  const rows = summaryRows(group);
+  if (!rows) return '';
+  return (
+    `<h3>${escapeHtml(title)}</h3>` +
+    '<table><thead><tr><th></th><th>seen</th><th>solved</th><th>withheld</th><th>sent-able</th></tr></thead>' +
+    `<tbody>${rows}</tbody></table>`
+  );
+}
+
+/**
+ * The statistics page. Read-only by construction: it takes already-read data and a
+ * session token, and has no store, controller or POST target. Exported so a test can
+ * assert the numbers and labels without an HTTP server.
+ */
+export function renderStatsPage({
+  session,
+  recent = [],
+  stats = null,
+  corpusReport = null,
+  retainDays = null,
+  error = null,
+  configPath = null,
+  credentialPath = null,
+}) {
+  const banners = error ? `<div class="banner error"><strong>Rejected:</strong> ${escapeHtml(error)}</div>` : '';
+
+  const recentRows = recent
+    .map(
+      (row) =>
+        '<tr>' +
+        `<td>${escapeHtml(formatWhen(row.at))}</td>` +
+        `<td><code>${escapeHtml(row.subject)}</code></td>` +
+        `<td>${row.answer == null ? '<em>none</em>' : escapeHtml(row.answer)}</td>` +
+        `<td>${escapeHtml(row.method ?? 'none')}</td>` +
+        `<td>${escapeHtml(deliveryLabel(row))}</td>` +
+        `<td>${row.ms == null ? 'unknown' : `${Math.round(Number(row.ms))} ms`}</td>` +
+        `<td>${row.confident === true ? 'true' : 'false'}</td>` +
+        '</tr>'
+    )
+    .join('');
+  const recentTable = recentRows
+    ? '<table><thead><tr><th>when</th><th>puzzle</th><th>answer</th><th>method</th><th>sent / withheld</th><th>took</th><th>confident</th></tr></thead>' +
+      `<tbody>${recentRows}</tbody></table>`
+    : '<p class="display">No recorded solves yet.</p>';
+
+  // Recorded traffic and the offline corpus are two different populations. They are
+  // rendered in two separate sections and are never added, averaged or compared to
+  // produce one headline (#49, #64).
+  const traffic = stats?.traffic ?? null;
+  const overall = traffic?.overall ?? null;
+  const unresolved = overall ? overall.seen - overall.valid : 0;
+  const trafficSection = overall
+    ? `<h2>Recorded traffic (real)</h2>` +
+      '<p>Every puzzle the app actually saw, from the <code>attempts</code> store. Real ' +
+      'traffic carries no ground truth, so there is no accuracy figure here: the real ' +
+      'number is the <strong>sent-able rate</strong> - answers that passed validation ' +
+      'and were corroborated, and so would have been sent.</p>' +
+      '<table><thead><tr><th>seen</th><th>solved (valid)</th><th>unresolved</th><th>withheld</th><th>sent-able</th></tr></thead>' +
+      `<tbody><tr><td>${overall.seen}</td><td>${overall.valid}</td><td>${unresolved}</td>` +
+      `<td>${overall.withheld}</td><td>${overall.sentable}/${overall.seen} (${escapeHtml(percent(overall.sentableRate))})</td></tr></tbody></table>` +
+      summaryTable('By tier (how the answer was produced)', traffic.byTier) +
+      summaryTable('By puzzle class', traffic.byClass) +
+      `<p>Model calls made (recorded <code>model-text</code> + <code>model-vision</code> stages): <strong>${stats.modelCalls}</strong></p>`
+    : '<h2>Recorded traffic (real)</h2><p class="display">No recorded traffic yet.</p>';
+
+  const corpus = corpusReport?.overall ?? null;
+  const corpusSection =
+    '<h2>Offline corpus (synthetic fixtures)</h2>' +
+    '<p><strong>This is a regression guard, not real-world accuracy.</strong> The corpus is ' +
+    'our own generated fixtures, chosen for solvability, run through the same pipeline. ' +
+    'It is shown separately from recorded traffic and is never blended with it.</p>' +
+    (corpus
+      ? `<table><thead><tr><th>correct</th><th>graded</th><th>accuracy</th></tr></thead>` +
+        `<tbody><tr><td>${corpus.correct}</td><td>${corpus.gradeable}</td><td>${escapeHtml(percent(corpus.accuracy))}</td></tr></tbody></table>`
+      : '<p class="display">No offline corpus report has been cached. Run <code>npm run accuracy</code> to produce one.</p>');
+
+  const windowText =
+    retainDays == null
+      ? 'The store deletes attempts older than the configured retention window, so this page shows a moving window rather than everything ever seen.'
+      : `Attempts older than <strong>${escapeHtml(String(retainDays))} day(s)</strong> are deleted by the retention window ` +
+        '(<code>storage.retain_days</code>), so this page shows a moving window rather than everything ever seen.';
+
+  const body =
+    banners +
+    `<p><a href="/solve?session=${escapeHtml(session)}">Solve an uploaded image &rarr;</a> ` +
+    `<a href="/stats?session=${escapeHtml(session)}">Refresh &rarr;</a></p>` +
+    `<h2>Recent solves</h2>` +
+    `<p>Newest first, at most ${escapeHtml(String(recent.length))} shown. Read on request only; ` +
+    'there is no auto-refresh. The answer and method come from the same recorded verdict the ' +
+    'solve page formats, so the two cannot disagree.</p>' +
+    recentTable +
+    trafficSection +
+    corpusSection +
+    `<p class="display">${windowText}</p>`;
+  return page({ body, configPath, credentialPath });
 }
 
 /** The login form for a non-loopback client. No username: only a password exists. */
@@ -364,6 +498,12 @@ export function createWebSettingsServer({
   solveCore = null,
   config = null,
   inboxDir = null,
+  // Statistics page (#64). Without a store the route is a 404, exactly like the
+  // solve page without a core. `corpusReport` is the cached offline-corpus report
+  // (`loadReportCache(...).corpus`); it is rendered as its own labelled figure and
+  // is never blended with the recorded-traffic report computed from `store`.
+  store = null,
+  corpusReport = null,
 } = {}) {
   if (!controller || typeof controller.list !== 'function' || typeof controller.save !== 'function') {
     throw new Error('createWebSettingsServer needs a settings controller (list/save)');
@@ -561,6 +701,48 @@ export function createWebSettingsServer({
     }
   }
 
+  /**
+   * The statistics page's handler. It only reads: a bounded recent-list query and a
+   * SQL-aggregated totals query. There is no POST behind it and no store write on the
+   * path. The recorded verdict is passed through `formatSolveResponse` - the same
+   * serialiser the solve page uses - so the two pages cannot disagree on
+   * answer/method/confidence/reason.
+   */
+  async function handleStats(res) {
+    if (!store) {
+      return send(res, 404, messagePage('Not found', 'Statistics are not available from this web UI.'));
+    }
+    const { formatSolveResponse } = await httpModule();
+    const limit = Number.isInteger(config?.ui?.stats_recent_solves) ? config.ui.stats_recent_solves : 5;
+    const recent = storeRecentSolves(store, { limit }).map((row) => {
+      const formatted = formatSolveResponse(
+        {
+          answer: row.answer,
+          method: row.method,
+          confident: row.confident,
+          disputed: row.disputed,
+          puzzleClass: row.puzzleClass,
+          opinions: [],
+        },
+        { requireConfidence, modelNames }
+      );
+      return { ...row, status: formatted.status, reason: formatted.reason ?? null };
+    });
+    return send(
+      res,
+      200,
+      renderStatsPage({
+        session: sessionToken,
+        recent,
+        stats: storeStats(store),
+        corpusReport,
+        retainDays: config?.storage?.retain_days ?? null,
+        configPath,
+        credentialPath,
+      })
+    );
+  }
+
   async function handle(req, res) {
     try {
       const remote = getRemoteAddress(req);
@@ -627,6 +809,18 @@ export function createWebSettingsServer({
           return send(res, 403, messagePage('Session expired', 'Reopen Settings to get a fresh session.'));
         }
         return handleSolve(req, res, url, remote);
+      }
+
+      // Read-only: GET only. There is deliberately no POST /stats branch, so a write
+      // cannot be reached from the statistics page (#64). An unknown method falls
+      // through to the 404 below.
+      if (method === 'GET' && url.pathname === '/stats') {
+        if (!sessionValid(url.searchParams.get('session') ?? '', remote)) {
+          return loopbackClient
+            ? send(res, 403, messagePage('Session expired', 'Reopen Settings to get a fresh session.'))
+            : send(res, 200, renderLoginPage({ configPath, credentialPath }));
+        }
+        return handleStats(res);
       }
 
       if (method === 'POST' && (url.pathname === '/save' || url.pathname === '/test' || url.pathname === '/cancel')) {
@@ -783,6 +977,8 @@ export async function openWebSettingsDialog({
   solveCore = null,
   config = null,
   inboxDir = null,
+  store = null,
+  corpusReport = null,
 } = {}) {
   let server;
   try {
@@ -800,6 +996,8 @@ export async function openWebSettingsDialog({
       solveCore,
       config,
       inboxDir,
+      store,
+      corpusReport,
     });
     await server.start();
   } catch (err) {

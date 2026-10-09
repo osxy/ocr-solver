@@ -17,6 +17,8 @@ import {
   buildReport,
   runTextCorpus,
   storeReport,
+  storeRecentSolves,
+  storeStats,
   validateManifest,
   loadCorpusItems,
   formatSummary,
@@ -202,4 +204,74 @@ test('the report cache round-trips and a missing cache is null, not a throw', ()
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ---------------------------------------------------------------------------
+// The statistics page's readers (#64)
+// ---------------------------------------------------------------------------
+
+test('buildReport groups by tier, offline versus a model call', () => {
+  const report = buildReport([
+    row({ id: 'off', method: 'tier0:count' }),
+    row({ id: 'txt', method: 'model:text' }),
+    row({ id: 'vis', method: 'model:vision' }),
+    row({ id: 'none', method: null }),
+  ]);
+  assert.equal(report.byTier.tier0.seen, 1);
+  assert.equal(report.byTier['model:text'].seen, 1);
+  assert.equal(report.byTier['model:vision'].seen, 1);
+  assert.equal(report.byTier.none.seen, 1, 'an unresolved row is its own tier, not a model call');
+});
+
+test('storeReport uses the one-row-per-subject SQL reduction and never the N+1 loop (#64)', () => {
+  const store = memoryStore();
+  for (let i = 0; i < 25; i += 1) {
+    store.record({ subject: `s${i}`, stage: 'ocr', payload: { text: 'x' } });
+    store.record({ subject: `s${i}`, stage: 'validate', ok: i % 2 === 0, payload: { answer: i % 2 === 0 ? String(i) : null, confident: i % 4 === 0, method: 'tier0:count' } });
+  }
+  let perSubjectCalls = 0;
+  const guarded = Object.create(store);
+  guarded.attemptsFor = (...args) => {
+    perSubjectCalls += 1;
+    return store.attemptsFor(...args);
+  };
+
+  const report = storeReport(guarded);
+  assert.equal(report.overall.seen, 25);
+  assert.equal(report.overall.valid, 13);
+  assert.equal(perSubjectCalls, 0, 'the bulk query must not fall back to attemptsFor per subject');
+  store.close();
+});
+
+test('storeRecentSolves returns the newest first, bounded, with the stored verdict (#64)', () => {
+  const store = memoryStore();
+  store.record({ subject: 'old', stage: 'validate', ok: true, payload: { answer: '1', method: 'tier0:count', confident: true } });
+  store.record({ subject: 'withheld', stage: 'validate', ok: true, payload: { answer: '2', method: 'model:text', confident: false } });
+  store.record({ subject: 'withheld', stage: 'respond', ok: false, payload: { answer: '2', sent: false, reason: 'unconfirmed' } });
+  store.record({ subject: 'new', stage: 'validate', ok: true, payload: { answer: '3', method: 'model:vision', confident: true } });
+
+  const recent = storeRecentSolves(store, { limit: 2 });
+  assert.equal(recent.length, 2, 'the limit is respected');
+  assert.deepEqual(recent.map((r) => r.subject), ['new', 'withheld'], 'newest first');
+  assert.equal(recent[0].answer, '3');
+  assert.equal(recent[0].tier, 'model:vision');
+  const withheld = recent[1];
+  assert.equal(withheld.sent, false);
+  assert.equal(withheld.respondReason, 'unconfirmed');
+  assert.equal(withheld.tier, 'model:text');
+  store.close();
+});
+
+test('storeStats counts model calls from the model stages', () => {
+  const store = memoryStore();
+  store.record({ subject: 'a', stage: 'validate', ok: true, payload: { answer: '1', method: 'tier0:count', confident: true } });
+  store.record({ subject: 'a', stage: 'model-text', ok: true, payload: {} });
+  store.record({ subject: 'b', stage: 'validate', ok: true, payload: { answer: '2', method: 'model:text', confident: true } });
+  store.record({ subject: 'b', stage: 'model-text', ok: true, payload: {} });
+  store.record({ subject: 'b', stage: 'model-vision', ok: false, payload: {} });
+  const stats = storeStats(store);
+  assert.equal(stats.modelCalls, 3);
+  assert.equal(stats.traffic.overall.seen, 2);
+  assert.equal(stats.traffic.byTier.tier0.seen, 1);
+  store.close();
 });

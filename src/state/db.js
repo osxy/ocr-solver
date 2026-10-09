@@ -37,6 +37,10 @@ CREATE TABLE IF NOT EXISTS attempts (
   created_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_attempts_subject ON attempts (subject);
+-- The statistics page lists the most recent solves, newest first, bounded by a LIMIT.
+-- The only index was on subject, so ordering by created_at would have scanned the
+-- whole table and sorted it on every page load (#64).
+CREATE INDEX IF NOT EXISTS idx_attempts_created_at ON attempts (created_at);
 
 CREATE TABLE IF NOT EXISTS outbox (
   push_iden TEXT,
@@ -91,6 +95,32 @@ export function openStore({ path = ':memory:', now = () => Date.now() / 1000 } =
   `);
   const selectAttempts = db.prepare('SELECT * FROM attempts WHERE subject = ? ORDER BY id');
   const selectSubjects = db.prepare('SELECT DISTINCT subject FROM attempts ORDER BY subject');
+
+  // The statistics page's reads. Both are bounded by construction: the recent list
+  // carries a LIMIT, and the per-subject work is a correlated subquery against the
+  // `subject` index rather than a JS loop over every attempt (#64).
+  const selectRecentSolves = db.prepare(`
+    SELECT v.subject, v.created_at, v.payload, v.ok, v.ms,
+      (SELECT r.payload FROM attempts r
+        WHERE r.subject = v.subject AND r.stage = 'respond'
+        ORDER BY r.id DESC LIMIT 1) AS respond_payload,
+      (SELECT MAX(a.created_at) - MIN(a.created_at) FROM attempts a
+        WHERE a.subject = v.subject) AS elapsed_seconds
+    FROM attempts v
+    WHERE v.stage = 'validate'
+    ORDER BY v.created_at DESC, v.id DESC
+    LIMIT ?
+  `);
+  // One row per subject: the latest validate row, aggregated in SQL rather than by
+  // reading every attempt for every subject (`storeReport`'s old N+1 shape).
+  const selectLatestValidation = db.prepare(`
+    SELECT a.subject, a.payload, a.ok
+    FROM attempts a
+    JOIN (SELECT subject, MAX(id) AS id FROM attempts WHERE stage = 'validate' GROUP BY subject) m
+      ON a.id = m.id
+    ORDER BY a.subject
+  `);
+  const selectStageCounts = db.prepare('SELECT stage, COUNT(*) AS n FROM attempts GROUP BY stage');
 
   const current = db.prepare('SELECT v FROM kv WHERE k = ?');
   const upsert = db.prepare(
@@ -192,6 +222,42 @@ export function openStore({ path = ':memory:', now = () => Date.now() / 1000 } =
         payload: row.payload ? safeParse(row.payload) : null,
         ok: row.ok == null ? null : row.ok === 1,
       }));
+    },
+
+    /**
+     * The last `limit` validate rows, newest first, with the recorded responder
+     * verdict and the subject's elapsed wall time. A single bounded query: the LIMIT
+     * is the only thing standing between a page load and the whole table (#64).
+     */
+    recentSolves(limit) {
+      const n = Number(limit);
+      if (!Number.isFinite(n) || n <= 0) return [];
+      return selectRecentSolves.all(Math.floor(n)).map((row) => ({
+        subject: row.subject,
+        created_at: row.created_at,
+        payload: row.payload ? safeParse(row.payload) : null,
+        ok: row.ok == null ? null : row.ok === 1,
+        ms: row.ms == null ? null : Number(row.ms),
+        respond: row.respond_payload ? safeParse(row.respond_payload) : null,
+        elapsedMs: row.elapsed_seconds == null ? null : Math.round(Number(row.elapsed_seconds) * 1000),
+      }));
+    },
+
+    /**
+     * The latest validate row for every subject (one row each), for the totals.
+     * SQL does the per-subject reduction; the caller only summarizes the rows.
+     */
+    latestValidationRows() {
+      return selectLatestValidation.all().map((row) => ({
+        subject: row.subject,
+        payload: row.payload ? safeParse(row.payload) : null,
+        ok: row.ok == null ? null : row.ok === 1,
+      }));
+    },
+
+    /** Rows per stage, so the page can count model calls without reading payloads. */
+    stageCounts() {
+      return Object.fromEntries(selectStageCounts.all().map((row) => [row.stage, Number(row.n)]));
     },
 
     /** Every subject with at least one recorded attempt, for accuracy reporting. */
