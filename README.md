@@ -55,7 +55,7 @@ design and its reasoning live in [DESIGN.md](./DESIGN.md).
 ## Install
 
 Install from a **release**, not from source. From the
-[v0.4.0 pre-release](https://github.com/osxy/ocr-solver/releases/tag/v0.4.0) download
+[releases page](https://github.com/osxy/ocr-solver/releases) download
 `PuzzleSolver-0.4.0-win-x64.zip` and its `.sha256` checksum. The ZIP carries
 its own pinned `node.exe`, so Node does not have to be installed.
 
@@ -836,7 +836,7 @@ plain ESM.
 
 ```bash
 npm install
-npm test              # 753 tests (747 pass, 6 skip), offline: no network, no token, no key
+npm test              # 754 tests (748 pass, 6 skip), offline: no network, no token, no key
 npm run test:unit     # fast subset
 npm run test:corpus   # real images through real OCR, ~4s
 npm run test:live     # opt-in; skips unless LLM_API_KEY is set
