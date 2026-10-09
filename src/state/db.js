@@ -11,6 +11,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { dirname } from 'node:path';
 import { mkdirSync } from 'node:fs';
+import { redactRecord } from '../redact.js';
 
 export const SCHEMA_VERSION = 1;
 
@@ -128,6 +129,13 @@ export function openStore({ path = ':memory:', now = () => Date.now() / 1000 } =
   );
   const pendingOutbox = db.prepare('SELECT * FROM outbox WHERE sent_at IS NULL ORDER BY push_iden');
 
+  // Retention. `attempts` hold puzzle transcripts and model replies, which are the
+  // rows with privacy value, so they are bounded by age. `pushes` and `outbox` are
+  // deliberately NOT pruned: they are the durable dedupe and duplicate-send guards,
+  // and deleting either risks answering a puzzle twice - a strictly worse outcome
+  // than keeping a row that contains no secret and no image (DESIGN 8).
+  const deleteOldAttempts = db.prepare('DELETE FROM attempts WHERE created_at < ?');
+
   const store = {
     db,
     path,
@@ -138,9 +146,11 @@ export function openStore({ path = ':memory:', now = () => Date.now() / 1000 } =
         insertAttempt.run(
           String(subject ?? 'unknown'),
           String(stage),
-          variant,
+          // Redaction happens at the sink, not at the call site: a caller cannot
+          // forget it, and an upstream error body is covered too.
+          variant == null ? null : redactRecord(String(variant)),
           psm,
-          encodePayload(payload),
+          payload == null ? null : redactRecord(encodePayload(payload)),
           confidence == null ? null : Number(confidence),
           ok == null ? null : ok ? 1 : 0,
           ms == null ? null : Math.round(ms),
@@ -149,6 +159,20 @@ export function openStore({ path = ':memory:', now = () => Date.now() / 1000 } =
         return true;
       } catch {
         return false;
+      }
+    },
+
+    /**
+     * Delete `attempts` older than `retainDays`. Returns the number removed.
+     * `now` may be overridden so the retention window is testable without waiting.
+     */
+    pruneAttempts({ retainDays, now: clock = now } = {}) {
+      if (!Number.isFinite(retainDays) || retainDays < 0) return 0;
+      try {
+        const cutoff = clock() - retainDays * 86_400;
+        return Number(deleteOldAttempts.run(cutoff).changes);
+      } catch {
+        return 0;
       }
     },
 
@@ -215,14 +239,14 @@ export function openStore({ path = ':memory:', now = () => Date.now() / 1000 } =
     },
 
     markOutboxSent(pushIden, answerHash, { response = null } = {}) {
-      const text = response == null ? null : encodePayload(response).slice(0, 2000);
+      const text = response == null ? null : redactRecord(encodePayload(response)).slice(0, 2000);
       markSent.run(now(), text, String(pushIden), String(answerHash));
     },
 
     /** Record why a claimed delivery has no `sent_at`: the note is not retried. */
     noteOutboxError(pushIden, answerHash, error) {
       const payload = { error: String(error?.message ?? error) };
-      markResponse.run(encodePayload(payload).slice(0, 2000), String(pushIden), String(answerHash));
+      markResponse.run(redactRecord(encodePayload(payload)).slice(0, 2000), String(pushIden), String(answerHash));
     },
 
     lastSentAt() {

@@ -117,6 +117,40 @@ test('the default OCR variants are the real preset names', () => {
   }
 });
 
+test('the resilience and privacy knobs have defaults and reject bad values', () => {
+  const { config } = validateConfig({});
+  assert.equal(config.solver.breaker_threshold, 3);
+  assert.equal(config.solver.breaker_cooldown_sec, 600);
+  assert.equal(config.storage.log_images, false, 'image logging is opt-in');
+
+  assert.throws(
+    () => validateConfig({ solver: { breaker_threshold: 0 } }),
+    (err) => err instanceof ConfigError && /solver\.breaker_threshold/.test(err.message)
+  );
+  assert.throws(
+    () => validateConfig({ solver: { breaker_threshold: 1.5 } }),
+    (err) => err instanceof ConfigError && /solver\.breaker_threshold/.test(err.message)
+  );
+  assert.throws(
+    () => validateConfig({ solver: { breaker_cooldown_sec: -1 } }),
+    (err) => err instanceof ConfigError && /solver\.breaker_cooldown_sec/.test(err.message)
+  );
+  assert.throws(
+    () => validateConfig({ storage: { log_images: 'yes' } }),
+    (err) => err instanceof ConfigError && /storage\.log_images/.test(err.message)
+  );
+});
+
+test('a config may tune the breaker and turn image logging on', () => {
+  const { config } = validateConfig({
+    solver: { breaker_threshold: 5, breaker_cooldown_sec: 30 },
+    storage: { log_images: true },
+  });
+  assert.equal(config.solver.breaker_threshold, 5);
+  assert.equal(config.solver.breaker_cooldown_sec, 30);
+  assert.equal(config.storage.log_images, true);
+});
+
 test('DEFAULTS is not mutated by a loaded config', () => {
   const loaded = loadConfig({ explicitPath: '/definitely/not/here.toml', env: {}, platform: 'linux', homedir: home });
   loaded.config.reply.title = 'Changed';

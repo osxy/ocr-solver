@@ -3,10 +3,11 @@
  *
  * Three properties matter more than features:
  *
- *  1. **Every record is redacted.** The redactors already exist - `redact` for
- *     OpenAI-style keys and `redactPushbullet` for Pushbullet tokens - and a third
- *     copy would eventually drift from them. A log line is the most likely place a
- *     secret leaks, so it passes through both.
+ *  1. **Every record is redacted.** The redactors live in `redact.js` - `redact` for
+ *     OpenAI-style keys, `redactPushbullet` for Pushbullet tokens, and
+ *     `stripImageBytes` for the DESIGN 8 image policy - and this logger and the state
+ *     store both call the same `redactRecord`. A second copy would eventually drift,
+ *     and the copy that drifts is the one that leaks.
  *  2. **A failure to log must not break solving.** Every filesystem call here is
  *     wrapped and a logger that cannot write disables its own file sink instead of
  *     throwing on every subsequent puzzle. The attempts store makes the same trade.
@@ -20,8 +21,9 @@
 import { appendFileSync, existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { homedir as osHomedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { redact } from './model/client.js';
-import { redactPushbullet } from './pushbullet/client.js';
+import { redactRecord } from './redact.js';
+
+export { redactRecord };
 
 export const DEFAULT_MAX_BYTES = 5 * 1024 * 1024;
 export const DEFAULT_MAX_FILES = 3;
@@ -36,11 +38,7 @@ export function defaultLogPath({ platform = process.platform, env = process.env,
   return join(base, 'puzzlesolver', 'logs', 'app.log');
 }
 
-/** Run a record through both existing redactors; callers never do it themselves. */
-export function redactRecord(value) {
-  return redact(redactPushbullet(value));
-}
-
+/** Run a record through the shared redactors; callers never do it themselves. */
 function formatArg(value) {
   if (typeof value === 'string') return value;
   if (value instanceof Error) return value.stack ?? value.message;

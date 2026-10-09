@@ -388,6 +388,8 @@ llm_text_model = "gpt-4o-mini"
 llm_vision_model = "gpt-4o"
 llm_base_url = "https://api.openai.com/v1"
 offline_only = false
+breaker_threshold = 3            # consecutive transient failures before a tier opens
+breaker_cooldown_sec = 600       # how long an open tier waits before one probe
 
 [ocr]
 languages = ["nld"]
@@ -405,6 +407,7 @@ max_per_hour = 20
 
 [storage]
 retain_days = 7
+log_images = false               # opt-in: a file reference for UNRESOLVED puzzles only
 
 [ui]
 tray = true
@@ -436,6 +439,11 @@ no config at all. A *bad* value (unknown enum, negative or non-numeric interval,
 variant, a secret-looking key) throws and names the key; an unknown key from a newer version only
 warns. `ocr.languages` is validated but the bundled traineddata is `nld` only, and `ui.tray` /
 `ui.notify_on_unresolved` are accepted and stored as the M3 seam.
+
+**M2 leg 3 additions.** `solver.breaker_threshold` / `solver.breaker_cooldown_sec` parameterise
+§7's per-tier circuit breaker, and `storage.log_images` is the opt-in in §8. `log_images`
+defaults to `false`; it never writes image bytes anywhere (that is refused at the sinks), it only
+records a durable file reference for puzzles that ended unresolved.
 
 ### 4.14 UI & logging ⬜ M3
 
@@ -542,6 +550,17 @@ tray icon, harder to debug — and the tray form factor was requested).
 - Strict-majority arbitration means agreement is required to publish; disagreement is a
   reported outcome, not a coin flip.
 - Circuit breaker on the model: 3 consecutive failures → Tier 0 only for 10 minutes, notify once.
+- **Circuit breaker, as built (M2 leg 3).** One breaker per tier (`text`, `vision`), because a
+dead text route must not disable the vision fallback. States are `closed` → `open` →
+`half-open`; three consecutive transient failures open it, and `half-open` admits exactly one
+probe, so recovery is automatic without a thundering herd. **Permanent** failures — 401/403, a
+404 (unknown model, or an `allowed_models` set that matched nothing) and a bad cost tier — open
+it on the first occurrence rather than burning the budget on something that will never fix
+itself. The clock is injectable, so the 10-minute cooldown is tested by advancing a number
+rather than sleeping. Transitions are written to the `attempts` store under the
+`circuit-breaker` subject, and a trip notifies **once**; while open, calls are skipped before
+the provider is reached, which is what bounds a dead provider to `breaker_threshold` calls per
+cooldown instead of one per puzzle.
 - Graceful degradation: if the model is unreachable, arithmetic still works, and `count` /
   `ordinal-pick` still work whenever the lexicon covers the vocabulary.
 - Watchdog heartbeat; grey tray icon when the listener has gone quiet.
@@ -556,6 +575,32 @@ tray icon, harder to debug — and the tray form factor was requested).
 - Transcripts are logged (needed for debugging); image bytes are not, unless
   `log_images = true` for unresolved puzzles specifically.
 - The app posts nothing except a validated answer, and only in response to the originating push.
+
+### Threat model (M2 leg 3)
+
+What each artefact gives a reader, and what was done about it:
+
+| Artefact | What it contains | What an attacker learns | Mitigation |
+|---|---|---|---|
+| **Log file** | operational lines, OCR transcripts, model failure text | the puzzles seen, the answers, and — if redaction failed — keys | every line passes through the single `redactRecord` (`redact` + `redactPushbullet` + `stripImageBytes`); image bytes are stripped |
+| **State database** | `attempts` rows (transcripts, model replies, error bodies), `pushes` (file names/URLs), `outbox` (answer hashes, delivery responses) | the puzzle history and what each tier answered | the same `redactRecord` runs inside `store.record` and the outbox writers, so a key in an upstream error body cannot persist |
+| **Config file** | non-secret settings only | the models, base URL, retention, and whether logging is on | secrets are rejected at load; every credential lives in the environment or the credential store |
+| **Credential store** | the Pushbullet token and the LLM key | the account, if the file is not `0600` | `describeSecret` exposes only `{ present, source, hint }`; a world-readable fallback file warns |
+
+**Retention is enforced, not just documented.** On startup the app prunes inbox files and
+`attempts` rows older than `storage.retain_days`. `pushes` and `outbox` are deliberately kept:
+they are the durable dedupe and duplicate-send guards, and deleting either risks answering a
+puzzle twice — a worse outcome than keeping a row that contains no secret and no image.
+
+**Image-byte policy.** Image bytes are never written to the log or the attempts table; the
+sinks strip any inline `data:image/...;base64,...` URL or serialised `Buffer` that reaches them.
+`log_images = true` is the only way image data is remembered, and it records just a file
+reference, only for puzzles that ended unresolved — a resolved puzzle has no debugging value.
+
+**`offline_only` is airtight, and treated as structural.** When it is set, no chat client and
+no reasoner are constructed at all, so there is no object through which an image or transcript
+could leave. The test replaces `fetch` with one that throws and runs the real preprocessing, OCR
+and offline solver over a corpus image, asserting zero outbound requests.
 
 ## 9. Layout
 
@@ -626,6 +671,15 @@ been exercised against a real provider** (no API key was available while buildin
    | Offline (Tier 0) | **3/3**, with zero model calls |
    | Text tier, on transcripts carrying real observed OCR errors | **3/3** |
    | Vision tier, OCR suppressed entirely (reads the real noisy 44px puzzle) | **3/3** |
+
+**M2 leg 3 hardening tests (offline, credential-free).** `tests/breaker.test.js` exercises
+the circuit breaker with an injected clock (trip, cooldown, one probe, recovery) and asserts
+through the real reasoner that a dead provider costs at most N calls per cooldown and that a
+tripped breaker still lets Tier 0 answer. `tests/security.test.js` proves `offline_only`
+makes zero outbound requests with a throwing `fetch`, that retention runs on startup, that
+image bytes never reach the log or the attempts table, and that a key in an upstream error
+body cannot be stored. `tests/tracked.test.js` fails if any `src/` or `tests/` file on disk
+is not tracked by git — the `secrets.*`-hid-`src/secrets.js` trap can no longer come back.
 
 **Planned:**
 
