@@ -36,6 +36,9 @@ export async function startTray({
   quietMs,
   solveLastImage = null,
   openPath = openPathImpl,
+  // The Settings item's editor. Injected from `runApp`, which owns the config and the
+  // credential provider; this adapter only forwards the click.
+  openSettings = null,
   notify = null,
   quit = null,
   accuracyProvider = null,
@@ -67,6 +70,7 @@ export async function startTray({
     solveLastImage,
     paths: { log: app?.logger?.path ?? null, config: app?.configPath ?? null },
     openPath,
+    openSettings,
     quit,
     notify: (options) => notifier?.notify?.(options),
     accuracyProvider,

@@ -37,6 +37,8 @@ import { createNotifier } from './ui/notifications.js';
 import { resolveTrayMode } from './ui/mode.js';
 import { createSetup } from './ui/setup.js';
 import { defaultSetupDialog } from './ui/setup-dialog.js';
+import { applyLiveSettings, createSettingsEditor } from './ui/settings.js';
+import { defaultSettingsDialog } from './ui/settings-dialog.js';
 import { storeReport, loadReportCache, defaultAccuracyCachePath } from './accuracy.js';
 
 /**
@@ -163,6 +165,10 @@ export async function createApp({
   // exists when a dialog can actually be presented, so `--headless` never reaches it.
   trayRequested = false,
   setupDialog = null,
+  // The post-setup settings editor, reached by the tray's Settings item. Same shape as
+  // `setupDialog`: injected so the UI is out of the assembly logic, and defaulted by
+  // `runApp` rather than here so a library caller gets no prompt.
+  settingsDialog = null,
 
   // Dependency injection - everything below can be replaced by a test.
   store: providedStore = null,
@@ -501,14 +507,56 @@ export async function createApp({
     core,
     httpServer,
     inboxDir: effectiveInbox,
-    secrets: {
-      pushbullet: describeSecret(secrets.pushbullet),
-      llm: describeSecret(secrets.llm),
-      http: describeSecret(secrets.http),
+    // A getter, not a snapshot: rotating a secret through the settings editor
+    // re-resolves it so the next editor or diagnostic sees the new value. The running
+    // client still holds the old token until a restart, which is why the editor labels
+    // a secret change `[restart]`.
+    get secrets() {
+      return {
+        pushbullet: describeSecret(secrets.pushbullet),
+        llm: describeSecret(secrets.llm),
+        http: describeSecret(secrets.http),
+      };
     },
     handlePush,
     lastImagePath,
     solveLastImage,
+    /**
+     * Open the settings editor. The tray's Settings item calls this; the CLI's
+     * `config edit` drives the same editor directly. After a successful save the
+     * settings the running process re-reads per solve are applied in place, and the
+     * rest are reported as needing a restart - never silently swallowed.
+     */
+    async openSettings() {
+      if (!settingsDialog) return { saved: false, failed: true, detail: 'no settings editor is available' };
+      const editor = createSettingsEditor({
+        config,
+        configPath: resolvedConfigPath,
+        // The live resolved secrets are used only by `editor.test()`; `list()` never
+        // returns a value, only presence and source.
+        secrets,
+        saveSecrets: (args) => saveSecrets({ ...args, providers, platform, env, homedir, logger }),
+        logger,
+      });
+      const outcome = await settingsDialog({
+        editor,
+        config,
+        configPath: resolvedConfigPath,
+        credentialPath,
+        secrets,
+        logger,
+      });
+      if (outcome?.saved && outcome.config) {
+        outcome.liveApplied = applyLiveSettings(config, outcome.config, outcome.changed ?? []);
+      }
+      if (outcome?.saved && outcome.secretsSaved?.length) {
+        // Re-resolve through the same providers the editor wrote through, the same way
+        // first-run setup does. Trusting the editor's "saved" flag would let a broken
+        // credential store look configured.
+        secrets = await loadSecrets({ explicit: explicitSecrets, env, providers, platform, homedir, logger });
+      }
+      return outcome;
+    },
     /** Install/replace the notification sink; `null` disables toasts. */
     setNotifier(next) {
       notificationSink = next;
@@ -535,6 +583,7 @@ export async function runApp(options = {}) {
     ...options,
     trayRequested: options.tray === true,
     setupDialog: options.setupDialog ?? defaultSetupDialog,
+    settingsDialog: options.settingsDialog ?? defaultSettingsDialog,
   });
   let closing = false;
   let tray = null;
@@ -570,7 +619,10 @@ export async function runApp(options = {}) {
     app.setNotifier(createNotifier({ logger: app.logger }));
     // Imported lazily so a machine without `systray2` (and every non-tray run) never
     // loads it. `TrayUnavailableError` carries the actionable `--headless` message.
-    const { startTray } = await import('./ui/tray-systray.js');
+    // Injectable so the tray wiring - including the Settings item - is testable
+    // without a display.
+    let startTrayImpl = options.startTray;
+    if (!startTrayImpl) ({ startTray: startTrayImpl } = await import('./ui/tray-systray.js'));
     // The tray shows the live store metric plus the cached offline-corpus report.
     // The cache is written by `scripts/accuracy.js`; without it the tray still
     // reports real traffic. Never throws: a bad cache is simply no corpus number.
@@ -579,12 +631,15 @@ export async function runApp(options = {}) {
       corpus: loadReportCache(accuracyCachePath)?.corpus ?? null,
       store: storeReport(app.store),
     });
-    tray = await startTray({
+    tray = await startTrayImpl({
       app,
       logger: app.logger,
       quietMs: options.quietMs,
       openPath: options.openPath,
       solveLastImage: options.solveLastImage ?? app.solveLastImage,
+      // The tray's Settings item is the delivered form of the settings editor; without
+      // this the feature exists in tests only, which is the failure #27 calls out.
+      openSettings: options.openSettings ?? (() => app.openSettings()),
       accuracyProvider,
       quit: () => shutdown('tray'),
     });

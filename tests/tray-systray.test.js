@@ -70,7 +70,7 @@ test('the adapter renders the controller menu and forwards clicks back by id', a
   const instance = FakeSysTray.last;
   assert.deepEqual(
     instance.conf.menu.items.map((i) => i.tooltip),
-    ['status', 'accuracy', 'pause', 'solve-last', 'open-log', 'open-config', 'quit']
+    ['status', 'accuracy', 'pause', 'solve-last', 'open-log', 'open-config', 'settings', 'quit']
   );
   assert.equal(instance.conf.menu.title, 'PuzzleSolver');
   assert.ok(instance.conf.menu.icon.length > 0, 'an icon payload is required');
@@ -78,6 +78,25 @@ test('the adapter renders the controller menu and forwards clicks back by id', a
   const result = await instance.clicks({ item: { tooltip: 'status' } });
   assert.equal(result.id, 'status');
   assert.match(result.text, /PuzzleSolver/);
+});
+
+test('the adapter forwards the Settings click to the injected editor', async (t) => {
+  let opened = 0;
+  const tray = await startTray({
+    app: fakeApp(),
+    loadSystray: async () => ({ default: FakeSysTray }),
+    openSettings: async () => {
+      opened += 1;
+      return { saved: true, changed: ['ui.tray'] };
+    },
+    pollIntervalMs: 0,
+  });
+  t.after(() => tray.stop());
+  const instance = FakeSysTray.last;
+  const result = await instance.clicks({ item: { tooltip: 'settings' } });
+  assert.equal(opened, 1, 'the adapter must pass openSettings into the controller');
+  assert.equal(result.id, 'settings');
+  assert.equal(result.opened, true);
 });
 
 test('clicking Pause updates the menu item title', async (t) => {

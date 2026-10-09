@@ -15,7 +15,7 @@
 import { iconState } from './watchdog.js';
 import { formatTray } from '../accuracy.js';
 
-/** The seven documented actions, in order (DESIGN 4.14). */
+/** The eight documented actions, in order (DESIGN 4.14). */
 export const TRAY_MENU = Object.freeze([
   Object.freeze({ id: 'status', title: 'Status' }),
   Object.freeze({ id: 'accuracy', title: 'Accuracy' }),
@@ -23,6 +23,7 @@ export const TRAY_MENU = Object.freeze([
   Object.freeze({ id: 'solve-last', title: 'Solve last image' }),
   Object.freeze({ id: 'open-log', title: 'Open log' }),
   Object.freeze({ id: 'open-config', title: 'Open config' }),
+  Object.freeze({ id: 'settings', title: 'Settings' }),
   Object.freeze({ id: 'quit', title: 'Quit' }),
 ]);
 
@@ -32,6 +33,9 @@ export function createTrayController({
   solveLastImage = null,
   paths = {},
   openPath = null,
+  // Opens the settings editor; injected so the controller stays free of prompts and
+  // of the config file. `runApp` supplies the terminal editor.
+  openSettings = null,
   quit = null,
   notify = null,
   logger = null,
@@ -164,6 +168,17 @@ export function createTrayController({
         if (!openPath || !paths.config) return { id, opened: false, reason: 'unavailable' };
         await openPath(paths.config);
         return { id, opened: true, path: paths.config };
+      }
+      case 'settings': {
+        if (!openSettings) return { id, opened: false, reason: 'unavailable' };
+        try {
+          const result = await openSettings();
+          return { id, opened: true, result };
+        } catch (err) {
+          // A closed editor is not a reason to take the tray down.
+          logger?.warn?.(`settings editor failed: ${err?.message ?? err}`);
+          return { id, opened: false, reason: 'error', detail: err?.message ?? String(err) };
+        }
       }
       case 'quit':
         logger?.info?.('tray: quit requested');

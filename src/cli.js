@@ -30,6 +30,7 @@ import { createFakeClient } from './model/fake.js';
 import { createReasoner } from './solver/reason.js';
 import { openStore } from './state/db.js';
 import { runAccuracy } from './accuracy-cli.js';
+import { runConfig } from './config-cli.js';
 
 const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.bmp', '.webp', '.tif', '.tiff', '.gif']);
 
@@ -273,6 +274,7 @@ async function main() {
       '  --headless             skip the tray and notifications (for a service/unattended run)\n' +
       '  --config <path>        TOML config file (or PUZZLESOLVER_CONFIG)\n' +
       '  --token <token>        Pushbullet token for listen mode (or PUSHBULLET_TOKEN)\n' +
+      '  config list|get|set|edit  change settings without the tray (`config --help`)\n' +
       '\n' +
       'The HTTP ingress is opt-in: set [http] enabled = true in the config and provide\n' +
       'HTTP_AUTH_TOKEN (or an http_auth_token credential). It binds 127.0.0.1 by default.'
@@ -399,6 +401,16 @@ if (argv[0] === 'accuracy') {
     console.error(err.stack ?? String(err));
     process.exit(1);
   });
+} else if (argv[0] === 'config') {
+  // The headless settings route. It prints its own usage and returns a code rather
+  // than throwing a stack, because a rejected value is an expected outcome.
+  runConfig(argv.slice(1)).then(
+    (code) => process.exit(code ?? 0),
+    (err) => {
+      console.error(err?.message ?? String(err));
+      process.exit(1);
+    }
+  );
 } else if (argv[0] === 'listen' || argv.includes('--listen') || argv.includes('--headless')) {
   runListen(argv).catch((err) => {
     // These are expected, actionable startup outcomes: the missing tray, and the

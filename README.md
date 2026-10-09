@@ -165,6 +165,7 @@ The logon task starts the app at logon. To start it now, run the launcher
 | **Pause** / **Resume** | Stops / starts the *listener*, not the process |
 | **Solve last image** | Re-runs the pipeline on the newest image in the inbox — tuning without a live push |
 | **Open log** / **Open config** | Opens `app.log` / `config.toml` |
+| **Settings** | Opens the settings editor (below) |
 | **Quit** | Shuts down cleanly |
 
 The icon is **normal (coloured)** while the listener is in contact with Pushbullet, and
@@ -184,6 +185,39 @@ For an unattended machine, or when the tray cannot start:
 
 `--headless` skips the tray and every notification. `ui.tray = false` in the config does
 the same for the launcher.
+
+### Settings (change configuration without editing files)
+
+The tray's **Settings** item opens an editor that lists the current values, validates
+every change, and routes it to the right store. `--headless` has the same editor behind a
+command, so an unattended machine is not a second-class mode:
+
+```bash
+node src/cli.js config list                  # every editable setting and its current value
+node src/cli.js config get reply.title
+node src/cli.js config set solver.offline_only true
+node src/cli.js config edit                  # the guided editor over stdin
+```
+
+Secrets go to the credential store, never to `config.toml`: `config set pushbullet.token
+o.xxxxxxxx` writes `credentials.json` (or the Windows Credential Manager) and leaves the
+TOML file alone. Everything else is checked with the same `validateConfig` the loader
+uses, then written **atomically** — a temp file renamed over the old one, with the
+previous file kept as `config.toml.bak`. Only values that differ from the built-in
+defaults are written, so the file stays an override rather than pinning every default. A rejected value names the setting and writes
+nothing at all, so the editor cannot leave a config that stops the app from starting.
+
+**Some settings need a restart.** The editor marks each one `[live]` or `[restart]`, and
+the headless command prints which applies:
+
+- **live** — `storage.log_images` and `ui.notify_on_unresolved`, which the running
+  process reads again for every solve/push;
+- **restart** — the models and base URL, `offline_only`, `escalate_to_vision`,
+  `self_consistency_n`, the reply switch/wording, `poll_interval_sec`, `history_mode`,
+  `ocr.variants`, `storage.retain_days`, `ui.tray`, and **both secrets**, because the
+  listener, reasoner and responder capture them when they are built. The running service
+  keeps the old value until it is restarted; the editor says so rather than appearing to
+  save something that does nothing.
 
 ### Solve a local image (no Pushbullet needed)
 
@@ -338,6 +372,15 @@ with backoff while the 60 s poll is the second path; (4) the hourly cap (`max_pe
 has not been reached — a burst of unsolvable puzzles can exhaust it; (5) a model tier
 needs a key, and `offline_only = true` disables the model tiers entirely.
 
+**A setting changed but nothing happened.** The editor and `config set` print which
+changes apply live and which need a restart (see
+[Settings](#settings-change-configuration-without-editing-files)). The models, the
+offline switches, the reply wording, the poll interval, the OCR variants and both secrets
+are read at startup, so restart the service (Quit and relaunch, or restart the scheduled
+task). If a hand-edited `config.toml` now blocks startup, the loader names the offending
+key; the editor keeps the previous file as `config.toml.bak`, so copying that back is the
+way out.
+
 **Where things live.**
 
 | What | Windows | Linux/macOS |
@@ -371,13 +414,17 @@ folders. Manually: `schtasks /Delete /TN PuzzleSolver /F`, then delete
   Manager, the install/uninstall PowerShell and the packaged `node.exe` are written and
   tested at their seams, but this project is developed on Linux. Treat the first Windows
   install as unverified; `--headless` is the supported fallback.
-- **The first-run setup dialog is a terminal prompt, not a native widget.** In tray mode
-  with no token, startup presents the prompt (Pushbullet token, optional model key,
-  **Test connection**) before the listener starts; a cancelled dialog or a failed save
-  exits without starting. `--headless` never prompts — it exits non-zero naming both
-  `PUSHBULLET_TOKEN` and the credential-store file. The prompt is reached through an
-  injected provider in tests; a graphical tray dialog has never run on a real Windows
-  machine, and the tray-launched (no-console) path has not been exercised there either.
+- **The first-run setup dialog and the settings editor are terminal prompts, not native
+  widgets.** In tray mode with no token, startup presents the first-run prompt (Pushbullet
+  token, optional model key, **Test connection**) before the listener starts; a cancelled
+  dialog or a failed save exits without starting. `--headless` never prompts — it exits
+  non-zero naming both `PUSHBULLET_TOKEN` and the credential-store file. The **Settings**
+  item runs the same kind of prompt in-process, so a tray launched without a console may
+  have no stdin to read; use `puzzlesolver config edit` (or `node src/cli.js config edit`)
+  in a terminal — it is the identical editor and is exercised as a command in
+  `tests/config-cli.test.js`. The prompt is reached through an injected provider in tests;
+  a graphical tray dialog has never run on a real Windows machine, and the tray-launched
+  (no-console) path has not been exercised there either.
 - **Synthetic accuracy is not real accuracy.** See
   [Check accuracy](#check-accuracy-and-read-the-caveat).
 - **No form typing, no image grids.** It reads an image and replies; it does not act in
@@ -407,7 +454,7 @@ plain ESM.
 
 ```bash
 npm install
-npm test              # 370 tests, offline: no network, no token, no key
+npm test              # 454 tests (448 pass, 6 skip), offline: no network, no token, no key
 npm run test:unit     # fast subset
 npm run test:corpus   # real images through real OCR, ~4s
 npm run test:live     # opt-in; skips unless LLM_API_KEY is set
