@@ -682,9 +682,18 @@ test('http.enabled without a token refuses to start', async (t) => {
   );
 });
 
-test('the solve timeout is a 504, not a hang', async (t) => {
-  const core = { solve: () => new Promise(() => {}) }; // never resolves
-  const { url } = await startServer(t, { core, rawHttp: { timeout_ms: 30 } });
+// The old fixture was `() => new Promise(() => {})` - a solve that never resolves.
+// That is fine while the deadline works, but break `withTimeout` and the request
+// never completes, so the whole run hangs instead of failing (#37). Resolving after
+// twice the budget keeps the 504 assertion *and* terminates under that mutation. The
+// explicit per-test timeout is the backstop: a regression fails by name in seconds.
+// (`solvedResult` is a hoisted declaration later in this file.)
+test('the solve timeout is a 504, not a hang', { timeout: 5000 }, async (t) => {
+  const timeoutMs = 30;
+  const core = {
+    solve: () => new Promise((resolve) => setTimeout(() => resolve(solvedResult()), timeoutMs * 2)),
+  };
+  const { url } = await startServer(t, { core, rawHttp: { timeout_ms: timeoutMs } });
   const res = await post(url, { body: await smallPng(), contentType: 'image/png' });
   assert.equal(res.status, 504, res.text);
   assert.equal(res.json.error, 'solve_timeout');
@@ -803,15 +812,15 @@ test('an unexpected internal error returns a bare 500, not a stack or an upstrea
 // Claim 3: after a 504, the abandoned solve keeps running on the worker but its
 // result is discarded - nothing is delivered later.
 
-test('a solve that finishes after the 504 is discarded, never delivered or claimed', async (t) => {
-  let release;
-  const gate = new Promise((resolve) => {
-    release = resolve;
-  });
+test('a solve that finishes after the 504 is discarded, never delivered or claimed', { timeout: 5000 }, async (t) => {
+  const timeoutMs = 40;
   let finished = false;
   const core = {
     solve: async () => {
-      await gate;
+      // Bounded, unlike the old manual gate: it resolves after twice the budget, so
+      // the test still observes a solve that outlives its deadline but cannot hang
+      // when the deadline itself is broken (#37).
+      await new Promise((resolve) => setTimeout(resolve, timeoutMs * 2));
       finished = true;
       return solvedResult();
     },
@@ -847,7 +856,7 @@ test('a solve that finishes after the 504 is discarded, never delivered or claim
     minIntervalMs: 0,
   });
 
-  const { url } = await startServer(t, { core, responder, rawHttp: { timeout_ms: 40 } });
+  const { url } = await startServer(t, { core, responder, rawHttp: { timeout_ms: timeoutMs } });
   const res = await post(url, {
     body: JSON.stringify({ image_base64: (await smallPng()).toString('base64'), deliver: 'pushbullet' }),
     contentType: 'application/json',
@@ -856,9 +865,9 @@ test('a solve that finishes after the 504 is discarded, never delivered or claim
   assert.equal(res.status, 504, res.text);
   assert.equal(res.json.error, 'solve_timeout');
 
-  // Let the abandoned solve finish, then give a late-delivery bug time to run.
-  release();
-  await new Promise((resolve) => setTimeout(resolve, 100));
+  // Wait past the abandoned solve's own deadline, then give a late-delivery bug time
+  // to run. `finished` proves the solve ran on; the zero counts prove it was ignored.
+  await new Promise((resolve) => setTimeout(resolve, timeoutMs * 3));
 
   assert.equal(finished, true, 'the abandoned solve did keep running on the worker');
   assert.equal(claims.length, 0, 'a solve that outlived the timeout must not claim an outbox row');
