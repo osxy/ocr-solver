@@ -222,8 +222,10 @@ export function assertHttpUrl(value) {
 }
 
 // The refusal wording points every caller at the normal path: uploading the image.
+// The raw body's declared `Content-Type` is advisory - the gate decides on the magic
+// bytes - so the wording must not imply `image/*` is required (#61).
 const UPLOAD_ALTERNATIVE =
-  'upload the image instead (image_base64, a multipart/form-data file, or an image/* body)';
+  'upload the image instead (image_base64, a multipart/form-data file, or the image bytes as the raw request body)';
 const IMAGE_URL_DISABLED_REASON =
   `image_url is disabled by default; ${UPLOAD_ALTERNATIVE}, or set http.allow_image_url = true ` +
   'and add the host to http.image_url_hosts';
@@ -282,8 +284,13 @@ async function classifyRequest(req, body) {
       deliver: typeof json.deliver === 'string' ? json.deliver : null,
     };
   }
-  if (contentType.startsWith('image/')) return { kind: 'raw', buffer: body, deliver: null };
-  throw new HttpError(415, 'unsupported_media_type', 'send image/*, multipart/form-data or application/json');
+  // Anything that is neither JSON nor multipart is a raw candidate, and the image
+  // gate decides: `validateImageBuffer` sniffs the magic bytes and rejects a non-image
+  // with `415` / `reason: "magic"`. The declared `Content-Type` is therefore advisory,
+  // not a gate of its own - `application/octet-stream` (the conventional type for a
+  // binary upload) and a missing type both work, and enumerating accepted types here
+  // would only add a second, weaker decision on the same bytes (#61).
+  return { kind: 'raw', buffer: body, deliver: null };
 }
 
 /** Resolve the parsed request to a validated image (bytes + ext) and the requested egress. */

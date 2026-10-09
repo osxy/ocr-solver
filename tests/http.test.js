@@ -360,11 +360,41 @@ test('invalid JSON is a 400', async (t) => {
   assert.equal(res.json.error, 'bad_json');
 });
 
-test('an unsupported content type is a 415', async (t) => {
+// The declared content type is no longer a gate: the magic bytes decide. A body that
+// declares `text/plain` is a raw candidate, and a non-image is refused by the image
+// gate, not by content-type dispatch (#61).
+test('an unsupported content type is decided by the bytes, not the declared type', async (t) => {
   const { url } = await startServer(t);
   const res = await post(url, { body: 'hello', contentType: 'text/plain' });
   assert.equal(res.status, 415);
-  assert.equal(res.json.error, 'unsupported_media_type');
+  assert.equal(res.json.error, 'invalid_image');
+  assert.equal(res.json.reason, 'magic');
+});
+
+// The forms a caller actually reaches for: no header, the conventional binary type,
+// curl's default form encoding, and the explicit image type. All must reach the same gate.
+for (const [name, contentType] of [
+  ['no Content-Type', undefined],
+  ['application/octet-stream', 'application/octet-stream'],
+  ["curl's default application/x-www-form-urlencoded", 'application/x-www-form-urlencoded'],
+  ['image/png', 'image/png'],
+]) {
+  test(`a valid PNG posted with ${name} is accepted`, async (t) => {
+    const { url } = await startServer(t);
+    const res = await post(url, { body: await smallPng(), contentType });
+    assert.equal(res.status, 200, res.text);
+    assert.equal(res.json.answer, '2');
+  });
+}
+
+test('multipart/form-data without a file part is a clear 400', async (t) => {
+  const { url } = await startServer(t);
+  const form = new FormData();
+  form.append('not_a_file', 'just a field');
+  const res = await post(url, { body: form });
+  assert.equal(res.status, 400, res.text);
+  assert.equal(res.json.error, 'missing_image');
+  assert.match(res.json.reason, /file part/);
 });
 
 // ---------------------------------------------------------------------------

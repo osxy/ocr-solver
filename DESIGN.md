@@ -909,6 +909,16 @@ echoes the image, a key or an upstream error body: image errors are reported by 
 (`magic`/`decode`/`height`/`width`/`pixels`/`size`), and an unexpected error is a generic
 `500` with a random id while the redacted detail goes to the log.
 
+**Content type is advisory, not a gate (issue #61).** A body that is neither JSON nor
+multipart is treated as a raw candidate and handed to the same magic-byte gate, so
+`application/octet-stream` (the conventional type for a binary upload) and a missing
+`Content-Type` (curl's default `application/x-www-form-urlencoded`) both work. There is no
+enumerated list of accepted types to guess: the decision is made on the bytes, a non-image
+is still `415` (with the more accurate `reason: "magic"` instead of
+`unsupported_media_type`), and the streaming body cap, auth and the pixel/width caps are
+unchanged. This matters because uploading is the normal path once `image_url` is off by
+default (#57), and the primary path should not have an avoidable trap on it.
+
 **Pixel-bomb caps (issue #41).** The shared gate reads `sharp` metadata and rejects on
 `width` or `width*height` before any pixel is decoded (`extractMask` also passes the same
 limit to `limitInputPixels`, so a future ingress that skips the gate still cannot decode
