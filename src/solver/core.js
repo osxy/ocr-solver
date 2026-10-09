@@ -10,8 +10,9 @@
  * seam is cheaper than another copy of the option wiring per transport.
  *
  * It deliberately owns no transport state: no store rows, no HTTP, no Pushbullet.
- * The caller passes `subject` so attempts are attributable, and `logImages` so the
- * per-ingress byte policy can be overridden.
+ * The caller passes `subject` so attempts are attributable, `logImages` so the
+ * per-ingress byte policy can be overridden, and (for #100) an `imageStore` so a
+ * review copy of the image can be persisted without the ingress knowing how.
  *
  * The core - not any ingress - owns the one solve lock (issue #44). A Tesseract
  * worker is not safe to drive concurrently: `recognize.js` does `setParameters({psm})`
@@ -44,6 +45,7 @@ export function createSolveCore({
   store = null,
   config,
   solveImage: solveImageImpl = defaultSolveImage,
+  imageStore = null,
   logger = null,
 } = {}) {
   if (!config?.ocr || !config?.solver) {
@@ -91,7 +93,12 @@ export function createSolveCore({
     {
       subject = String(imagePath),
       logImages = config.storage?.log_images ?? false,
+      keepImages = config.storage?.keep_images ?? false,
       store: solveStore = store,
+      // #100: a caller may inject its own image store (tests), but the default is the
+      // one the app built. Binary policy is re-read per solve, so the editor labels
+      // `storage.keep_images` `[live]`.
+      imageStore: solveImageStore = imageStore,
       // #43: evaluated at dequeue, under the lock, immediately before the pipeline
       // runs. A caller whose request already timed out or was aborted while queued
       // passes a predicate that is now false, and the expensive work is skipped
@@ -110,6 +117,8 @@ export function createSolveCore({
         logger,
         useTier0: config.solver.tier0,
         logImages,
+        keepImages,
+        imageStore: solveImageStore,
         // Defence in depth behind the image gate (see `preprocess.extractMask`).
         maxPixels: config.image?.max_pixels ?? null,
       });

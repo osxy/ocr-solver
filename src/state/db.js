@@ -42,6 +42,21 @@ CREATE INDEX IF NOT EXISTS idx_attempts_subject ON attempts (subject);
 -- whole table and sorted it on every page load (#64).
 CREATE INDEX IF NOT EXISTS idx_attempts_created_at ON attempts (created_at);
 
+CREATE TABLE IF NOT EXISTS images (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  subject TEXT NOT NULL,        -- the solve's subject, for diagnostics
+  attempt_id INTEGER,           -- the validate attempt row that owns this image
+  path TEXT NOT NULL,           -- absolute path of the bounded review copy
+  mime TEXT NOT NULL,           -- fixed by the encoder, never the request
+  width INTEGER, height INTEGER,
+  bytes INTEGER,
+  created_at REAL NOT NULL
+);
+-- The recent-solves query joins an image to its validate row by attempt_id, one
+-- image per solve. The created_at index is what the retention prune walks.
+CREATE INDEX IF NOT EXISTS idx_images_attempt ON images (attempt_id);
+CREATE INDEX IF NOT EXISTS idx_images_created_at ON images (created_at);
+
 CREATE TABLE IF NOT EXISTS outbox (
   push_iden TEXT,
   answer_hash TEXT,
@@ -100,11 +115,13 @@ export function openStore({ path = ':memory:', now = () => Date.now() / 1000 } =
   // carries a LIMIT, and the per-subject work is a correlated subquery against the
   // `subject` index rather than a JS loop over every attempt (#64).
   const selectRecentSolves = db.prepare(`
-    SELECT v.subject, v.created_at, v.payload, v.ok, v.ms,
+    SELECT v.id AS attempt_id, v.subject, v.created_at, v.payload, v.ok, v.ms,
       (SELECT r.payload FROM attempts r
         WHERE r.subject = v.subject AND r.stage = 'respond'
-        ORDER BY r.id DESC LIMIT 1) AS respond_payload
+        ORDER BY r.id DESC LIMIT 1) AS respond_payload,
+      i.id AS image_id
     FROM attempts v
+    LEFT JOIN images i ON i.attempt_id = v.id
     WHERE v.stage = 'validate'
     ORDER BY v.created_at DESC, v.id DESC
     LIMIT ?
@@ -173,6 +190,25 @@ export function openStore({ path = ':memory:', now = () => Date.now() / 1000 } =
   // and deleting either risks answering a puzzle twice - a strictly worse outcome
   // than keeping a row that contains no secret and no image (DESIGN 8).
   const deleteOldAttempts = db.prepare('DELETE FROM attempts WHERE created_at < ?');
+  const selectAttemptExists = db.prepare('SELECT 1 AS present FROM attempts WHERE id = ?');
+
+  // Image metadata. Files are the image store's business; these rows are the durable
+  // record that a file was written, so an orphan (a file with no row, or a row whose
+  // file is gone) can be reconciled rather than silently accumulated.
+  const insertImage = db.prepare(`
+    INSERT INTO images (subject, attempt_id, path, mime, width, height, bytes, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const selectImage = db.prepare('SELECT * FROM images WHERE id = ?');
+  const selectAllImages = db.prepare('SELECT * FROM images ORDER BY id');
+  const countImages = db.prepare('SELECT COUNT(*) AS n FROM images');
+  const deleteImageById = db.prepare('DELETE FROM images WHERE id = ?');
+  const deleteAllImages = db.prepare('DELETE FROM images');
+
+  // The most recent attempt row's id, captured by `record`. The pipeline reads it
+  // right after recording the validate row, so the review copy can be tied to the
+  // exact solve it belongs to (a subject can be solved more than once).
+  let lastAttemptId = null;
 
   const store = {
     db,
@@ -181,7 +217,10 @@ export function openStore({ path = ':memory:', now = () => Date.now() / 1000 } =
     /** Record one pipeline attempt. Never throws - logging must not break solving. */
     record({ subject, stage, variant = null, psm = null, payload = null, confidence = null, ok = null, ms = null }) {
       try {
-        insertAttempt.run(
+        // Reset first, so a failed insert cannot leave the previous attempt's id and
+        // cause an image to be attached to the wrong solve.
+        lastAttemptId = null;
+        const result = insertAttempt.run(
           String(subject ?? 'unknown'),
           String(stage),
           // Redaction happens at the sink, not at the call site: a caller cannot
@@ -194,10 +233,28 @@ export function openStore({ path = ':memory:', now = () => Date.now() / 1000 } =
           ms == null ? null : Math.round(ms),
           now()
         );
+        lastAttemptId = Number(result.lastInsertRowid);
         return true;
       } catch {
         return false;
       }
+    },
+
+    /**
+     * The id of the most recently recorded attempt row, or `null`. The pipeline uses
+     * it to attach an image to the validate row it just wrote; it is a read of a
+     * value `record` captured, never a second insert. Deliberately not a return value
+     * of `record`: the boolean `true`/`false` contract is asserted by existing tests.
+     */
+    lastAttemptId() {
+      return lastAttemptId;
+    },
+
+    /** True when the attempt row still exists; used to reconcile image orphans. */
+    attemptExists(id) {
+      const n = Number(id);
+      if (!Number.isInteger(n)) return false;
+      return selectAttemptExists.get(n) != null;
     },
 
     /**
@@ -232,13 +289,67 @@ export function openStore({ path = ':memory:', now = () => Date.now() / 1000 } =
       const n = Number(limit);
       if (!Number.isFinite(n) || n <= 0) return [];
       return selectRecentSolves.all(Math.floor(n)).map((row) => ({
+        attempt_id: row.attempt_id == null ? null : Number(row.attempt_id),
         subject: row.subject,
         created_at: row.created_at,
         payload: row.payload ? safeParse(row.payload) : null,
         ok: row.ok == null ? null : row.ok === 1,
         ms: row.ms == null ? null : Number(row.ms),
         respond: row.respond_payload ? safeParse(row.respond_payload) : null,
+        // The image row joined to this solve, if one was stored. `null` for a solve
+        // that predates image storage or had it turned off.
+        image_id: row.image_id == null ? null : Number(row.image_id),
       }));
+    },
+
+    /** Insert an image row. Returns the new id, or `null` if the write failed. */
+    insertImageRecord({ subject, attemptId = null, path, mime = 'image/webp', width = null, height = null, bytes = null }) {
+      try {
+        const result = insertImage.run(
+          String(subject ?? 'unknown'),
+          attemptId == null ? null : Number(attemptId),
+          String(path),
+          String(mime),
+          width == null ? null : Number(width),
+          height == null ? null : Number(height),
+          bytes == null ? null : Number(bytes),
+          now()
+        );
+        return Number(result.lastInsertRowid);
+      } catch {
+        return null;
+      }
+    },
+
+    imageById(id) {
+      const n = Number(id);
+      if (!Number.isInteger(n)) return null;
+      return selectImage.get(n) ?? null;
+    },
+
+    /** Every image row, oldest first. The image store reconciles files against these. */
+    imageRows() {
+      return selectAllImages.all().map((row) => ({
+        ...row,
+        id: Number(row.id),
+        attempt_id: row.attempt_id == null ? null : Number(row.attempt_id),
+        width: row.width == null ? null : Number(row.width),
+        height: row.height == null ? null : Number(row.height),
+        bytes: row.bytes == null ? null : Number(row.bytes),
+        created_at: Number(row.created_at),
+      }));
+    },
+
+    deleteImageById(id) {
+      return Number(deleteImageById.run(Number(id)).changes);
+    },
+
+    deleteAllImageRecords() {
+      return Number(deleteAllImages.run().changes);
+    },
+
+    countImages() {
+      return Number(countImages.get().n);
     },
 
     /**

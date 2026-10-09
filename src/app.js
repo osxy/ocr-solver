@@ -22,6 +22,7 @@ import { loadConfig, defaultStatePath, autoRouterOptions } from './config.js';
 import { loadSecrets, describeSecret, saveSecrets, defaultCredentialPath } from './secrets.js';
 import { createLogger, defaultLogPath } from './logging.js';
 import { openStore } from './state/db.js';
+import { createImageStore, defaultImagesDir } from './state/images.js';
 import { createPushbulletClient } from './pushbullet/client.js';
 import { createListener } from './pushbullet/listener.js';
 import { fetchImage as fetchImageImpl, pruneInbox, defaultInboxDir } from './pushbullet/files.js';
@@ -226,6 +227,9 @@ export async function createApp({
   listenerFactory = createListener,
   inboxDir = null,
   statePath = null,
+  // #100: where the bounded review copies live, and an injectable store for tests.
+  imagesDir = null,
+  imageStore: providedImageStore = null,
   WebSocketImpl = globalThis.WebSocket,
   now = () => Date.now() / 1000,
   logPath = null,
@@ -294,6 +298,31 @@ export async function createApp({
     ? store.pruneAttempts({ retainDays: config.storage.retain_days, now })
     : 0;
   if (prunedAttempts) logger.info(`pruned ${prunedAttempts} attempt row(s) older than ${config.storage.retain_days} day(s)`);
+
+  // #100: the bounded review copies. The store always exists so the settings editor
+  // can turn `storage.keep_images` on live; the pipeline decides per solve whether to
+  // write. Retention is the shared `retain_days` window plus the count cap, and a
+  // failure here is housekeeping, not a reason to refuse to start.
+  const effectiveImagesDir = imagesDir ?? defaultImagesDir({ platform, env, homedir });
+  const imageStore =
+    providedImageStore ??
+    createImageStore({
+      store,
+      dir: effectiveImagesDir,
+      maxCount: config.storage.max_images,
+      retainDays: config.storage.retain_days,
+      now,
+      logger,
+    });
+  const imagePrune = imageStore.prune({ retainDays: config.storage.retain_days });
+  const imageRemoved = imagePrune.removed + imagePrune.byCount + imagePrune.orphans + imagePrune.missing + imagePrune.staleFiles;
+  if (imageRemoved) {
+    logger.info(
+      `pruned ${imageRemoved} stored image(s) ` +
+        `(${imagePrune.removed} expired, ${imagePrune.byCount} over the cap, ${imagePrune.orphans} orphaned, ` +
+        `${imagePrune.missing} missing, ${imagePrune.staleFiles} stray)`
+    );
+  }
 
   const wantTray = resolveTrayMode({ requested: trayRequested === true, configTray: config.ui.tray });
   const credentialPath = defaultCredentialPath({ platform, env, homedir });
@@ -422,6 +451,7 @@ export async function createApp({
     store,
     config,
     solveImage: solveImageImpl,
+    imageStore,
     logger,
   });
 
@@ -608,6 +638,8 @@ export async function createApp({
     core,
     httpServer,
     inboxDir: effectiveInbox,
+    imagesDir: effectiveImagesDir,
+    imageStore,
     // #67: the settings found to be new at startup (or `null` when there was
     // nothing to offer). `openSettings` refreshes it after a review. Exposed so the
     // startup offer is inspectable without opening an editor.
@@ -672,6 +704,7 @@ export async function createApp({
         // report. They are passed as two separate inputs, so the page cannot blend the
         // synthetic figure into the real one.
         store,
+        imageStore,
         corpusReport: loadReportCache(accuracyCachePath ?? defaultAccuracyCachePath(store.path))?.corpus ?? null,
       });
       // The editor presented the settings, so they are no longer "new". A dialog that

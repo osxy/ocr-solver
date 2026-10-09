@@ -47,6 +47,7 @@ import { loadConfig } from '../src/config.js';
 import { createOcrWorker } from '../src/ocr/recognize.js';
 import { createSolveCore } from '../src/solver/core.js';
 import { openStore } from '../src/state/db.js';
+import { createImageStore } from '../src/state/images.js';
 import { createSettingsEditor } from '../src/ui/settings.js';
 import { createWebSettingsServer } from '../src/ui/web-config.js';
 
@@ -84,6 +85,8 @@ title = "Antwoord"
 unresolved_title = "Puzzel niet opgelost"
 [storage]
 retain_days = 7
+keep_images = true
+max_images = 200
 [ui]
 stats_recent_solves = 5
 [http]
@@ -180,7 +183,23 @@ async function main() {
   const written = [];
   try {
     worker = await createOcrWorker();
-    const core = createSolveCore({ worker, store, config });
+    // #100: the fixture's stored review copies come from the committed corpus sample,
+    // never a real uploaded image. The image column is populated for three of the
+    // synthetic solves so the screenshot shows a real thumbnail through the real
+    // gated route.
+    const imageStore = createImageStore({ store, dir: join(fixtureDir, 'images') });
+    for (const subject of [
+      'demo/001-count-kleuren.png',
+      'demo/003-arithmetic-acht-min-een.png',
+      'demo/needs-model-004.png',
+    ]) {
+      const row = store.db
+        .prepare("SELECT id FROM attempts WHERE subject = ? AND stage = 'validate' ORDER BY id DESC LIMIT 1")
+        .get(subject);
+      if (row) await imageStore.save({ subject, attemptId: row.id, imagePath: solveSample });
+    }
+
+    const core = createSolveCore({ worker, store, config, imageStore });
     const editor = createSettingsEditor({
       config,
       configPath: fixtureConfigPath,
@@ -196,6 +215,7 @@ async function main() {
       inboxDir: join(fixtureDir, 'inbox'),
       solveCore: core,
       store,
+      imageStore,
       corpusReport: null,
       webUi: { bind: '127.0.0.1', port: 0 },
     });
@@ -219,6 +239,13 @@ async function main() {
     const statsHtml = await stats.text();
     if (stats.status !== 200) throw new Error(`statistics page returned ${stats.status}: ${statsHtml}`);
 
+    // The statistics page in dark, fetched before the solve below so the light and dark
+    // captures show the same recent list (the solve adds a row).
+    const statsDark = await fetch(`${base}/stats?session=${encodeURIComponent(session)}&theme=dark`);
+    const statsDarkHtml = await statsDark.text();
+    if (statsDark.status !== 200) throw new Error(`dark statistics page returned ${statsDark.status}: ${statsDarkHtml}`);
+    if (!/data-theme="dark"/.test(statsDarkHtml)) throw new Error('the dark statistics capture did not render dark');
+
     // The solve page runs the real offline solver over the committed corpus sample.
     const image = readFileSync(solveSample);
     const form = new FormData();
@@ -241,11 +268,23 @@ async function main() {
     if (dark.status !== 200) throw new Error(`dark settings page returned ${dark.status}: ${darkHtml}`);
     if (!/data-theme="dark"/.test(darkHtml)) throw new Error('the dark settings capture did not render dark');
 
+    // Firefox renders a `file://` page, where an absolute `/images/...` URL cannot
+    // resolve. Inline each thumbnail as a data URL (from the fixture's real bounded
+    // WebP, itself made from the committed corpus sample) so the committed screenshot
+    // shows the image rather than the alt text. The live route is unchanged and is
+    // what the route tests exercise.
+    const inlineThumbnails = (html) =>
+      html.replace(/src="\/images\/(\d+)\?[^"]*"/g, (match, id) => {
+        const path = imageStore.pathFor(Number(id));
+        return path ? `src="data:image/webp;base64,${readFileSync(path).toString('base64')}"` : match;
+      });
+
     // Render each captured page and screenshot it.
     const pages = [
       ['settings', settingsHtml, 'settings.png'],
       ['settings-dark', darkHtml, 'settings-dark.png'],
-      ['statistics', statsHtml, 'statistics.png'],
+      ['statistics', inlineThumbnails(statsHtml), 'statistics.png'],
+      ['statistics-dark', inlineThumbnails(statsDarkHtml), 'statistics-dark.png'],
       ['solve', solveHtml, 'solve.png'],
       ['login', loginHtml, 'login.png'],
     ];

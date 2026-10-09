@@ -1069,7 +1069,9 @@ cooldown instead of one per puzzle.
   and removed. `config list` names the store that answered (`windows-dpapi`/`file`), so a
   fallback to the plaintext file is never silent (issues #50, #60).
 - Transcripts are logged (needed for debugging); image bytes are not, unless
-  `log_images = true` for unresolved puzzles specifically.
+  `log_images = true` for unresolved puzzles specifically. Separately, `keep_images = true`
+  stores a bounded review copy of every solve's image under the app data directory
+  (`storage.keep_images`, issue #100).
 - The app posts nothing except a validated answer, and only in response to the originating push.
 
 ### Threat model (M2 leg 3)
@@ -1079,7 +1081,8 @@ What each artefact gives a reader, and what was done about it:
 | Artefact | What it contains | What an attacker learns | Mitigation |
 |---|---|---|---|
 | **Log file** | operational lines, OCR transcripts, model failure text | the puzzles seen, the answers, and — if redaction failed — keys | every line passes through the single `redactRecord` (`redact` + `redactPushbullet` + `stripImageBytes`); image bytes are stripped |
-| **State database** | `attempts` rows (transcripts, model replies, error bodies), `pushes` (file names/URLs), `outbox` (answer hashes, delivery responses) | the puzzle history and what each tier answered | the same `redactRecord` runs inside `store.record` and the outbox writers, so a configured key or a documented shape in an upstream error body cannot persist |
+| **State database** | `attempts` rows (transcripts, model replies, error bodies), `pushes` (file names/URLs), `outbox` (answer hashes, delivery responses), `images` (review-copy metadata) | the puzzle history and what each tier answered | the same `redactRecord` runs inside `store.record` and the outbox writers, so a configured key or a documented shape in an upstream error body cannot persist |
+| **Stored images** (only when `keep_images = true`) | bounded WebP review copies of solved images, keyed to the solve row | the puzzles themselves | off by default; a bounded, re-encoded copy rather than the original; pruned by `retain_days` + `max_images`; served only behind the web UI's address/Host/session gate, addressed by row id |
 | **Config file** | non-secret settings only | the models, base URL, retention, and whether logging is on | secrets are rejected at load; every credential lives in the environment or the credential store |
 | **Credential store** | the Pushbullet token, the model key, the HTTP token and the web UI verifier | the account and the provider balance | Windows: DPAPI `CurrentUser` (`credentials.dpapi`), so a copy of the file on another account or machine is useless; elsewhere a `0600` JSON file. `describeSecret` exposes only `{ present, source, hint }`; the source names the store that answered (`windows-dpapi`/`file`); a world-readable fallback file warns and is tightened to `0600` on the next write; a file that cannot be parsed is reported and never overwritten (issue #46). **Residual: any process running as the user can ask the OS to unprotect the DPAPI blob.** |
 
@@ -1099,12 +1102,23 @@ older “no key of any kind can”.
 **Retention is enforced, not just documented.** On startup the app prunes inbox files and
 `attempts` rows older than `storage.retain_days`. `pushes` and `outbox` are deliberately kept:
 they are the durable dedupe and duplicate-send guards, and deleting either risks answering a
-puzzle twice — a worse outcome than keeping a row that contains no secret and no image.
+puzzle twice — a worse outcome than keeping a row that contains no secret and no image. Stored
+review copies are pruned on the same window plus a count cap (`storage.max_images`), and an
+explicit `images purge` is available; see the image-byte policy below.
 
 **Image-byte policy.** Image bytes are never written to the log or the attempts table; the
 sinks strip any inline `data:image/...;base64,...` URL or serialised `Buffer` that reaches them.
-`log_images = true` is the only way image data is remembered, and it records just a file
-reference, only for puzzles that ended unresolved — a resolved puzzle has no debugging value.
+There are now **two** ways image data is remembered, and they mean different things:
+
+- `log_images = true` records a **file reference** to the retained inbox image, only for
+  puzzles that ended unresolved — a resolved puzzle has no debugging value. It never stores
+  bytes.
+- `keep_images = true` stores a **bounded, re-encoded copy** (WebP, longest edge 512 px) of
+  **every** solve's image, so the recent-solves page can show what was solved. It is off by
+  default; the original bytes are not kept, and the copies are pruned by `retain_days` and
+  `max_images`. The files live in the app data directory: mode `0700`/`0600` on POSIX, and on
+  Windows protected only by the per-user profile ACL — there is no encryption, and the README
+  says so rather than implying otherwise.
 
 **`offline_only` is airtight, and treated as structural.** When it is set, no chat client and
 no reasoner are constructed at all, so there is no object through which an image or transcript

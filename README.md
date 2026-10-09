@@ -31,7 +31,7 @@ cookie, with no JavaScript.
 
 ## Status
 
-**0.3.0 — a pre-release.** The offline solver, model tiers, Pushbullet listener and
+**0.4.0 — a pre-release.** The offline solver, model tiers, Pushbullet listener and
 reply path are implemented and tested. The packaged Windows app, the installer, the
 scheduled task and the launcher are executed on `windows-latest` in CI, and a fresh
 `node` process decrypts Windows secrets through DPAPI there; the native tray widget and
@@ -42,7 +42,7 @@ The **Pushbullet ingress — reading a real push, fetching its image, solving it
 replying — has never been executed against the real Pushbullet service**, because no
 account or token exists (tracked and blocked as
 [issue #3](https://github.com/osxy/ocr-solver/issues/3)). That is the app's primary
-user-facing path, so **0.3.0 remains a pre-release**: the parts a runner can reach are
+user-facing path, so **0.4.0 remains a pre-release**: the parts a runner can reach are
 tested against fakes and, where possible, executed, but the main ingress is not
 *observed* end to end.
 Work is tracked in the [issue tracker](https://github.com/osxy/ocr-solver/issues); the
@@ -51,21 +51,21 @@ design and its reasoning live in [DESIGN.md](./DESIGN.md).
 ## Install
 
 Install from a **release**, not from source. From the
-[v0.3.0 pre-release](https://github.com/osxy/ocr-solver/releases/tag/v0.3.0) download
-`PuzzleSolver-0.3.0-win-x64.zip` and its `.sha256` checksum. The ZIP carries
+[v0.4.0 pre-release](https://github.com/osxy/ocr-solver/releases/tag/v0.4.0) download
+`PuzzleSolver-0.4.0-win-x64.zip` and its `.sha256` checksum. The ZIP carries
 its own pinned `node.exe`, so Node does not have to be installed.
 
 The binary is **unsigned**, so **Windows SmartScreen will warn on first run** and the
 SHA256 checksum is the only integrity signal. Verify it before extracting:
 
 ```powershell
-Get-FileHash .\PuzzleSolver-0.3.0-win-x64.zip -Algorithm SHA256
-Get-Content .\PuzzleSolver-0.3.0-win-x64.zip.sha256
+Get-FileHash .\PuzzleSolver-0.4.0-win-x64.zip -Algorithm SHA256
+Get-Content .\PuzzleSolver-0.4.0-win-x64.zip.sha256
 ```
 
 The two hashes must match. (On Linux or macOS:
-`sha256sum -c PuzzleSolver-0.3.0-win-x64.zip.sha256`.) If Windows flags the download,
-`Unblock-File .\PuzzleSolver-0.3.0-win-x64.zip` first.
+`sha256sum -c PuzzleSolver-0.4.0-win-x64.zip.sha256`.) If Windows flags the download,
+`Unblock-File .\PuzzleSolver-0.4.0-win-x64.zip` first.
 
 Then extract the ZIP and, from the extracted folder, run the installer:
 
@@ -122,6 +122,8 @@ unresolved_max_per_hour = 60    # acknowledgements have their own, looser budget
 [storage]
 retain_days = 7
 log_images = false              # opt-in reference to an UNRESOLVED image only
+keep_images = false             # opt-in bounded review copy of EVERY solve's image
+max_images = 200                # count cap when keep_images = true (age = retain_days)
 [image]
 max_width = 2000                # the shared gate rejects wider images as a 413
 max_pixels = 1000000            # ~14x the largest corpus puzzle; bounds buildVariants
@@ -479,8 +481,9 @@ always allowed).
 **Some settings need a restart.** The editor marks each one `[live]` or `[restart]`, and
 the headless command prints which applies:
 
-- **live** — `storage.log_images`, `ui.notify_on_unresolved`, `solver.tier0`,
-  `ocr.variants`, `ocr.min_confidence`, `image.max_width` and `image.max_pixels`. These
+- **live** — `storage.log_images`, `storage.keep_images`, `ui.notify_on_unresolved`,
+  `solver.tier0`, `ocr.variants`, `ocr.min_confidence`, `image.max_width` and
+  `image.max_pixels`. These
   are re-read from the shared config object for every solve, push or HTTP request, so a
   save takes effect without a restart.
 - **restart** — the models and base URL, `offline_only`, `escalate_to_vision`,
@@ -728,9 +731,21 @@ way out.
 | Log | `%LOCALAPPDATA%\PuzzleSolver\logs\app.log` | `${XDG_STATE_HOME:-~/.local/state}/puzzlesolver/logs/app.log` |
 | State DB | `%LOCALAPPDATA%\PuzzleSolver\state.db` | `${XDG_DATA_HOME:-~/.local/share}/puzzlesolver/state.db` |
 | Inbox | `%LOCALAPPDATA%\PuzzleSolver\inbox` | `${XDG_DATA_HOME:-~/.local/share}/puzzlesolver/inbox` |
+| Stored images (opt-in) | `%LOCALAPPDATA%\PuzzleSolver\images` | `${XDG_DATA_HOME:-~/.local/share}/puzzlesolver/images` |
 
 The log rotates at 5 MB × 3. `storage.retain_days` (default 7) prunes the inbox and old
 attempt rows on startup.
+
+**Stored review copies (`storage.keep_images`).** With `keep_images = true` the app keeps
+a **bounded WebP copy** of every solve's image (longest edge 512 px, re-encoded, not the
+original bytes) so the recent-solves page can show what was solved. It is **off by
+default**, like every other setting that retains or exposes data. The copies are pruned
+by the same `storage.retain_days` window and by `storage.max_images` (default 200,
+newest kept); `node src/cli.js images purge` deletes all of them on demand. On POSIX the
+images directory is mode `0700` and the files `0600`; on Windows `chmod` does nothing, so
+there the files are protected only by the per-user profile ACL — they are **not
+encrypted**. The thumbnail is served through the same access-gated web route as the
+statistics page.
 
 **Uninstall.**
 
@@ -745,7 +760,7 @@ folders. Manually: `schtasks /Delete /TN PuzzleSolver /F`, then delete
 
 ## Known limitations
 
-- **Pre-release.** 0.3.0 is a pre-release: expect rough edges and no stability promise.
+- **Pre-release.** 0.4.0 is a pre-release: expect rough edges and no stability promise.
   The **Pushbullet ingress has never run against the real Pushbullet service** — no
   account or token exists (issue #3) — so the app's primary path is exercised against
   fakes rather than observed end to end.
@@ -810,7 +825,7 @@ plain ESM.
 
 ```bash
 npm install
-npm test              # 718 tests (712 pass, 6 skip), offline: no network, no token, no key
+npm test              # 737 tests (731 pass, 6 skip), offline: no network, no token, no key
 npm run test:unit     # fast subset
 npm run test:corpus   # real images through real OCR, ~4s
 npm run test:live     # opt-in; skips unless LLM_API_KEY is set

@@ -53,7 +53,8 @@ const VARIANT_NAMES = Object.freeze(Object.keys(VARIANTS));
  *
  * `restart: false` is a promise that the running process re-reads the value from this
  * exact config object per solve. `core.solve` re-reads `storage.log_images`,
- * `solver.tier0`, `ocr.variants`, `ocr.min_confidence` and `image.max_pixels`;
+ * `storage.keep_images`, `solver.tier0`, `ocr.variants`, `ocr.min_confidence` and
+ * `image.max_pixels`;
  * `handlePush` and the HTTP request path re-read `image.max_width`/`max_pixels` and
  * `ui.notify_on_unresolved`. Everything else is captured when the listener, reasoner,
  * responder or HTTP server is constructed, so the editor says "restart" rather than
@@ -96,6 +97,8 @@ export const SETTINGS = Object.freeze([
 
   Object.freeze({ id: 'storage.retain_days', label: 'Retain inbox/attempts (days)', path: ['storage', 'retain_days'], type: 'number', min: 0, restart: true, since: '0.1.0' }),
   Object.freeze({ id: 'storage.log_images', label: 'Keep a file reference for unresolved images', path: ['storage', 'log_images'], type: 'boolean', restart: false, since: '0.1.0' }),
+  Object.freeze({ id: 'storage.keep_images', label: 'Store a bounded review copy of every solved image', path: ['storage', 'keep_images'], type: 'boolean', restart: false, since: '0.4.0' }),
+  Object.freeze({ id: 'storage.max_images', label: 'Most stored images to keep', path: ['storage', 'max_images'], type: 'integer', min: 1, max: 100_000, restart: true, since: '0.4.0' }),
 
   Object.freeze({ id: 'ocr.languages', label: 'OCR languages', path: ['ocr', 'languages'], type: 'string-array', restart: true, since: '0.1.0' }),
   Object.freeze({ id: 'ocr.min_confidence', label: 'Minimum OCR confidence', path: ['ocr', 'min_confidence'], type: 'number', min: 0, max: 100, restart: false, since: '0.1.0' }),

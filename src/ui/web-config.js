@@ -45,6 +45,7 @@
  */
 import { createServer as createHttpServerImpl } from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 
 import { DEFAULT_MAX_BODY_BYTES } from '../http/defaults.js';
 import { DEFAULT_MAX_HEIGHT, DEFAULT_MIN_HEIGHT } from '../imaging/limits.js';
@@ -282,6 +283,12 @@ const STYLE = `
   button:hover { border-color: var(--link); color: var(--link); }
   button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); font-weight: 600; }
   button.primary:hover { filter: brightness(1.08); color: var(--accent-fg); }
+  .thumb img {
+    display: block; width: 64px; height: 64px; object-fit: cover;
+    border: 1px solid var(--border-strong); border-radius: 6px; background: var(--panel);
+  }
+  .thumb-missing { color: var(--muted); font-size: 0.78rem; white-space: nowrap; }
+  .thumb-none { color: var(--muted); }
 `;
 
 /** A link to the same page with a theme choice, so the toggle is a GET, not a script. */
@@ -473,6 +480,22 @@ function summaryTable(title, group) {
 }
 
 /**
+ * The review-copy cell. The URL is the row id plus the session, never a path: the
+ * route reads the path from the database. A row whose file is gone renders a
+ * placeholder rather than a broken image or a 500 (#100).
+ */
+function thumbnailCell(image, session) {
+  if (!image || image.id == null) return '<span class="thumb-none">-</span>';
+  if (image.exists !== true) return '<span class="thumb-missing">file missing</span>';
+  const href = `/images/${encodeURIComponent(String(image.id))}?session=${encodeURIComponent(session)}`;
+  return (
+    `<a class="thumb" href="${escapeHtml(href)}" target="_blank" rel="noopener">` +
+    `<img src="${escapeHtml(href)}" alt="puzzle image" width="64" height="64" loading="lazy">` +
+    '</a>'
+  );
+}
+
+/**
  * The statistics page. Read-only by construction: it takes already-read data and a
  * session token, and has no store, controller or POST target. Exported so a test can
  * assert the numbers and labels without an HTTP server.
@@ -495,6 +518,7 @@ export function renderStatsPage({
       (row) =>
         '<tr>' +
         `<td>${escapeHtml(formatWhen(row.at))}</td>` +
+        `<td class="thumb">${thumbnailCell(row.image, session)}</td>` +
         `<td><code>${escapeHtml(row.subject)}</code></td>` +
         `<td>${row.answer == null ? '<em>none</em>' : escapeHtml(row.answer)}</td>` +
         `<td>${escapeHtml(row.method ?? 'none')}</td>` +
@@ -505,7 +529,7 @@ export function renderStatsPage({
     )
     .join('');
   const recentTable = recentRows
-    ? '<table><thead><tr><th>when</th><th>puzzle</th><th>answer</th><th>method</th><th>sent / withheld</th><th class="num">took</th><th class="num">confident</th></tr></thead>' +
+    ? '<table><thead><tr><th>when</th><th>image</th><th>puzzle</th><th>answer</th><th>method</th><th>sent / withheld</th><th class="num">took</th><th class="num">confident</th></tr></thead>' +
       `<tbody>${recentRows}</tbody></table>`
     : '<p class="display">No recorded solves yet.</p>';
 
@@ -706,6 +730,10 @@ export function createWebSettingsServer({
   // is never blended with the recorded-traffic report computed from `store`.
   store = null,
   corpusReport = null,
+  // #100: the bounded review-copy store. Without it the thumbnail route is a 404 and
+  // the statistics page renders no thumbnails, exactly like the solve page without a
+  // core. Reads are by row id; the path always comes from the database.
+  imageStore = null,
 } = {}) {
   if (!controller || typeof controller.list !== 'function' || typeof controller.save !== 'function') {
     throw new Error('createWebSettingsServer needs a settings controller (list/save)');
@@ -788,6 +816,24 @@ export function createWebSettingsServer({
       'referrer-policy': 'no-referrer',
       'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'",
       ...headers,
+    });
+    res.end(buffer);
+  }
+
+  /**
+   * Serve one stored image. The content type is fixed server-side - the encoder
+   * always writes WebP - so it is never echoed from the request. `no-store` matches
+   * every other page: a stored image is as sensitive as the statistics page linking
+   * to it.
+   */
+  function sendImage(res, buffer) {
+    if (res.writableEnded || res.destroyed) return;
+    res.writeHead(200, {
+      'content-type': 'image/webp',
+      'content-length': String(buffer.length),
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+      'content-security-policy': "default-src 'none'",
     });
     res.end(buffer);
   }
@@ -941,7 +987,17 @@ export function createWebSettingsServer({
         },
         { requireConfidence, modelNames }
       );
-      return { ...row, status: formatted.status, reason: formatted.reason ?? null };
+      return {
+        ...row,
+        status: formatted.status,
+        reason: formatted.reason ?? null,
+        // The row id is the only thing the page needs; existence is checked here so
+        // a vanished file becomes a placeholder, not a broken image (#100).
+        image:
+          row.imageId == null
+            ? null
+            : { id: row.imageId, exists: imageStore ? imageStore.exists(row.imageId) : false },
+      };
     });
     return send(
       res,
@@ -1056,6 +1112,36 @@ export function createWebSettingsServer({
             : send(res, 200, renderLoginPage({ theme, configPath, credentialPath }), pageHeaders);
         }
         return handleStats(res, theme);
+      }
+
+      // A stored image (#100). It sits behind the very same gate as every other page -
+      // the address/Host checks above, then the session - so a thumbnail URL is not an
+      // unauthenticated side door that merely looks like a static asset. The id is a
+      // row id; the path is read from the database inside `imageStore.pathFor`, never
+      // built from the request. Anything that is not a known numeric row is a 404.
+      const imageMatch = method === 'GET' ? /^\/images\/(\d+)$/.exec(url.pathname) : null;
+      if (imageMatch) {
+        if (!sessionValid(url.searchParams.get('session') ?? '', remote)) {
+          return loopbackClient
+            ? send(res, 403, messagePage('Session expired', 'Reopen Settings to get a fresh session.', { theme: cookieTheme }))
+            : send(res, 200, renderLoginPage({ theme, configPath, credentialPath }), pageHeaders);
+        }
+        if (!imageStore) {
+          return send(res, 404, messagePage('Not found', 'Stored images are not available from this web UI.', { theme: cookieTheme }));
+        }
+        const path = imageStore.pathFor(imageMatch[1]);
+        if (!path) {
+          return send(res, 404, messagePage('Not found', 'There is no stored image with that id.', { theme: cookieTheme }));
+        }
+        let bytes;
+        try {
+          bytes = readFileSync(path);
+        } catch {
+          // The row exists but the file is gone. 404 (and the page shows a
+          // placeholder) rather than a 500.
+          return send(res, 404, messagePage('Not found', 'The stored image file is missing.', { theme: cookieTheme }));
+        }
+        return sendImage(res, bytes);
       }
 
       if (method === 'POST' && (url.pathname === '/save' || url.pathname === '/test' || url.pathname === '/cancel')) {
@@ -1214,6 +1300,7 @@ export async function openWebSettingsDialog({
   config = null,
   inboxDir = null,
   store = null,
+  imageStore = null,
   corpusReport = null,
 } = {}) {
   let server;
@@ -1233,6 +1320,7 @@ export async function openWebSettingsDialog({
       config,
       inboxDir,
       store,
+      imageStore,
       corpusReport,
     });
     await server.start();

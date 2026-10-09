@@ -32,6 +32,7 @@ import { createReasoner } from './solver/reason.js';
 import { openStore } from './state/db.js';
 import { runAccuracy } from './accuracy-cli.js';
 import { runConfig } from './config-cli.js';
+import { runImages } from './images-cli.js';
 
 const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.bmp', '.webp', '.tif', '.tiff', '.gif']);
 
@@ -281,6 +282,7 @@ async function main() {
       '  --token <token>        Pushbullet token for listen mode (or PUSHBULLET_TOKEN)\n' +
       '  config list|get|set|edit  change settings without the tray (`config --help`)\n' +
       '  config edit --gui         the settings editor as a loopback web UI in the browser\n' +
+      '  images purge              delete every stored review copy (storage.keep_images)\n' +
       '\n' +
       'The HTTP ingress is opt-in: set [http] enabled = true in the config and provide\n' +
       'HTTP_AUTH_TOKEN (or an http_auth_token credential). It binds 127.0.0.1 by default.'
@@ -417,6 +419,14 @@ if (argv[0] === 'accuracy') {
   // The headless settings route. It prints its own usage and returns a code rather
   // than throwing a stack, because a rejected value is an expected outcome.
   runConfig(argv.slice(1)).then(
+    (code) => process.exit(code ?? 0),
+    (err) => {
+      console.error(err?.message ?? String(err));
+      process.exit(1);
+    }
+  );
+} else if (argv[0] === 'images') {
+  runImages(argv.slice(1)).then(
     (code) => process.exit(code ?? 0),
     (err) => {
       console.error(err?.message ?? String(err));
