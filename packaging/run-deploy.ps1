@@ -120,6 +120,10 @@ try {
 ### Windows deployment
 
 install -> task registered and inspected -> packaged app starts under ``--headless`` -> ``PuzzleSolver.vbs`` launches -> uninstall: all passed in **${seconds}s**.
+
+Not covered here, because a runner has no interactive desktop: the native ``systray2`` tray
+widget, the ``node-notifier`` toast, and the ``explorer.exe`` browser hand-off. Restart-on-failure
+is inspected as a task property, not observed as a restart.
 "@
     }
 }
