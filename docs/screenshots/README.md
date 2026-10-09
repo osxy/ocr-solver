@@ -101,10 +101,13 @@ Exactly **one** committed image is expected to differ on every re-run:
 | `solve.png` | it shows a **genuine offline solve with that run's real duration** (`took NNN ms`). The duration is a property of the run, not of the fixture; pinning it would mean fabricating a timing, which is the opposite of what this page exists to show. |
 
 The other five — `settings.png`, `settings-dark.png`, `statistics.png`,
-`statistics-dark.png`, `login.png` — must be **byte-identical** on a re-run. If
-`git status` shows one of them dirty after `npm run screenshots`, that is a real change in
-the page (or a new source of clock noise to find), not something to wave through. So the
-diff you review is `solve.png` plus any file that genuinely changed.
+`statistics-dark.png`, `login.png` — must be **byte-identical** on a re-run on the same
+machine with the same Firefox build. (That is what “reproducible” is measured to mean here:
+same run twice. A different Firefox version may render type differently, so a diff across
+machines is not automatically a real UI change.) If `git status` shows one of them dirty
+after `npm run screenshots`, that is a real change in the page (or a new source of clock
+noise to find), not something to wave through. So the diff you review is `solve.png` plus
+any file that genuinely changed.
 
 ## They go stale silently — this is the reason this file exists
 
