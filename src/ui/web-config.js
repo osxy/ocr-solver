@@ -72,6 +72,15 @@ export const LOGIN_FAILED_MESSAGE = 'Incorrect credentials.';
 
 export { isAllowedHostHeader };
 
+/**
+ * The only trusted client address: the socket's. `X-Forwarded-For` is caller-supplied
+ * and trivially spoofed, so honouring it would turn the allowlist into a formality.
+ * A proxy deployment must be configured explicitly; the header is never consulted.
+ */
+export function remoteAddressOf(req) {
+  return req?.socket?.remoteAddress ?? null;
+}
+
 /** Constant-time comparison for the two opaque tokens. */
 export function constantTimeEqual(a, b) {
   if (typeof a !== 'string' || typeof b !== 'string') return false;
@@ -349,7 +358,7 @@ export function createWebSettingsServer({
   // Access control (#65).
   webUi = null,
   credentialVerifier = null,
-  getRemoteAddress = (req) => req.socket?.remoteAddress ?? null,
+  getRemoteAddress = remoteAddressOf,
   // Solve page (#65). Without a core the route is a 404; the config editor does not
   // need one, but the tray/app passes the shared core.
   solveCore = null,

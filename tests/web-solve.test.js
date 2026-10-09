@@ -18,7 +18,7 @@ import { validateConfig } from '../src/config.js';
 import { memoryStore } from '../src/state/db.js';
 import { createApp, MissingWebUiCredentialError } from '../src/app.js';
 import { hashWebUiPassword } from '../src/ui/access.js';
-import { createWebSettingsServer } from '../src/ui/web-config.js';
+import { createWebSettingsServer, remoteAddressOf } from '../src/ui/web-config.js';
 
 function tempDir(t) {
   const dir = mkdtempSync(join(tmpdir(), 'puzzlesolver-web-solve-'));
@@ -160,6 +160,15 @@ test('a disallowed source is refused before any handler runs (#65)', async (t) =
   // The settings controller was never touched.
   assert.equal(controller.calls.list, 0, 'a disallowed source must not reach a handler');
   assert.equal(controller.saves, 0);
+});
+
+test('the trusted client address comes from the socket, never X-Forwarded-For', () => {
+  assert.equal(
+    remoteAddressOf({ headers: { 'x-forwarded-for': '127.0.0.1' }, socket: { remoteAddress: '10.9.9.9' } }),
+    '10.9.9.9',
+    'a spoofed forwarding header must not become the client address'
+  );
+  assert.equal(remoteAddressOf({ headers: { 'x-forwarded-for': '127.0.0.1' }, socket: null }), null);
 });
 
 test('X-Forwarded-For does not affect the decision', async (t) => {
