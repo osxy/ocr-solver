@@ -275,6 +275,63 @@ test('a body over the configured cap is a 413', async (t) => {
 });
 
 // ---------------------------------------------------------------------------
+// Pixel bomb: tiny on the wire, enormous once decoded (issue #41)
+// ---------------------------------------------------------------------------
+
+test('a small file that decodes to a pixel bomb is a 413 before the solve runs', async (t) => {
+  let solveCalls = 0;
+  const core = { solve: async () => { solveCalls += 1; return { answer: '2', confident: true, method: 'tier0:count' }; } };
+  const { url } = await startServer(t, { core });
+  // 2000x2000 white PNG: ~16 KB on the wire, 4,000,000 pixels decoded. It is well
+  // inside the 5 MiB byte cap and would have gone straight to `buildVariants` before
+  // the pixel cap existed.
+  const bomb = await sharp({ create: { width: 2000, height: 2000, channels: 3, background: '#ffffff' } })
+    .png()
+    .toBuffer();
+  assert.ok(bomb.length < 5 * 1024 * 1024, 'the bomb must be within the byte cap');
+
+  const started = performance.now();
+  const res = await post(url, { body: bomb, contentType: 'image/png' });
+  const elapsedMs = performance.now() - started;
+
+  assert.equal(res.status, 413, res.text);
+  assert.equal(res.json.error, 'invalid_image');
+  assert.equal(res.json.reason, 'pixels');
+  assert.equal(solveCalls, 0, 'the gate must reject before the solve (and buildVariants) runs');
+  assert.ok(elapsedMs < 2000, `rejection took ${elapsedMs.toFixed(0)}ms; it must not decode the pixels`);
+});
+
+test('a very wide image is a 413 with reason width', async (t) => {
+  const { url } = await startServer(t);
+  const wide = await sharp({ create: { width: 3000, height: 100, channels: 3, background: '#ffffff' } })
+    .png()
+    .toBuffer();
+  const res = await post(url, { body: wide, contentType: 'image/png' });
+  assert.equal(res.status, 413, res.text);
+  assert.equal(res.json.reason, 'width');
+});
+
+test('an image just under the pixel cap still solves', async (t) => {
+  const { url } = await startServer(t);
+  // 1000x500 = 500,000 px, half the default cap - the cap must not reject it.
+  const bytes = await sharp({ create: { width: 1000, height: 500, channels: 3, background: '#ffffff' } })
+    .png()
+    .toBuffer();
+  const res = await post(url, { body: bytes, contentType: 'image/png' });
+  assert.equal(res.status, 200, res.text);
+  assert.equal(res.json.image.width, 1000);
+  assert.equal(res.json.image.height, 500);
+});
+
+test('the HTTP gate honours a configured pixel cap', async (t) => {
+  const config = validateConfig({ http: { enabled: true, bind: '127.0.0.1', port: 0 }, image: { max_pixels: 1000 } }).config;
+  const { url } = await startServer(t, { config });
+  const res = await post(url, { body: await smallPng(), contentType: 'image/png' });
+  assert.equal(res.status, 413, res.text);
+  assert.equal(res.json.reason, 'pixels');
+});
+
+// ---------------------------------------------------------------------------
 // Rate limit
 // ---------------------------------------------------------------------------
 
@@ -521,6 +578,8 @@ test('a non-loopback bind logs a loud warning', async () => {
 
 test('imageErrorStatus maps every fetcher reason', () => {
   assert.equal(imageErrorStatus({ reason: 'size' }), 413);
+  assert.equal(imageErrorStatus({ reason: 'width' }), 413);
+  assert.equal(imageErrorStatus({ reason: 'pixels' }), 413);
   assert.equal(imageErrorStatus({ reason: 'http' }), 502);
   assert.equal(imageErrorStatus({ reason: 'no-url' }), 400);
   assert.equal(imageErrorStatus({ reason: 'magic' }), 415);
@@ -571,6 +630,14 @@ test('validateImageBuffer shares the decode gate', async () => {
   assert.ok(ok.width > 0 && ok.height > 0);
   await assert.rejects(() => validateImageBuffer(Buffer.from('nope')), /not a recognised image/);
   await assert.rejects(() => validateImageBuffer(png, { maxBytes: 10 }), /larger than/);
+  await assert.rejects(
+    () => validateImageBuffer(png, { maxWidth: 100 }),
+    (err) => err.reason === 'width'
+  );
+  await assert.rejects(
+    () => validateImageBuffer(png, { maxPixels: 100 }),
+    (err) => err.reason === 'pixels'
+  );
 });
 
 // ---------------------------------------------------------------------------

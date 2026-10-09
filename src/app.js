@@ -348,7 +348,11 @@ export async function createApp({
 
   /** filter -> download -> solveImage -> respond, with the push status updated at each step. */
   async function handlePush(push, { store: handlerStore = store } = {}) {
-    const image = await fetchImage(push, { inboxDir: effectiveInbox });
+    const image = await fetchImage(push, {
+      inboxDir: effectiveInbox,
+      maxWidth: config.image?.max_width,
+      maxPixels: config.image?.max_pixels,
+    });
     handlerStore?.setPushStatus(push.iden, 'downloaded');
 
     const result = await core.solve(image.path, { subject: push.iden, store: handlerStore });

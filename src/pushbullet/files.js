@@ -10,27 +10,44 @@
  *   1. size cap, enforced while streaming (never buffer an unbounded body);
  *   2. magic bytes - the real type is read from the bytes, not trusted from
  *      `file_type`, and it is what chooses the saved extension;
- *   3. `sharp` must actually decode it, and the height has to be plausible.
+ *   3. `sharp` must actually decode it, and the dimensions have to be plausible -
+ *      height, width and total pixels. A tiny, highly compressible PNG can be
+ *      millions of pixels once decoded, which downstream preprocessing then
+ *      amplifies; the pixel cap is what keeps that from being a denial of service.
  *
  * The decode check matters because magic bytes are four to twelve bytes: a truncated
  * or corrupt file can pass step 2 and fail inside the pipeline; failing here keeps
  * the solver from ever seeing a broken image.
+ *
+ * The width/pixel caps are read from the same metadata as the height check, so an
+ * oversized image is rejected before a single pixel is decoded.
  */
 import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import sharp from 'sharp';
+import {
+  DEFAULT_MAX_BYTES,
+  DEFAULT_MAX_HEIGHT,
+  DEFAULT_MAX_PIXELS,
+  DEFAULT_MAX_WIDTH,
+  DEFAULT_MIN_HEIGHT,
+} from '../imaging/limits.js';
 
-export const DEFAULT_MAX_BYTES = 5 * 1024 * 1024;
+export {
+  DEFAULT_MAX_BYTES,
+  DEFAULT_MAX_HEIGHT,
+  DEFAULT_MAX_PIXELS,
+  DEFAULT_MAX_WIDTH,
+  DEFAULT_MIN_HEIGHT,
+};
 export const DEFAULT_RETAIN_DAYS = 7;
-export const DEFAULT_MIN_HEIGHT = 8;
-export const DEFAULT_MAX_HEIGHT = 20_000;
 
 export class ImageFetchError extends Error {
   constructor(message, { reason = 'unknown', status = null } = {}) {
     super(message);
     this.name = 'ImageFetchError';
-    this.reason = reason; // size | http | magic | decode | height | no-url
+    this.reason = reason; // size | http | magic | decode | height | width | pixels | no-url
     this.status = status;
   }
 }
@@ -108,7 +125,7 @@ async function readCapped(response, maxBytes) {
 }
 
 /**
- * The shared image gate: size cap, magic bytes, a real decode and a sane height.
+ * The shared image gate: size cap, magic bytes, a real decode and sane dimensions.
  *
  * Every ingress runs exactly this before an image reaches the solver. The Pushbullet
  * fetcher composes it with a streaming cap; the HTTP ingress calls it on a request
@@ -123,6 +140,8 @@ export async function validateImageBuffer(
     maxBytes = DEFAULT_MAX_BYTES,
     minHeight = DEFAULT_MIN_HEIGHT,
     maxHeight = DEFAULT_MAX_HEIGHT,
+    maxWidth = DEFAULT_MAX_WIDTH,
+    maxPixels = DEFAULT_MAX_PIXELS,
     sharpImpl = sharp,
   } = {}
 ) {
@@ -144,6 +163,21 @@ export async function validateImageBuffer(
   }
   if (!meta?.width || !meta?.height) {
     throw new ImageFetchError('sharp decoded the image but reported no dimensions', { reason: 'decode' });
+  }
+  // Pixels first: this is the denial-of-service guard, and the message carries the
+  // dimensions a width check would report anyway.
+  const pixels = meta.width * meta.height;
+  if (pixels > maxPixels) {
+    throw new ImageFetchError(
+      `image is ${meta.width}x${meta.height} (${pixels} pixels), above the ${maxPixels} pixel cap`,
+      { reason: 'pixels' }
+    );
+  }
+  if (meta.width > maxWidth) {
+    throw new ImageFetchError(
+      `image width ${meta.width}px is outside the sane range 1..${maxWidth}`,
+      { reason: 'width' }
+    );
   }
   if (meta.height < minHeight || meta.height > maxHeight) {
     throw new ImageFetchError(
@@ -174,6 +208,8 @@ export async function downloadImage(
     timeoutMs = 30_000,
     minHeight = DEFAULT_MIN_HEIGHT,
     maxHeight = DEFAULT_MAX_HEIGHT,
+    maxWidth = DEFAULT_MAX_WIDTH,
+    maxPixels = DEFAULT_MAX_PIXELS,
     sharpImpl = sharp,
   } = {}
 ) {
@@ -191,7 +227,7 @@ export async function downloadImage(
   }
 
   const buffer = await readCapped(response, maxBytes);
-  const validated = await validateImageBuffer(buffer, { maxBytes, minHeight, maxHeight, sharpImpl });
+  const validated = await validateImageBuffer(buffer, { maxBytes, minHeight, maxHeight, maxWidth, maxPixels, sharpImpl });
   return { ...validated, contentType: response.headers?.get?.('content-type') ?? null };
 }
 

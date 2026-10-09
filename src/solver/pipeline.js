@@ -93,9 +93,13 @@ export async function solveImage(worker, image, options = {}) {
     // `storage.log_images`: image bytes are never stored, but when this is on a
     // reference to the retained file is recorded for UNRESOLVED puzzles only.
     logImages = false,
+    // Second layer behind the image gate: `sharp` refuses to decode an input above
+    // this many pixels, so a pixel bomb cannot reach the pipeline even if a future
+    // ingress forgets `validateImageBuffer`.
+    maxPixels = null,
   } = options;
 
-  const built = await buildVariants(image, variants);
+  const built = await buildVariants(image, variants, { limitInputPixels: maxPixels });
   const ocr = await recognizeVariants(worker, built, psms);
   const ranked = rankResults(ocr).filter((r) => !r.empty && r.confidence >= minConfidence);
 
