@@ -25,6 +25,13 @@ import { parse as parseToml } from 'smol-toml';
 import { VARIANTS } from './imaging/preprocess.js';
 import { HISTORY_MODES } from './pushbullet/listener.js';
 import { STRATEGIES } from './pushbullet/respond.js';
+import {
+  DEFAULT_HTTP_BIND,
+  DEFAULT_HTTP_PORT,
+  DEFAULT_MAX_BODY_BYTES,
+  DEFAULT_RATE_LIMIT_PER_MIN,
+  DEFAULT_TIMEOUT_MS,
+} from './http/defaults.js';
 
 export class ConfigError extends Error {
   constructor(message) {
@@ -87,6 +94,19 @@ export const DEFAULTS = {
   ui: {
     tray: true,
     notify_on_unresolved: true,
+  },
+  // HTTP ingress (#15). Off by default: an endpoint that solves CAPTCHAs is an
+  // oracle, so enabling it is a deliberate act with a bearer token attached.
+  http: {
+    enabled: false,
+    bind: DEFAULT_HTTP_BIND,
+    port: DEFAULT_HTTP_PORT,
+    rate_limit_per_min: DEFAULT_RATE_LIMIT_PER_MIN,
+    // Synchronous by design (DESIGN 4.15): offline solves are ~1-5 s and a vision
+    // escalation can pass 10 s, so the budget is generous and a solve that blows it
+    // is a 504 rather than a 202 the caller has to poll.
+    timeout_ms: DEFAULT_TIMEOUT_MS,
+    max_body_bytes: DEFAULT_MAX_BODY_BYTES,
   },
 };
 
@@ -283,6 +303,13 @@ export function validateConfig(raw = {}) {
 
   requireBoolean(config, 'ui', 'tray');
   requireBoolean(config, 'ui', 'notify_on_unresolved');
+
+  requireBoolean(config, 'http', 'enabled');
+  requireString(config, 'http', 'bind');
+  requireNumber(config, 'http', 'port', { min: 0, max: 65_535, integer: true });
+  requireNumber(config, 'http', 'rate_limit_per_min', { min: 0, integer: true });
+  requireNumber(config, 'http', 'timeout_ms', { min: 0, integer: true });
+  requireNumber(config, 'http', 'max_body_bytes', { min: 1, integer: true });
 
   return { config, warnings };
 }

@@ -269,10 +269,13 @@ async function main() {
       '  --store <file.db>      record every attempt to SQLite\n' +
       '  --attempts <file.db>   print recorded attempts and exit\n' +
       '  accuracy               offline accuracy report (corpus + recorded traffic)\n' +
-      '  listen                 run the Pushbullet service (see also --listen)\n' +
+      '  listen                 run the service (Pushbullet and/or the HTTP ingress)\n' +
       '  --headless             skip the tray and notifications (for a service/unattended run)\n' +
       '  --config <path>        TOML config file (or PUZZLESOLVER_CONFIG)\n' +
-      '  --token <token>        Pushbullet token for listen mode (or PUSHBULLET_TOKEN)'
+      '  --token <token>        Pushbullet token for listen mode (or PUSHBULLET_TOKEN)\n' +
+      '\n' +
+      'The HTTP ingress is opt-in: set [http] enabled = true in the config and provide\n' +
+      'HTTP_AUTH_TOKEN (or an http_auth_token credential). It binds 127.0.0.1 by default.'
     );
     process.exit(opts.help ? 0 : 2);
   }
@@ -405,7 +408,12 @@ if (argv[0] === 'accuracy') {
       console.error(err.message);
       process.exit(1);
     }
-    if (err?.name === 'MissingTokenError' || err?.name === 'SetupCancelledError' || err?.name === 'SetupFailedError') {
+    if (
+      err?.name === 'MissingTokenError' ||
+      err?.name === 'MissingHttpTokenError' ||
+      err?.name === 'SetupCancelledError' ||
+      err?.name === 'SetupFailedError'
+    ) {
       console.error(err.message);
       process.exit(1);
     }

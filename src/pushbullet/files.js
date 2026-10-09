@@ -108,6 +108,61 @@ async function readCapped(response, maxBytes) {
 }
 
 /**
+ * The shared image gate: size cap, magic bytes, a real decode and a sane height.
+ *
+ * Every ingress runs exactly this before an image reaches the solver. The Pushbullet
+ * fetcher composes it with a streaming cap; the HTTP ingress calls it on a request
+ * body. One implementation is deliberate - the checks are the security-relevant part,
+ * and a second copy would be the one that drifts (the same reasoning as `redact.js`).
+ *
+ * @returns {{buffer: Buffer, ext: string, mime: string, width: number, height: number, bytes: number}}
+ */
+export async function validateImageBuffer(
+  buffer,
+  {
+    maxBytes = DEFAULT_MAX_BYTES,
+    minHeight = DEFAULT_MIN_HEIGHT,
+    maxHeight = DEFAULT_MAX_HEIGHT,
+    sharpImpl = sharp,
+  } = {}
+) {
+  const bytes = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer ?? []);
+  if (bytes.length > maxBytes) {
+    throw new ImageFetchError(`image is larger than the ${maxBytes} byte cap`, { reason: 'size' });
+  }
+
+  const kind = sniffImage(bytes);
+  if (!kind) {
+    throw new ImageFetchError('bytes are not a recognised image (magic bytes)', { reason: 'magic' });
+  }
+
+  let meta;
+  try {
+    meta = await sharpImpl(bytes).metadata();
+  } catch (err) {
+    throw new ImageFetchError(`sharp could not decode the image: ${err?.message ?? err}`, { reason: 'decode' });
+  }
+  if (!meta?.width || !meta?.height) {
+    throw new ImageFetchError('sharp decoded the image but reported no dimensions', { reason: 'decode' });
+  }
+  if (meta.height < minHeight || meta.height > maxHeight) {
+    throw new ImageFetchError(
+      `image height ${meta.height}px is outside the sane range ${minHeight}..${maxHeight}`,
+      { reason: 'height' }
+    );
+  }
+
+  return {
+    buffer: bytes,
+    ext: kind.ext,
+    mime: kind.mime,
+    width: meta.width,
+    height: meta.height,
+    bytes: bytes.length,
+  };
+}
+
+/**
  * Download and validate one image URL.
  * @returns {{buffer: Buffer, ext: string, mime: string, width: number, height: number, bytes: number, contentType: string|null}}
  */
@@ -136,36 +191,8 @@ export async function downloadImage(
   }
 
   const buffer = await readCapped(response, maxBytes);
-  const kind = sniffImage(buffer);
-  if (!kind) {
-    throw new ImageFetchError('downloaded bytes are not a recognised image (magic bytes)', { reason: 'magic' });
-  }
-
-  let meta;
-  try {
-    meta = await sharpImpl(buffer).metadata();
-  } catch (err) {
-    throw new ImageFetchError(`sharp could not decode the image: ${err?.message ?? err}`, { reason: 'decode' });
-  }
-  if (!meta?.width || !meta?.height) {
-    throw new ImageFetchError('sharp decoded the image but reported no dimensions', { reason: 'decode' });
-  }
-  if (meta.height < minHeight || meta.height > maxHeight) {
-    throw new ImageFetchError(
-      `image height ${meta.height}px is outside the sane range ${minHeight}..${maxHeight}`,
-      { reason: 'height' }
-    );
-  }
-
-  return {
-    buffer,
-    ext: kind.ext,
-    mime: kind.mime,
-    width: meta.width,
-    height: meta.height,
-    bytes: buffer.length,
-    contentType: response.headers?.get?.('content-type') ?? null,
-  };
+  const validated = await validateImageBuffer(buffer, { maxBytes, minHeight, maxHeight, sharpImpl });
+  return { ...validated, contentType: response.headers?.get?.('content-type') ?? null };
 }
 
 /** Save to the inbox as `<iden>.<ext>`; the extension comes from the magic bytes. */

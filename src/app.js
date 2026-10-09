@@ -31,6 +31,8 @@ import { createCircuitBreaker } from './model/breaker.js';
 import { createReasoner } from './solver/reason.js';
 import { createOcrWorker } from './ocr/recognize.js';
 import { solveImage } from './solver/pipeline.js';
+import { createSolveCore } from './solver/core.js';
+import { createHttpServer } from './http/server.js';
 import { createNotifier } from './ui/notifications.js';
 import { resolveTrayMode } from './ui/mode.js';
 import { createSetup } from './ui/setup.js';
@@ -61,6 +63,14 @@ export class SetupFailedError extends Error {
   constructor(message) {
     super(message);
     this.name = 'SetupFailedError';
+  }
+}
+
+/** `http.enabled` is on but no bearer token could be resolved. */
+export class MissingHttpTokenError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'MissingHttpTokenError';
   }
 }
 
@@ -203,6 +213,8 @@ export async function createApp({
   });
   let pushbulletToken = secrets.pushbullet.value;
   let llmApiKey = secrets.llm.value;
+  let httpToken = secrets.http?.value ?? null;
+  const httpEnabled = config.http?.enabled === true;
   logger.debug?.(`secrets: pushbullet=${JSON.stringify(describeSecret(secrets.pushbullet))} llm=${JSON.stringify(describeSecret(secrets.llm))}`);
 
   // Open the store before pruning: the prune is housekeeping and the store is what
@@ -225,7 +237,7 @@ export async function createApp({
   const wantTray = resolveTrayMode({ requested: trayRequested === true, configTray: config.ui.tray });
   const credentialPath = defaultCredentialPath({ platform, env, homedir });
 
-  if (!providedClient && !pushbulletToken) {
+  if (!providedClient && !pushbulletToken && !httpEnabled) {
     // Tray mode is the only place a dialog can be shown, so that is the only place
     // the first-run path exists. --headless (and every test that injects no dialog)
     // falls through to the actionable error below rather than a silent no-op.
@@ -258,6 +270,7 @@ export async function createApp({
       secrets = await loadSecrets({ explicit: explicitSecrets, env, providers, platform, homedir, logger });
       pushbulletToken = secrets.pushbullet.value;
       llmApiKey = secrets.llm.value;
+      httpToken = secrets.http?.value ?? null;
       logger.debug?.(`secrets after setup: pushbullet=${JSON.stringify(describeSecret(secrets.pushbullet))} llm=${JSON.stringify(describeSecret(secrets.llm))}`);
       if (!pushbulletToken) {
         if (ownsStore) store.close();
@@ -274,7 +287,20 @@ export async function createApp({
     }
   }
 
-  const client = providedClient ?? createClient({ token: pushbulletToken });
+  // The HTTP endpoint is an oracle; enabling it without a bearer token is refused
+  // rather than silently downgraded to anonymous.
+  if (httpEnabled && !httpToken) {
+    if (ownsStore) store.close();
+    throw new MissingHttpTokenError(
+      'http.enabled = true but no HTTP bearer token was found. Set HTTP_AUTH_TOKEN, or add ' +
+        `"http_auth_token" to ${credentialPath}; secrets are never read from config.toml.`
+    );
+  }
+
+  // A Pushbullet client only exists when there is a token (or a test injected one).
+  // An HTTP-only deployment has none at all - that is the point of the ingress seam:
+  // the same core runs with no Pushbullet account anywhere in the process.
+  const client = providedClient ?? (pushbulletToken ? createClient({ token: pushbulletToken }) : null);
   const worker = providedWorker ?? (await createWorker());
   const ownsWorker = !providedWorker;
 
@@ -286,8 +312,19 @@ export async function createApp({
     reasonerMode = built.reason;
   }
 
+  // The transport-agnostic core. Pushbullet, HTTP and the tray all call this; none of
+  // them re-wires the pipeline options (DESIGN 4.15).
+  const core = createSolveCore({
+    worker,
+    reasoner,
+    store,
+    config,
+    solveImage: solveImageImpl,
+    logger,
+  });
+
   let responder = providedResponder;
-  if (!responder && config.reply.enabled) {
+  if (!responder && client && config.reply.enabled) {
     responder = responderFactory({
       client,
       store,
@@ -306,16 +343,7 @@ export async function createApp({
     const image = await fetchImage(push, { inboxDir: effectiveInbox });
     handlerStore?.setPushStatus(push.iden, 'downloaded');
 
-    const result = await solveImageImpl(worker, image.path, {
-      variants: config.ocr.variants,
-      minConfidence: config.ocr.min_confidence,
-      reasoner,
-      store: handlerStore,
-      subject: push.iden,
-      logger,
-      useTier0: config.solver.tier0,
-      logImages: config.storage.log_images,
-    });
+    const result = await core.solve(image.path, { subject: push.iden, store: handlerStore });
 
     let response;
     if (responder) {
@@ -372,31 +400,37 @@ export async function createApp({
   async function solveLastImage() {
     const path = lastImagePath();
     if (!path) return { answer: null, reason: 'no-image', imagePath: null };
-    const result = await solveImageImpl(worker, path, {
-      variants: config.ocr.variants,
-      minConfidence: config.ocr.min_confidence,
-      reasoner,
-      store,
-      subject: basename(path),
-      logger,
-      useTier0: config.solver.tier0,
-      logImages: config.storage.log_images,
-    });
+    const result = await core.solve(path, { subject: basename(path) });
     logger?.info?.(`tray: re-solved ${basename(path)} -> ${result.answer ?? 'unresolved'}`);
     return { ...result, imagePath: path, reason: result.answer == null ? 'unresolved' : 'solved' };
   }
 
+  // Two ingresses, one core. Either can be absent: HTTP-only with no Pushbullet
+  // token is a supported (and tested) mode.
   const listener =
     providedListener ??
-    listenerFactory({
-      client,
-      store,
-      historyMode: config.pushbullet.history_mode,
-      pollIntervalMs: config.pushbullet.poll_interval_sec * 1000,
-      onPush: handlePush,
-      logger,
-      WebSocketImpl,
-    });
+    (client
+      ? listenerFactory({
+          client,
+          store,
+          historyMode: config.pushbullet.history_mode,
+          pollIntervalMs: config.pushbullet.poll_interval_sec * 1000,
+          onPush: handlePush,
+          logger,
+          WebSocketImpl,
+        })
+      : null);
+
+  const httpServer = httpEnabled
+    ? createHttpServer({
+        core,
+        token: httpToken,
+        config,
+        inboxDir: effectiveInbox,
+        responder,
+        logger,
+      })
+    : null;
 
   let started = false;
   let stopped = false;
@@ -405,10 +439,12 @@ export async function createApp({
     if (started) return status();
     started = true;
     logger.info(
-      `listening for Pushbullet pushes (history_mode=${config.pushbullet.history_mode}, ` +
-        `offline_only=${config.solver.offline_only}, reply=${config.reply.enabled}, reasoner=${reasonerMode})`
+      `starting ingresses (pushbullet=${Boolean(listener)}, http=${Boolean(httpServer)}, ` +
+        `history_mode=${config.pushbullet.history_mode}, offline_only=${config.solver.offline_only}, ` +
+        `reply=${config.reply.enabled}, reasoner=${reasonerMode})`
     );
-    await listener.start();
+    if (httpServer) await httpServer.start();
+    if (listener) await listener.start();
     return status();
   }
 
@@ -416,7 +452,12 @@ export async function createApp({
     if (stopped) return;
     stopped = true;
     try {
-      listener.stop();
+      listener?.stop();
+    } catch {
+      // already down
+    }
+    try {
+      await httpServer?.stop();
     } catch {
       // already down
     }
@@ -432,7 +473,12 @@ export async function createApp({
   }
 
   function status() {
-    return { ...listener.status?.(), reasoner: reasonerMode, reply: Boolean(responder) };
+    return {
+      ...(listener?.status?.() ?? {}),
+      reasoner: reasonerMode,
+      reply: Boolean(responder),
+      http: httpServer?.status?.() ?? null,
+    };
   }
 
   return {
@@ -445,8 +491,14 @@ export async function createApp({
     reasoner,
     responder,
     listener,
+    core,
+    httpServer,
     inboxDir: effectiveInbox,
-    secrets: { pushbullet: describeSecret(secrets.pushbullet), llm: describeSecret(secrets.llm) },
+    secrets: {
+      pushbullet: describeSecret(secrets.pushbullet),
+      llm: describeSecret(secrets.llm),
+      http: describeSecret(secrets.http),
+    },
     handlePush,
     lastImagePath,
     solveLastImage,
