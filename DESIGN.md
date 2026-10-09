@@ -650,6 +650,15 @@ Deferred deliberately. Each is tracked as an issue under the
 [v2 milestone](https://github.com/osxy/ocr-solver/milestone/6); none is scheduled, because each
 needs a design decision before it becomes work.
 
+- **HTTP ingress** — [issue #15](https://github.com/osxy/ocr-solver/issues/15): accept a puzzle over
+  HTTP and return the answer in the response, instead of arriving as a Pushbullet push. Worth
+  prioritising over the rest of v2 for a non-obvious reason: it provides a **genuine end-to-end
+  path with no Pushbullet account**, which is the one M2 claim that cannot otherwise be verified.
+  The real architectural point is that it is an *ingress seam*, not a second listener — ingress
+  supplies an image, the unchanged core solves and validates it, egress delivers the answer
+  (note push or response body). Building that seam once is cheaper than the three special cases
+  that grids (#9) and Playwright (#12) would otherwise each need. Security is the risk: a CAPTCHA
+  solver on a network is an oracle, so localhost-only and mandatory auth.
 - **Image-grid CAPTCHAs** ("select all bicycles") — [issue #9](https://github.com/osxy/ocr-solver/issues/9):
   grid splitter, vision model with grounding output (`[[0,2,5]]`), and a click/applier backend.
   A different responder entirely — do not fold into v1.
