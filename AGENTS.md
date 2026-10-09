@@ -39,6 +39,23 @@ change and why" without reading a mixed diff.
 Merging through a PR is expected. Say in the PR description *what was verified and how* —
 not just what changed. If the change was not verified, say so explicitly.
 
+**Merge policy:** the agent may merge its own PR once the tests pass, without waiting for review.
+Nothing else does — an unverified change waits.
+
+Because `main` is reached through a PR rather than a local merge, the `pre-push` hook is never in
+the way of the normal path. If you ever do need to update `main` locally, that is exactly the case
+the hook is there to stop; use the override only if you mean it.
+
+### Known limitation: enforcement is local
+
+There is **no server-side branch protection** on `main`. The guardrail is the `pre-push` hook plus
+this document. A clone that has not run `npm install` has no hook, and a token with contents-write
+can still push to `main` directly.
+
+That is a deliberate choice, not an oversight. If it stops being acceptable, turn on branch
+protection in the repository settings — it is the only way the rule binds someone who never reads
+this file.
+
 ---
 
 ## 2. The `pre-push` hook
