@@ -149,3 +149,44 @@ test('the CI workflow is reusable and keeps its original triggers', () => {
   assert.match(workflow, /workflow_call:/);
   assert.match(workflow, /on:\s*\n\s*push:\s*\n\s*pull_request:\s*\n\s*branches:\s*\[main\]/);
 });
+
+test('the package workflow executes the deployment glue against the artifact it built', () => {
+  const workflow = readFileSync(join(repoRoot, '.github', 'workflows', 'package.yml'), 'utf8');
+
+  // A deploy job that reuses the package artifact rather than paying for a second build.
+  assert.match(workflow, /deploy:\s*\n\s*needs:\s*package/, 'deploy must run after package');
+  assert.match(workflow, /download-artifact@v4/);
+  assert.match(workflow, /name:\s*windows-package/);
+  assert.match(workflow, /\.\/packaging\/run-deploy\.ps1 -Zip \$zip/);
+  // Bounded, so a wedged start cannot hold a Windows runner (issue #37).
+  assert.match(workflow, /timeout-minutes:\s*15/);
+  // A broken installer must block the release, not merely warn after it.
+  assert.match(workflow, /release:\s*\n\s*needs:\s*\[package, deploy\]/);
+});
+
+test('run-deploy.ps1 asserts every deployment surface and throws on the first mismatch', () => {
+  const script = readFileSync(join(repoRoot, 'packaging', 'run-deploy.ps1'), 'utf8');
+
+  assert.match(script, /function Assert/);
+  // install lands the files, the task exists with the documented properties, the app
+  // refuses with the documented message, the launcher starts a process, uninstall is clean.
+  for (const marker of [
+    'install.ps1',
+    'schtasks.exe /Query /TN $taskName /XML',
+    '<LogonTrigger>',
+    '<Delay>PT20S</Delay>',
+    '<RestartOnFailure>',
+    '<Interval>PT1M</Interval>',
+    "'listen', '--headless'",
+    'no Pushbullet token found',
+    'PuzzleSolver.vbs',
+    'Stop-Process',
+    'uninstall.ps1',
+  ]) {
+    assert.ok(script.includes(marker), `run-deploy.ps1 no longer checks ${marker}`);
+  }
+
+  // The point of the job: results are asserted, not printed for a human to eyeball.
+  const assertions = (script.match(/Assert \(/g) ?? []).length;
+  assert.ok(assertions >= 12, `expected the deployment script to assert at least 12 things, found ${assertions}`);
+});

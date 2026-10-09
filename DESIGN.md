@@ -1167,10 +1167,10 @@ captchasolver/
 │  ├─ pushbullet/{client,listener,filter,files,respond}.js    ✅
 │  ├─ ui/{tray,setup,watchdog,notifications,icons,mode}.js    ✅ M3
 │  ├─ ui/{tray-systray,open-path}.js   native/platform seam   ✅ M3 (unverified on Windows)
-│  ├─ deploy/{launcher,autostart,install,uninstall}.js        ✅ M3 (install/uninstall unverified)
+│  ├─ deploy/{launcher,autostart,install,uninstall}.js        ✅ M3 (executed on Windows in CI, #59)
 │  └─ config.js, secrets.js, logging.js                       ✅
 ├─ tests/                     unit + live-model + real and synthetic corpus end-to-end  ✅
-└─ packaging/                 PuzzleSolver.vbs + install/uninstall.ps1  ✅ M3 (unverified)
+└─ packaging/                 PuzzleSolver.vbs + install/uninstall.ps1  ✅ M3 (executed on Windows in CI, #59)
 ```
 
 ## 10. Testing
@@ -1297,8 +1297,10 @@ Node modules; the PowerShell is locator/launcher glue.
 **Unverifiable on the Linux development host:** `wscript` execution, `schtasks` registration and
 restart-on-failure behaviour, the Credential-Manager `set`, the `_ps1` scripts end to end,
 Explorer opening a log, and the actual tray widget. Every one of those has a testable seam
-(content, arguments or an injected loader) which is asserted; the native execution is not, and is
-labelled as such in each module.
+(content, arguments or an injected loader) which is asserted. Since issue #59 the installer,
+task registration and inspection, the `--headless` start, the `wscript` launcher and uninstall are
+also executed on `windows-latest`; what remains native-only is the interactive-desktop behaviour
+(tray, toast, Explorer hand-off) and the Credential-Manager `set`.
 
 **CI packaging and release (issue #19).** `.github/workflows/package.yml` builds and publishes the
 Windows package; `ci.yml` gained `workflow_call` and is the gate, so the Node matrix still has one
@@ -1333,6 +1335,23 @@ home. Decided here, additively:
 - **No credentials can travel.** The payload is copied from an explicit allowlist (`src/`,
   `package.json`, the three packaging scripts) plus `npm ci --omit=dev`; `config/`, `.env` and
   credential files are not on the list and `build-payload.mjs` asserts they are absent.
+
+**The deployment glue is executed (issue #59).** A `deploy` job in `package.yml` downloads the
+artifact the `package` job built, extracts it into a temp tree with `%LOCALAPPDATA%`/`%APPDATA%`
+redirected there, and runs `packaging/run-deploy.ps1`. It executes `install.ps1`; queries the
+registered task with `schtasks /Query /XML` and asserts the logon trigger (`PT20S`) and
+restart-on-failure (`PT1M`/`3`); starts the packaged `node.exe` under `--headless` and asserts the
+documented exit-1 refusal rather than a stack trace; runs `PuzzleSolver.vbs` and asserts a
+`node.exe` process appears; then runs `uninstall.ps1` and asserts the task and all three per-user
+folders are gone. The `release` job now needs it too, so a broken installer blocks a release. It is
+bounded at 15 minutes and runs on the same triggers as `package` because it costs a fraction of the
+Windows build it reuses, and an installer regression belongs on the PR that introduces it.
+
+What an interactive desktop would be needed for is still unverified: the native `systray2` tray
+widget and the `node-notifier` toast need a window station, and the `explorer.exe` browser hand-off
+(#56) is likewise unexercised. Restart-on-failure is inspected as a task *property*; a crash loop
+has not been observed restarting it. The Credential-Manager provider remains unshipped and
+unverified (see [§8](#8-state-and-secrets)).
 
 **Unverifiable on the Linux development host:** `Compress-Archive`/`Expand-Archive`, running the
 bundled `node.exe`, and the release job's `gh` call. The decisions with a judgement in them (the

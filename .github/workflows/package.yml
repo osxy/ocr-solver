@@ -88,8 +88,35 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  release:
+  # Execute the deployment glue on the artifact the package job just proved runs.
+  # The expensive Windows build happens once; this job downloads its artifact rather
+  # than rebuilding. It runs on every trigger the package job does, because the point
+  # is to catch an installer/launcher regression on the PR that introduces it, not
+  # after a tag. It is cheap next to the build (install + schtasks + two launches), and
+  # `timeout-minutes` bounds it so a wedged start cannot hold the runner (issue #37).
+  deploy:
     needs: package
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-package
+          path: dist
+
+      # Install, inspect the registered task, start the packaged app, run the
+      # double-click launcher, uninstall. Each step asserts; the script throws on the
+      # first mismatch so the job is red without a human reading the log.
+      - name: Exercise install, task, launcher and uninstall
+        shell: pwsh
+        run: |
+          $zip = (Get-ChildItem dist/*.zip).FullName
+          ./packaging/run-deploy.ps1 -Zip $zip
+
+  release:
+    needs: [package, deploy]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 10
