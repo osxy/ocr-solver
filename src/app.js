@@ -37,9 +37,8 @@ import { registerSecrets } from './redact.js';
 import { createNotifier } from './ui/notifications.js';
 import { resolveTrayMode } from './ui/mode.js';
 import { createSetup } from './ui/setup.js';
-import { defaultSetupDialog } from './ui/setup-dialog.js';
 import { applyLiveSettings, createSettingsEditor } from './ui/settings.js';
-import { defaultSettingsDialog } from './ui/settings-dialog.js';
+import { defaultWebSettingsDialog, defaultWebSetupDialog } from './ui/web-config.js';
 import { storeReport, loadReportCache, defaultAccuracyCachePath } from './accuracy.js';
 
 /**
@@ -178,6 +177,9 @@ export async function createApp({
   // `setupDialog`: injected so the UI is out of the assembly logic, and defaulted by
   // `runApp` rather than here so a library caller gets no prompt.
   settingsDialog = null,
+  // The browser launcher the web UI uses. Injected so the startup and tray paths are
+  // testable without a display, exactly like the tray's `openPath`.
+  openBrowser = undefined,
 
   // Dependency injection - everything below can be replaced by a test.
   store: providedStore = null,
@@ -270,7 +272,7 @@ export async function createApp({
       });
       let outcome;
       try {
-        outcome = await setupDialog({ setup, logger, credentialPath });
+        outcome = await setupDialog({ setup, logger, credentialPath, openBrowser });
       } catch (err) {
         if (ownsStore) store.close();
         throw new SetupFailedError(`the first-run setup dialog failed: ${err?.message ?? err}`);
@@ -576,6 +578,7 @@ export async function createApp({
         credentialPath,
         secrets,
         logger,
+        openBrowser,
       });
       if (outcome?.saved && outcome.config) {
         outcome.liveApplied = applyLiveSettings(config, outcome.config, outcome.changed ?? []);
@@ -613,8 +616,11 @@ export async function runApp(options = {}) {
   const app = await createApp({
     ...options,
     trayRequested: options.tray === true,
-    setupDialog: options.setupDialog ?? defaultSetupDialog,
-    settingsDialog: options.settingsDialog ?? defaultSettingsDialog,
+    // The default UI is the loopback web editor (issue #56): the Windows launcher runs
+    // the tray with no console, so a terminal prompt cannot be presented there. The
+    // terminal editor is still reachable through `config edit`.
+    setupDialog: options.setupDialog ?? defaultWebSetupDialog,
+    settingsDialog: options.settingsDialog ?? defaultWebSettingsDialog,
   });
   let closing = false;
   let tray = null;

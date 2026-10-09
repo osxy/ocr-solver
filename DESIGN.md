@@ -523,8 +523,8 @@ records a durable file reference for puzzles that ended unresolved.
   "Solve last image" re-runs the pipeline on the newest image — essential for tuning without a live
   push. "Accuracy" reports the live recorded-traffic rate plus the cached offline-corpus number, and
   the same summary is appended to the status text and tray tooltip (M4). "Settings" opens the
-  editor below (issue #27).
-- First run: a small setup dialog (token, key, **Test connection**).
+  editor below (issue #27), as a loopback web UI since #56.
+- First run: a small setup dialog (token, key, **Test connection**), a loopback web UI since #56.
 - Rotating log at `%LOCALAPPDATA%\PuzzleSolver\logs\app.log` (5 MB × 3).
 
 **As built in M3.** The widget and the logic are split so the logic is testable on Linux: the
@@ -624,6 +624,55 @@ real exit codes) for the reason #25 and `pruneInbox` exist in this record: a tes
 a delivered feature. The tray wiring is proven the same way — `runApp` passes `openSettings` into
 `startTray`, the controller's `settings` action calls it, and a test fails if that link is removed
 (the `setupDialog`/`createSetup` pattern, now closed for the editor too).
+
+**The graphical surface is a loopback web UI (issue #56).** The Windows launcher runs the tray with
+the window hidden (`shell.Run ..., 0, False`), so the process has no console and both `readline`
+prompts have nowhere to appear: the tray's **Settings** item could not work, and a fresh install with
+no token could not be configured except from a terminal. The fix is `src/ui/web-config.js` — a
+`node:http` server on an ephemeral `127.0.0.1` port, opened in the default browser. The alternative
+(native PowerShell/WinForms) was rejected on the criterion this project keeps paying for: a real
+HTTP request, a form post and an assertion run on Linux in CI, while a native window can only be
+checked by a person at Windows — which is how the tray, `schtasks` and the installers stayed
+unverified for three releases. No dependency was added; the page is plain HTML rendered by
+`renderSettingsPage`.
+
+**One source of truth, and a test that fails without it.** The UI owns no setting knowledge. It
+renders whatever `controller.list()` returns and persists through `controller.set()`/`save()`, and
+the tray's settings dialog and `config edit --gui` both use the same `createSettingsEditor` the
+terminal editor uses. `tests/web-config.test.js` asserts every descriptor in `settings.js` appears
+in the served page, and a synthetic descriptor injected through `controller.list()` must appear
+with no second edit — so a new setting cannot surface in the terminal editor and vanish from the
+GUI. First-run uses the same descriptors through `createSetupSettingsController`, which wraps
+`createSetup` (`pushbullet.token`, `llm.api_key`), so the first-run labels and validation cannot
+drift either.
+
+**The security is the point, because this endpoint writes the config *and* the secrets.** Non-negotiables,
+each enforced in code and in a test:
+
+- It binds `127.0.0.1` on port 0 and the bind is **not configurable**; the tests assert the bound
+  address and family.
+- The URL the app opens carries a **one-time launch token**: 32 random bytes, single-use, and valid
+  for 5 minutes. It is redeemed for a per-session token embedded in the page, so the launch token is
+  not replayed by the form posts and does not have to survive in browser state. A reused or expired
+  token is a `403` naming the reason; the token is compared in constant time.
+- The `Host` header is checked against the loopback address and the bound port before anything else.
+  A DNS-rebinding page makes the browser send the attacker's hostname while the connection lands on
+  127.0.0.1; rejecting a non-loopback `Host` is the control that stops it.
+- Every response (page, save, `404`, `403`, `500`) carries `Cache-Control: no-store`, plus a
+  `Content-Security-Policy` that forbids scripts and outside resources.
+- A secret value is never rendered — presence and source only, exactly as `config list` does. The
+  value is validated by the same `parseSettingValue` and routed by the same editor, so an invalid
+  value is rejected before the writer or the credential store is touched.
+- The listener is closed and the port released on save, cancel or timeout, so the window of exposure
+  is the editing session rather than the process uptime.
+
+**The terminal path is unchanged and a failed UI does not take the tray down.** `runApp`'s default
+`settingsDialog` is `defaultWebSettingsDialog`, but an injected dialog still wins, so the reachability
+test and a fake UI keep working; `src/config-cli.js` still defaults `config edit` to the terminal
+prompt and selects the web dialog only for `config edit --gui`. `openWebSettingsDialog` turns a bind
+failure into `{ saved: false, failed: true, detail }` instead of a throw, which the tray controller
+reports and then leaves the listener running. The one seam that remains unverifiable on this host is
+the browser hand-off (`explorer.exe`/`xdg-open`); everything behind it is a real HTTP test.
 
 **Watchdog.** `src/ui/watchdog.js` is a pure, clock-injectable state machine. The listener now
 exposes `lastActivityAt` (advanced by a socket `open`, any stream message, or a completed poll)

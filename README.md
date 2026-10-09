@@ -180,7 +180,7 @@ The logon task starts the app at logon. To start it now, run the launcher
 | **Pause** / **Resume** | Stops / starts the *listener*, not the process |
 | **Solve last image** | Re-runs the pipeline on the newest image in the inbox — tuning without a live push |
 | **Open log** / **Open config** | Opens `app.log` / `config.toml` |
-| **Settings** | Opens the settings editor (below) |
+| **Settings** | Opens the settings editor in the browser (below) |
 | **Quit** | Shuts down cleanly |
 
 The icon is **normal (coloured)** while the listener is in contact with Pushbullet, and
@@ -204,14 +204,21 @@ the same for the launcher.
 ### Settings (change configuration without editing files)
 
 The tray's **Settings** item opens an editor that lists the current values, validates
-every change, and routes it to the right store. `--headless` has the same editor behind a
-command, so an unattended machine is not a second-class mode:
+every change, and routes it to the right store. On a desktop session it opens as a
+**loopback web UI in the default browser** (`config edit --gui` opens the same UI from a
+console); this is what makes configuration possible on the shipped Windows install, where
+the tray runs with the window hidden and has no console for a terminal prompt. The web UI
+binds `127.0.0.1` on an ephemeral port, requires a single-use link token, validates the
+`Host` header, serves every response with `Cache-Control: no-store`, never renders a secret
+value, and closes its listener when you save or cancel. `--headless` has the same editor
+behind a command, so an unattended machine is not a second-class mode:
 
 ```bash
 node src/cli.js config list                  # every editable setting and its current value
 node src/cli.js config get reply.title
 node src/cli.js config set solver.offline_only true
 node src/cli.js config edit                  # the guided editor over stdin
+node src/cli.js config edit --gui            # the same editor as a loopback web UI
 ```
 
 Secrets go to the credential store, never to `config.toml`. That covers all three of
@@ -507,17 +514,16 @@ folders. Manually: `schtasks /Delete /TN PuzzleSolver /F`, then delete
   install/uninstall PowerShell and the packaged `node.exe` are written and tested at
   their seams, but this project is developed on Linux. Treat the first Windows install as
   unverified; `--headless` is the supported fallback.
-- **The first-run setup dialog and the settings editor are terminal prompts, not native
-  widgets.** In tray mode with no token, startup presents the first-run prompt (Pushbullet
-  token, optional model key, **Test connection**) before the listener starts; a cancelled
-  dialog or a failed save exits without starting. `--headless` never prompts — it exits
-  non-zero naming both `PUSHBULLET_TOKEN` and the credential-store file. The **Settings**
-  item runs the same kind of prompt in-process, so a tray launched without a console may
-  have no stdin to read; use `puzzlesolver config edit` (or `node src/cli.js config edit`)
-  in a terminal — it is the identical editor and is exercised as a command in
-  `tests/config-cli.test.js`. The prompt is reached through an injected provider in tests;
-  a graphical tray dialog has never run on a real Windows machine, and the tray-launched
-  (no-console) path has not been exercised there either.
+- **The settings and first-run UI opens in the default browser; the browser hand-off itself
+  is not exercised on Windows.** On a desktop session the tray's **Settings** item and the
+  first-run setup (no token configured) start a loopback-only web UI on an ephemeral port and
+  open it in the default browser, instead of prompting into a console the tray does not have.
+  The HTTP server, the one-time link token, the `Host` check, the form post and the save path
+  are exercised on Linux in `tests/web-config.test.js`; the one seam that cannot be checked
+  here is the `explorer.exe`/`xdg-open` hand-off to a real browser. `config edit` (or
+  `node src/cli.js config edit`) remains the terminal editor for a headless machine, and
+  `config edit --gui` opens the web UI from a console; that command is exercised in
+  `tests/config-cli.test.js`.
 - **Synthetic accuracy is not real accuracy.** See
   [Check accuracy](#check-accuracy-and-read-the-caveat).
 - **No form typing, no image grids.** It reads an image and replies; it does not act in

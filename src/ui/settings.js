@@ -458,6 +458,104 @@ export function createSettingsEditor({
   };
 }
 
+/**
+ * A settings-controller shaped view of first-run setup, for the web UI (issue #56).
+ *
+ * It exposes the exact same `list`/`set`/`reset`/`test`/`save` surface as
+ * `createSettingsEditor`, so `src/ui/web-config.js` renders and persists first-run and
+ * post-setup editing through one path. The two fields are the *existing* descriptors
+ * (`pushbullet.token`, `llm.api_key`), not a second list, so the labels and validation
+ * cannot drift from the settings editor. Persistence still goes through `setup.apply`
+ * -> `saveSecrets`, the same provider the rest of the app reads through.
+ */
+export function createSetupSettingsController({ setup, secrets = null } = {}) {
+  if (!setup || typeof setup.apply !== 'function' || typeof setup.testConnection !== 'function') {
+    throw new Error('createSetupSettingsController needs a setup instance');
+  }
+  const descriptors = ['pushbullet.token', 'llm.api_key'].map((id) => getSetting(id)).filter(Boolean);
+  const pending = new Map();
+  let lastSave = null;
+
+  function list() {
+    return descriptors.map((setting) => ({
+      id: setting.id,
+      label: setting.label,
+      secret: true,
+      restart: setting.restart !== false,
+      type: setting.type,
+      testable: setting.testable !== false,
+      pending: pending.has(setting.id),
+      value: null,
+      display: pending.has(setting.id) ? '(pending change)' : describeSecretForDisplay(secrets?.[setting.secret] ?? null),
+    }));
+  }
+
+  function set(id, text) {
+    const setting = descriptors.find((entry) => entry.id === id);
+    if (!setting) throw new SettingValueError(`unknown setting "${id}"`);
+    const value = parseSettingValue(setting, text);
+    pending.set(setting.id, value);
+    return { id: setting.id, value: null, display: '(pending change)' };
+  }
+
+  function reset() {
+    pending.clear();
+  }
+
+  async function test(id) {
+    const setting = descriptors.find((entry) => entry.id === id);
+    if (!setting) throw new SettingValueError(`${id} is not a first-run setting`);
+    const value = pending.get(id) ?? secrets?.[setting.secret]?.value ?? '';
+    if (!String(value).trim()) return { ok: false, detail: `${setting.id} is not set` };
+    const kwargs = setting.secret === 'pushbullet' ? { pushbulletToken: value } : { llmApiKey: value };
+    const { results } = await setup.testConnection(kwargs);
+    return Object.values(results)[0] ?? { ok: false, detail: 'no probe ran' };
+  }
+
+  async function save() {
+    if (pending.size === 0) return { saved: false, reason: 'no-changes', changed: [] };
+    const pushbulletToken = pending.get('pushbullet.token') ?? secrets?.pushbullet?.value ?? '';
+    const llmApiKey = pending.get('llm.api_key') ?? secrets?.llm?.value ?? '';
+    const validation = setup.validate({ pushbulletToken, llmApiKey });
+    if (!validation.ok) {
+      return { saved: false, failed: true, detail: Object.values(validation.errors).join('; ') };
+    }
+    const applied = await setup.apply({ pushbulletToken, llmApiKey });
+    if (!applied.saved) {
+      const detail = applied.errors ? Object.values(applied.errors).join('; ') : 'the credential store did not accept the values';
+      return { saved: false, failed: true, detail };
+    }
+    const changed = [...pending.keys()];
+    lastSave = {
+      saved: true,
+      changed,
+      restartRequired: changed.filter((id) => getSetting(id)?.restart !== false),
+      live: [],
+      configPath: null,
+      backupPath: null,
+      secretsSaved: applied.savedNames ?? [],
+      config: null,
+    };
+    pending.clear();
+    return lastSave;
+  }
+
+  return {
+    list,
+    set,
+    reset,
+    test,
+    save,
+    get pending() {
+      return new Map(pending);
+    },
+    get lastSave() {
+      return lastSave;
+    },
+    settings: descriptors,
+  };
+}
+
 /** Copy the live values of `live` settings from a freshly validated config. */
 export function applyLiveSettings(target, nextConfig, changed) {
   if (!target || !nextConfig) return [];

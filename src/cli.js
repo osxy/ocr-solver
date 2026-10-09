@@ -275,6 +275,7 @@ async function main() {
       '  --config <path>        TOML config file (or PUZZLESOLVER_CONFIG)\n' +
       '  --token <token>        Pushbullet token for listen mode (or PUSHBULLET_TOKEN)\n' +
       '  config list|get|set|edit  change settings without the tray (`config --help`)\n' +
+      '  config edit --gui         the settings editor as a loopback web UI in the browser\n' +
       '\n' +
       'The HTTP ingress is opt-in: set [http] enabled = true in the config and provide\n' +
       'HTTP_AUTH_TOKEN (or an http_auth_token credential). It binds 127.0.0.1 by default.'

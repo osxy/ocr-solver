@@ -19,6 +19,7 @@ import { loadConfig, resolveConfigPath } from './config.js';
 import { defaultCredentialPath, loadSecrets, saveSecrets } from './secrets.js';
 import { createSettingsEditor, getSetting, SETTINGS } from './ui/settings.js';
 import { defaultSettingsDialog } from './ui/settings-dialog.js';
+import { defaultWebSettingsDialog } from './ui/web-config.js';
 
 const USAGE = `Usage: node src/cli.js config <action> [options]
 
@@ -26,18 +27,21 @@ const USAGE = `Usage: node src/cli.js config <action> [options]
   config get <id>              print one setting
   config set <id> <value>      validate and persist one setting
   config edit                  guided editor over stdin (the headless tray equivalent)
+  config edit --gui            the same editor as a loopback web UI in the browser
 
 Options:
   --config <path>              TOML config file (or PUZZLESOLVER_CONFIG)
   --json                       machine-readable output
+  --gui                        with "edit", open the web UI instead of the terminal prompt
 `;
 
 function parse(argv) {
-  const opts = { json: false, config: null, help: false, positional: [] };
+  const opts = { json: false, config: null, help: false, gui: false, positional: [] };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--json') opts.json = true;
     else if (arg === '--config') opts.config = argv[++i] ?? null;
+    else if (arg === '--gui') opts.gui = true;
     else if (arg === '--help' || arg === '-h') opts.help = true;
     else if (arg.startsWith('-')) throw new Error(`unknown option: ${arg}`);
     else opts.positional.push(arg);
@@ -64,6 +68,8 @@ export async function runConfig(
     homedir = undefined,
     logger = null,
     dialog = defaultSettingsDialog,
+    guiDialog = defaultWebSettingsDialog,
+    openBrowser = undefined,
   } = {}
 ) {
   const opts = parse(argv);
@@ -189,13 +195,14 @@ export async function runConfig(
       return 0;
     }
     case 'edit': {
-      const outcome = await dialog({
+      const activeDialog = opts.gui ? guiDialog : dialog;
+      const outcome = await activeDialog({
         editor,
         configPath: loaded.path,
         credentialPath,
+        secrets,
         logger,
-        input: stdin,
-        output: stdout,
+        ...(opts.gui ? { openBrowser, output: stdout } : { input: stdin, output: stdout }),
       });
       if (outcome?.failed) {
         stderr.write(`${outcome.detail ?? 'the settings editor failed'}\n`);
