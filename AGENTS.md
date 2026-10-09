@@ -225,6 +225,15 @@ Corollaries:
 The API and the method both have traps. The method half is the larger share, so fix the
 habit before reaching for a command.
 
+**Use `ghx`, not `gh`.** GitHub operations (issues, PRs, releases, run status) go through
+`~/.local/bin/ghx`. `gh` is **not on the PATH of a non-login, non-interactive shell** —
+which is what a tool-run shell is. A bare `gh` fails with "command not found" even though
+it works when typed into a login shell; `ghx` resolves the binary absolutely. `ghx` reads
+the token from the shared token file, so there is no second credential store and
+`gh auth login` is never needed. Keep using `scripts/ci-status.mjs` for CI verdicts: it is
+tested, repo-aware and check-runs based, and its exit-code contract is the verdict
+(`0` green, `1` failed, `2` unknown/timeout, `3` usage).
+
 **Verify by SHA via check-runs.** Ask `scripts/ci-status.mjs <sha>` — it reads
 `GET /commits/{sha}/check-runs` and prints a per-job table plus one verdict. Do **not**
 scan "the latest run on the branch": one push triggers both `CI` and `Package (Windows)`,

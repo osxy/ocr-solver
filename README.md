@@ -109,6 +109,7 @@ port = 8765
 rate_limit_per_min = 20         # 0 disables the limit
 timeout_ms = 30000      # a solve past this is a 504; nothing is sent
 max_body_bytes = 5242880        # 5 MiB, the same cap as a Pushbullet image
+max_queue = 8                   # requests running/waiting at once; over this is a 503
 ```
 
 `DEFAULTS` in [`src/config.js`](./src/config.js) is the full schema; `DESIGN.md` §4.13
@@ -288,19 +289,38 @@ curl -sS -X POST http://127.0.0.1:8765/v1/solve \
   -d '{"image_base64":"'"$(base64 -w0 puzzle.png)"'"}'
 ```
 
-**Status codes are honest, not approximate.** `200` is a validated answer; `422` is a
-puzzle that could not be solved (the body has `"answer": null` and a `reason` - nothing
-is guessed). A `422` also carries `unresolvedReply` with the configured human wording
-when one is set, so a caller can relay it; the structured fields are never replaced by
-prose. `401` is a missing or wrong bearer token; `400`/`413`/`415` is a bad, too
-large, or non-image body; `429` is the rate limit; `504` means the solve passed
-`timeout_ms`. A model-escalated solve says so in `cost.escalated`, because it
-bills your provider credits.
+**Status codes are honest, not approximate.** `200` is a **corroborated** validated
+answer; `422` is a puzzle that could not be solved, or an answer that passed validation
+but was not corroborated (the body has `"answer": null` and a `reason` - nothing is
+guessed). A `422` for an unresolved puzzle also carries `unresolvedReply` with the
+configured human wording when one is set, so a caller can relay it; the structured fields
+are never replaced by prose. A `422` for a withheld uncorroborated answer instead carries
+`"reason": "unconfirmed"` and **no** `unresolvedReply`, because the Pushbullet path stays
+silent for that case too. `401` is a missing or wrong bearer token; `400`/`413`/`415` is a
+bad, too large, or non-image body; `429` is the rate limit; `503` (with `Retry-After`)
+means too many requests are already running or waiting on the shared solver; `504` means
+the solve passed `timeout_ms`. A model-escalated solve says so in `cost.escalated`,
+because it bills your provider credits.
+
+**`reply.require_confidence` holds on HTTP too (issue #42).** An uncorroborated answer is
+not returned as a solved `200`; it is withheld exactly as the Pushbullet responder
+withholds it, so the two egresses cannot disagree about the same answer. Set
+`require_confidence = false` to trade accuracy for coverage and get the answer with
+`confident: false`.
 
 **It is synchronous.** An offline solve is ~1 s and a vision escalation can pass 10 s,
-so the answer is returned in the same request and `timeout_ms` (default 30 s)
-bounds it; there is no job id and no polling. If the budget is exceeded the request gets
-the `504` and the abandoned solve is discarded - nothing is delivered later.
+so the answer is returned in the same request and `timeout_ms` (default 30 s) bounds it;
+there is no job id and no polling. The budget includes queue wait. If it is exceeded the
+request gets the `504` and the abandoned solve is discarded - nothing is delivered later.
+A solve that has not *started* when its deadline passes is skipped before touching
+Tesseract or a provider, so a request that expired in the queue does not bill you. Once
+Tesseract is running it cannot be cancelled, and the app does not pretend otherwise.
+
+**The queue is bounded (issue #43).** At most `max_queue` HTTP requests (default 8) may
+be running or waiting on the solver at once; the next is refused with `503` and
+`Retry-After` instead of being queued. This is a deliberate behaviour change: a burst
+larger than the bound is refused where it used to be queued and billed. The rate limit
+bounds admission per minute; `max_queue` bounds the backlog behind the one shared worker.
 
 It coexists with the Pushbullet listener in one process (two ingresses, one solve core).
 **An HTTP request replies over HTTP and sends no Pushbullet push by default** - Pushbullet
@@ -348,7 +368,9 @@ A reply that is not a solution is deliberate, not a bug:
   answer that passed validation but was never corroborated — for example an offline count
   whose word list contained an unreadable entry. That case stays silent (no answer and no
   acknowledgement), because a candidate exists but no tier confirmed it. Setting it to
-  `false` sends the answer and trades accuracy for coverage.
+  `false` sends the answer and trades accuracy for coverage. **The HTTP ingress applies the
+  same policy:** a withheld answer is a `422` with `reason: "unconfirmed"` and `answer: null`,
+  not a solved `200` (issue #42).
 - **`reply.enabled = false`** means the app still solves locally but never replies.
 - **`history_mode = "ignore"` (the default)** ignores pushes that existed before the
   app started. Set `"watermark"` to answer from a stored mark.
@@ -362,9 +384,11 @@ and no `systray2`), or set `ui.tray = false`. The error itself names `--headless
 **The HTTP ingress will not start.** With `[http] enabled = true` and no token the app
 refuses to start, naming `HTTP_AUTH_TOKEN` and `http_auth_token`. A `401` from a running
 server means the `Authorization: Bearer ...` header is missing or does not match. A
-`422` is not an error: the puzzle was read but no tier produced a validated answer, so
-no answer is returned - the same invariant as the Pushbullet path. The response carries
-`answer: null`, plus the configured `unresolvedReply` wording when replies are enabled.
+`422` is not an error: either the puzzle was read but no tier produced a validated answer,
+or one did and `reply.require_confidence` withheld it as uncorroborated. In both cases
+`answer` is `null` - the same invariant as the Pushbullet path. An unresolved puzzle also
+carries the configured `unresolvedReply` wording when replies are enabled; an uncorroborated
+one carries `"reason": "unconfirmed"` instead (issue #42).
 
 **No replies at all.** Check, in order: (1) a Pushbullet token is present
 (`PUSHBULLET_TOKEN`, `--token`, or `credentials.json`) — without it the service refuses

@@ -606,13 +606,26 @@ store's rule that logging must never break solving.
   to end over HTTP, including Tesseract cold start) and a vision escalation can pass 10 s.
   An async `202` + job id would add a store of in-flight jobs, a poll endpoint and a GC for
   results a caller may never collect; the common case is a script that wants the answer now.
-  `http.timeout_ms` (default 30 s) bounds a request. If it is exceeded the caller gets a
-  `504` and the abandoned solve keeps running on the worker but its result is discarded -
-  nothing is delivered later, so a timeout can never produce an answer out of band.
+  `http.timeout_ms` (default 30 s) bounds a request, **and the budget includes queue wait**.
+  If it is exceeded the caller gets a `504` and the abandoned solve keeps running on the
+  worker but its result is discarded - nothing is delivered later, so a timeout can never
+  produce an answer out of band. The one thing that *is* stopped is a task that has not
+  started when its deadline passes: the lock evaluates the task's `canStart` predicate at
+  dequeue and skips the pipeline, so a request that expired while queued does not spend
+  CPU or provider credits on an answer nobody will read. Cancellation **once Tesseract is
+  running is not possible**; the code does not claim otherwise, and `#43` records the gap
+  rather than hiding it. A record that ends with a `504` therefore means "no answer was
+  produced for you", not "no work was done".
 - **Two ingresses, one core, in one process.** `createApp` starts the Pushbullet listener
   and the HTTP server independently; requiring both would make the "no Pushbullet account"
-  path impossible. The shared worker serialises solves through a promise queue, exactly as
-  the listener does, because a Tesseract worker is not safe to drive concurrently.
+  path impossible. The **shared solve lock lives inside `createSolveCore`** (issue #44),
+  not in an ingress: Pushbullet, HTTP and the tray's "solve last image" all call `solve`,
+  so there is one promise chain per worker regardless of which path arrived. A Tesseract
+  worker is not safe to drive concurrently - `recognize.js` calls `setParameters({psm})`
+  and `recognize` as two steps, so interleaved solves would OCR with each other's PSM.
+  The lock is intentionally the *only* serialisation point; the old per-ingress queues
+  are gone. The HTTP server keeps a per-ingress **admission bound** (below), which is a
+  different thing from serialisation.
 - **Pushbullet egress is an opt-in extra.** A JSON body may set `"deliver":"pushbullet"`
   to run the solved result through the existing responder with a synthetic push iden
   (`http-<sha256 of the image>`), so the note-push path can be exercised end to end without
@@ -625,6 +638,24 @@ store's rule that logging must never break solving.
 - **Fixed-window rate limit** (`http.rate_limit_per_min`, default 20; `0` disables). The
   Pushbullet responder's rate limit guards *sending*; this guard is on *spending* - a
   model-escalated request costs provider credits even though it sends nothing.
+- **Bounded HTTP queue** (`http.max_queue`, default 8). The rate limit bounds admission
+  *per minute*; it does not bound the backlog behind one worker. A vision escalation can
+  take ~10 s, so a caller that issues requests faster than they drain (or retries on
+  `504`) could otherwise leave an unbounded backlog that keeps spending credits after it
+  has gone. The server counts requests running or waiting on the shared lock and refuses
+  the next with `503` + `Retry-After` rather than enqueuing it. This is **per ingress on
+  purpose**: a Pushbullet push is not retried by a buggy loop and must not be dropped, so
+  the bound applies to HTTP only. It is a deliberate behaviour change users will notice:
+  a legitimate burst larger than the bound is refused where it used to be queued. Eight
+  is one running solve plus a short burst of waiters.
+- **`require_confidence` is honoured on HTTP too (issue #42).** An answer that passed the
+  class validator but was never corroborated is **withheld**, exactly as the Pushbullet
+  responder withholds it: the response is `422` with `answer: null` and
+  `reason: "unconfirmed"`. The unpicked candidate is deliberately **not** echoed under an
+  adjacent field, because a caller that could read it would be one line from using it.
+  This applies even with `reply.enabled = false` - that switch stops sending, it does not
+  change what is safe to send. Setting `reply.require_confidence = false` returns the
+  answer with `confident: false`, matching the Pushbullet behaviour.
 - **Cost is labelled, not hidden.** Every response carries `cost: { escalated, tier,
   model }`; a model tier is named in the same payload as the answer.
 - **The unresolved human reply is an extra field, not prose.** A `422` keeps its structured
@@ -805,7 +836,9 @@ execution:
 | Streaming body cap (default 5 MiB) | memory exhaustion | `readBodyCapped` |
 | Shared magic-byte/decode/width/pixel gate | a body that is not a real image, or a tiny file that decodes to a pixel bomb | `validateImageBuffer` |
 | Fixed-window rate limit | credit burn from a loop | `createRateLimiter` |
-| `http.timeout_ms` -> `504` | a stuck solve holding a request open | `withTimeout` |
+| Bounded queue (`http.max_queue`) -> `503` + `Retry-After` | an unbounded backlog spending credits after the caller has gone | `createHttpServer` admission |
+| `http.timeout_ms` -> `504`, plus skip-at-dequeue | a stuck solve holding a request open, and a queued solve outliving its caller | `withTimeout`, `createSolveCore` lock |
+| `reply.require_confidence` on the body | returning an uncorroborated answer the Pushbullet path would withhold (#42) | `formatSolveResponse` |
 
 The token is resolved through the existing `src/secrets.js` provider interface as a fourth
 secret (`HTTP_AUTH_TOKEN` / `http_auth_token`), not a second mechanism. The response never
@@ -1102,13 +1135,15 @@ Decisions taken for the v2 HTTP ingress (#15):
 
 | # | Decision | Choice |
 |---|---|---|
-| v2-1 | Solve model | **Synchronous** with `http.timeout_ms` (default 30 s); a breach is a `504` and the result is discarded |
+| v2-1 | Solve model | **Synchronous** with `http.timeout_ms` (default 30 s, including queue wait); a breach is a `504`, and a task not yet started is skipped at dequeue |
 | v2-2 | Process model | Two ingresses (Pushbullet + HTTP), one `createSolveCore`; either can be absent |
 | v2-3 | Path versioning | **`/v1/solve`** from the start |
 | v2-4 | Pushbullet egress from HTTP | **Opt-in** via `"deliver":"pushbullet"`, using the existing responder and a synthetic iden |
 | v2-5 | Auth | **Mandatory** bearer token via the `secrets.js` provider, constant-time compared |
 | v2-6 | Bind | **`127.0.0.1`** default; any other bind logs a loud warning |
 | v2-7 | Image gate | **Shared** `validateImageBuffer`, not a second copy |
+| v2-8 | Concurrency | **One shared solve lock inside `createSolveCore`** (#44); HTTP adds a per-ingress admission bound, not a second queue |
+| v2-9 | Confidence policy | **`reply.require_confidence` applies to HTTP** (#42): uncorroborated answers are a `422` with `reason: "unconfirmed"` |
 
 ## 14. Milestones
 

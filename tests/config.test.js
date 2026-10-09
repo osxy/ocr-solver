@@ -153,6 +153,7 @@ test('the HTTP ingress is off, loopback and token-gated by default', () => {
     rate_limit_per_min: 20,
     timeout_ms: 30_000,
     max_body_bytes: 5 * 1024 * 1024,
+    max_queue: 8,
   });
 });
 
@@ -170,6 +171,14 @@ test('the HTTP ingress rejects a bad port, cap or interval by name', () => {
     (err) => err instanceof ConfigError && /http\.max_body_bytes/.test(err.message)
   );
   assert.throws(
+    () => validateConfig({ http: { max_queue: 0 } }),
+    (err) => err instanceof ConfigError && /http\.max_queue/.test(err.message)
+  );
+  assert.throws(
+    () => validateConfig({ http: { max_queue: 1.5 } }),
+    (err) => err instanceof ConfigError && /http\.max_queue/.test(err.message)
+  );
+  assert.throws(
     () => validateConfig({ http: { enabled: 'yes' } }),
     (err) => err instanceof ConfigError && /http\.enabled/.test(err.message)
   );
@@ -181,7 +190,15 @@ test('the HTTP ingress rejects a bad port, cap or interval by name', () => {
 
 test('a config may tune the HTTP bind and limits', () => {
   const { config } = validateConfig({
-    http: { enabled: true, bind: '0.0.0.0', port: 0, rate_limit_per_min: 0, timeout_ms: 60_000, max_body_bytes: 100 },
+    http: {
+      enabled: true,
+      bind: '0.0.0.0',
+      port: 0,
+      rate_limit_per_min: 0,
+      timeout_ms: 60_000,
+      max_body_bytes: 100,
+      max_queue: 3,
+    },
   });
   assert.equal(config.http.enabled, true);
   assert.equal(config.http.bind, '0.0.0.0');
@@ -189,6 +206,7 @@ test('a config may tune the HTTP bind and limits', () => {
   assert.equal(config.http.rate_limit_per_min, 0);
   assert.equal(config.http.timeout_ms, 60_000);
   assert.equal(config.http.max_body_bytes, 100);
+  assert.equal(config.http.max_queue, 3);
 });
 
 test('a config may tune the breaker and turn image logging on', () => {
