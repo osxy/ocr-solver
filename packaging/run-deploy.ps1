@@ -125,12 +125,17 @@ install -> task registered and inspected -> packaged app starts under ``--headle
 }
 finally {
     # Best-effort cleanup. The delete is expected to fail when uninstall.ps1 already
-    # removed the task, and that non-zero $LASTEXITCODE must not become the script's
-    # exit code (a passing run was reported red by exactly that in the first CI run).
+    # removed the task. Its non-zero exit is why this script ends with an explicit
+    # `exit 0`: $LASTEXITCODE is not scope-local, so a child-scope assignment did not
+    # stop the non-zero leaking into the pwsh process exit code (the first two CI runs
+    # were red on a fully passing script for exactly that reason).
     & schtasks.exe /Delete /TN $taskName /F 2>&1 | Out-Null
-    $LASTEXITCODE = 0
     Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
         Where-Object { $_.CommandLine -and $_.CommandLine.Contains($installDir) } |
         ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
     Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
 }
+
+# Reached only when every assertion above passed; a thrown assertion skips it and the
+# non-zero exit is correct.
+exit 0
