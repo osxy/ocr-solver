@@ -164,131 +164,286 @@ export function themeCookieHeader(choice) {
 }
 
 /**
- * The dark palette, declared once and interpolated into both the OS media query and
- * the explicit `[data-theme="dark"]` rule. CSS cannot let a media query qualify an
- * attribute selector, so the block is used twice by interpolation rather than copied.
- * Every foreground/background pair below is >= 4.5:1 (WCAG AA normal text); see the
- * PR body for the measured ratios.
+ * The token layer (issue #104): one place that decides colour roles, spacing, radii,
+ * borders and the type ramp, with both themes derived from the same roles. Every page
+ * consumes these through `var(--token)`, and no page function may hard-code a colour,
+ * radius or spacing. The tokens are JavaScript objects, not loose CSS text, so
+ * `tests/web-tokens.test.js` can assert the two themes define the same roles, that
+ * every `var(--x)` reference resolves, and that each recorded pair meets WCAG AA.
+ *
+ * The dark palette is declared once and interpolated into both the OS media query and
+ * the explicit `[data-theme="dark"]` rule, because CSS cannot apply a media query to
+ * an attribute selector.
  */
-const DARK_PALETTE = `
-    color-scheme: dark;
-    --bg: #14161a;
-    --fg: #e7e9ee;
-    --muted: #a8b0bd;
-    --link: #8ab4ff;
-    --accent: #8ab4ff;
-    --accent-fg: #0b1020;
-    --border: #333a45;
-    --border-strong: #7a8494;
-    --panel: #1c2027;
-    --panel-border: #2a313b;
-    --ok-bg: #16301f; --ok-border: #2f6b45; --ok-fg: #b7e4c7;
-    --info-bg: #15263c; --info-border: #2c4f7c; --info-fg: #cfe2ff;
-    --err-bg: #3a1d20; --err-border: #7a3a40; --err-fg: #ffb4ab;
-    --new-bg: #332b12; --new-border: #7a6524; --new-fg: #ffe08a;`;
+export const COLOR_TOKENS = Object.freeze({
+  light: Object.freeze({
+    bg: '#ffffff',
+    fg: '#1a1a1a',
+    'fg-muted': '#565b64',
+    link: '#0b57d0',
+    accent: '#0b57d0',
+    'accent-fg': '#ffffff',
+    'accent-hover': '#0842a0',
+    border: '#d4d7dd',
+    'border-strong': '#6b7280',
+    panel: '#f6f7f9',
+    'panel-hover': '#eef0f3',
+    'panel-border': '#e2e5ea',
+    'ok-bg': '#eafaef',
+    'ok-border': '#9ad4ae',
+    'ok-fg': '#14532d',
+    'info-bg': '#eef6ff',
+    'info-border': '#a9c9f5',
+    'info-fg': '#0b3d75',
+    'warn-bg': '#fff8e1',
+    'warn-border': '#ecd27a',
+    'warn-fg': '#6b5200',
+    'err-bg': '#fdecea',
+    'err-border': '#f0b4ba',
+    'err-fg': '#7a1f1f',
+  }),
+  dark: Object.freeze({
+    bg: '#14161a',
+    fg: '#e7e9ee',
+    'fg-muted': '#a8b0bd',
+    link: '#8ab4ff',
+    accent: '#8ab4ff',
+    'accent-fg': '#0b1020',
+    'accent-hover': '#a9c8ff',
+    border: '#333a45',
+    'border-strong': '#7a8494',
+    panel: '#1c2027',
+    'panel-hover': '#232833',
+    'panel-border': '#2a313b',
+    'ok-bg': '#16301f',
+    'ok-border': '#2f6b45',
+    'ok-fg': '#b7e4c7',
+    'info-bg': '#15263c',
+    'info-border': '#2c4f7c',
+    'info-fg': '#cfe2ff',
+    'warn-bg': '#332b12',
+    'warn-border': '#7a6524',
+    'warn-fg': '#ffe08a',
+    'err-bg': '#3a1d20',
+    'err-border': '#7a3a40',
+    'err-fg': '#ffb4ab',
+  }),
+});
 
-const STYLE = `
+/** The non-colour scales. A key is a token name; the value is the CSS value. */
+export const SPACE_TOKENS = Object.freeze({ 1: '0.25rem', 2: '0.5rem', 3: '0.75rem', 4: '1rem', 5: '1.5rem', 6: '2rem', 7: '3rem' });
+export const RADIUS_TOKENS = Object.freeze({ sm: '4px', md: '6px', lg: '10px', pill: '999px' });
+export const TYPE_TOKENS = Object.freeze({ xs: '0.75rem', sm: '0.82rem', md: '0.9375rem', lg: '1.05rem', xl: '1.3rem', display: '2rem' });
+
+function cssVars(entries, prefix = '') {
+  return entries.map(([name, value]) => `    --${prefix}${name}: ${value};`).join('\n');
+}
+
+const LIGHT_VARS = cssVars(Object.entries(COLOR_TOKENS.light));
+const DARK_VARS = cssVars(Object.entries(COLOR_TOKENS.dark));
+const SCALE_VARS = [
+  cssVars(Object.entries(SPACE_TOKENS), 'space-'),
+  cssVars(Object.entries(RADIUS_TOKENS), 'radius-'),
+  cssVars(Object.entries(TYPE_TOKENS), 'text-'),
+  '    --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;',
+  '    --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;',
+  '    --line: 1.5;',
+  '    --border-width: 1px;',
+  '    --focus-width: 2px;',
+  '    --content-width: 66rem;',
+].join('\n');
+
+export const STYLE = `
   :root {
     color-scheme: light;
-    --bg: #ffffff;
-    --fg: #1a1a1a;
-    --muted: #565b64;
-    --link: #0b57d0;
-    --accent: #0b57d0;
-    --accent-fg: #ffffff;
-    --border: #d4d7dd;
-    --border-strong: #6b7280;
-    --panel: #f6f7f9;
-    --panel-border: #e2e5ea;
-    --ok-bg: #eafaef; --ok-border: #9ad4ae; --ok-fg: #14532d;
-    --info-bg: #eef6ff; --info-border: #a9c9f5; --info-fg: #0b3d75;
-    --err-bg: #fdecea; --err-border: #f0b4ba; --err-fg: #7a1f1f;
-    --new-bg: #fff8e1; --new-border: #ecd27a; --new-fg: #6b5200;
+${LIGHT_VARS}
+${SCALE_VARS}
   }
   @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) {${DARK_PALETTE}
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+${DARK_VARS}
     }
   }
-  :root[data-theme="dark"] {${DARK_PALETTE}
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+${DARK_VARS}
   }
+
   * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
   body {
-    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
-    margin: 0 auto; max-width: 64rem; padding: 0 1.25rem 3rem;
+    font: var(--text-md)/var(--line) var(--font-sans);
+    margin: 0 auto; max-width: var(--content-width);
+    padding: 0 var(--space-5) var(--space-7);
     background: var(--bg); color: var(--fg);
   }
-  header.top {
-    display: flex; align-items: center; justify-content: space-between; gap: 1rem;
-    flex-wrap: wrap; padding: 1.1rem 0 0.6rem; margin-bottom: 0.4rem;
-    border-bottom: 1px solid var(--border);
-  }
-  h1 { font-size: 1.3rem; margin: 0; letter-spacing: -0.01em; }
-  h2 { font-size: 1.08rem; margin: 1.6rem 0 0.5rem; }
-  h3 { font-size: 0.95rem; margin: 1.3rem 0 0.4rem; color: var(--muted); }
   a { color: var(--link); }
-  p { margin: 0.6rem 0; }
-  .where { color: var(--muted); font-size: 0.8rem; }
-  nav.links { margin: 1rem 0; display: flex; gap: 1.25rem; flex-wrap: wrap; }
-  code {
-    font-family: ui-monospace, SFMono-Regular, monospace; font-size: 0.88em;
-    background: var(--panel); border: 1px solid var(--panel-border);
-    border-radius: 4px; padding: 0.05em 0.35em;
+  a:hover { text-decoration-thickness: 2px; }
+  p { margin: var(--space-3) 0; max-width: 80ch; }
+  .muted, .display { color: var(--fg-muted); }
+  .display { font-size: var(--text-sm); }
+
+  .skip { position: absolute; left: -9999px; top: 0; }
+  .skip:focus { position: static; display: inline-block; margin: var(--space-2) 0; }
+
+  header.top {
+    position: sticky; top: 0; z-index: 10;
+    display: flex; align-items: center; justify-content: space-between; gap: var(--space-4);
+    flex-wrap: wrap; padding: var(--space-4) 0 var(--space-3); margin-bottom: var(--space-1);
+    border-bottom: var(--border-width) solid var(--border); background: var(--bg);
   }
-  .theme { display: inline-flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; color: var(--muted); }
-  .theme .options { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 999px; overflow: hidden; }
-  .theme a { padding: 0.28rem 0.75rem; text-decoration: none; color: var(--muted); background: var(--panel); }
-  .theme a + a { border-left: 1px solid var(--border); }
+  .brand { display: flex; align-items: baseline; gap: var(--space-3); flex-wrap: wrap; }
+  h1 { font-size: var(--text-xl); margin: 0; letter-spacing: -0.01em; }
+  h2 { font-size: var(--text-lg); margin: var(--space-6) 0 var(--space-2); }
+  h3 {
+    font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.05em;
+    margin: var(--space-5) 0 var(--space-2); color: var(--fg-muted);
+  }
+  .where { color: var(--fg-muted); font-size: var(--text-xs); margin: var(--space-1) 0 var(--space-3); }
+  .group { scroll-margin-top: var(--space-7); }
+  .group-title { display: flex; align-items: baseline; gap: var(--space-3); flex-wrap: wrap; }
+  .group-title .count { color: var(--fg-muted); font-size: var(--text-xs); font-weight: 400; }
+
+  nav.links { margin: var(--space-4) 0; display: flex; gap: var(--space-5); flex-wrap: wrap; }
+  nav.jump {
+    margin: var(--space-4) 0; padding: var(--space-3) var(--space-4);
+    border: var(--border-width) solid var(--panel-border);
+    border-radius: var(--radius-md); background: var(--panel);
+    display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4);
+    font-size: var(--text-sm);
+  }
+  nav.jump a { text-decoration: none; }
+  nav.jump a:hover { text-decoration: underline; }
+  .toc-label { color: var(--fg-muted); font-weight: 600; }
+
+  code {
+    font-family: var(--font-mono); font-size: 0.88em;
+    background: var(--panel); border: var(--border-width) solid var(--panel-border);
+    border-radius: var(--radius-sm); padding: 0.05em 0.35em;
+  }
+
+  .theme { display: inline-flex; align-items: center; gap: var(--space-2); font-size: var(--text-xs); color: var(--fg-muted); }
+  .theme .options { display: inline-flex; border: var(--border-width) solid var(--border-strong); border-radius: var(--radius-pill); overflow: hidden; }
+  .theme a { padding: 0.28rem var(--space-3); text-decoration: none; color: var(--fg-muted); background: var(--panel); }
+  .theme a + a { border-left: var(--border-width) solid var(--border); }
   .theme a:hover { color: var(--link); }
   .theme a.active { background: var(--accent); color: var(--accent-fg); font-weight: 600; }
-  table { border-collapse: collapse; width: 100%; margin: 0.5rem 0 1rem; font-variant-numeric: tabular-nums; }
-  th, td { text-align: left; padding: 0.45rem 0.6rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
+
+  table { border-collapse: collapse; width: 100%; margin: var(--space-2) 0 var(--space-4); font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: var(--space-2) var(--space-3); border-bottom: var(--border-width) solid var(--border); vertical-align: middle; }
   thead th {
-    background: var(--panel); color: var(--muted); font-size: 0.78rem; font-weight: 600;
+    background: var(--panel); color: var(--fg-muted); font-size: var(--text-xs); font-weight: 600;
     border-bottom: 2px solid var(--border-strong);
   }
-  tbody tr:hover { background: var(--panel); }
-  th { white-space: nowrap; font-family: ui-monospace, monospace; font-size: 0.85em; }
+  tbody tr:hover { background: var(--panel-hover); }
+  th { white-space: nowrap; font-family: var(--font-mono); font-size: 0.85em; }
   td.num, th.num { text-align: right; }
+
   input[type=text], input[type=password], select, textarea {
-    width: 24rem; max-width: 100%; padding: 0.4rem 0.55rem;
-    border: 1px solid var(--border-strong); border-radius: 6px;
+    width: 24rem; max-width: 100%; padding: var(--space-2) var(--space-3);
+    border: var(--border-width) solid var(--border-strong); border-radius: var(--radius-md);
     background: var(--bg); color: var(--fg); font: inherit;
   }
   input[type=file] { color: var(--fg); font: inherit; }
   input[type=checkbox] { width: auto; accent-color: var(--accent); }
-  input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible, a:focus-visible {
-    outline: 2px solid var(--link); outline-offset: 1px;
-  }
-  .display { color: var(--muted); font-size: 0.85em; }
+  :focus-visible { outline: var(--focus-width) solid var(--link); outline-offset: 2px; }
+
   .banner {
-    padding: 0.65rem 0.85rem; margin: 0.9rem 0; border-radius: 8px;
-    border: 1px solid; border-left-width: 4px;
+    display: flex; align-items: flex-start; gap: var(--space-3);
+    padding: var(--space-3) var(--space-4); margin: var(--space-4) 0;
+    border: var(--border-width) solid; border-left-width: 4px;
+    border-radius: var(--radius-md); font-size: var(--text-sm);
   }
+  .banner-icon { flex: 0 0 auto; display: inline-flex; }
+  .banner-body { min-width: 0; }
+  .banner-icon svg, .empty-icon svg { width: 1.1rem; height: 1.1rem; display: block; }
   .error { background: var(--err-bg); border-color: var(--err-border); color: var(--err-fg); }
   .test { background: var(--info-bg); border-color: var(--info-border); color: var(--info-fg); }
   .ok { background: var(--ok-bg); border-color: var(--ok-border); color: var(--ok-fg); }
-  .newbanner { background: var(--new-bg); border-color: var(--new-border); color: var(--new-fg); }
-  .new { color: var(--new-fg); font-weight: 600; }
+  .newbanner { background: var(--warn-bg); border-color: var(--warn-border); color: var(--warn-fg); }
+  .new { color: var(--warn-fg); font-weight: 600; }
+
   .tag {
-    font-family: ui-monospace, monospace; font-size: 0.72em; white-space: nowrap;
-    padding: 0.08em 0.45em; border-radius: 999px;
-    border: 1px solid var(--border); background: var(--panel); color: var(--muted);
+    font-family: var(--font-mono); font-size: var(--text-xs); white-space: nowrap;
+    padding: 0.08em var(--space-2); border-radius: var(--radius-pill);
+    border: var(--border-width) solid var(--border); background: var(--panel); color: var(--fg-muted);
   }
-  .actions { margin-top: 1.25rem; display: flex; gap: 0.5rem; }
-  button {
-    padding: 0.4rem 0.85rem; cursor: pointer; font: inherit;
-    border: 1px solid var(--border-strong); border-radius: 6px;
+  .tag-restart { color: var(--warn-fg); border-color: var(--warn-border); background: var(--warn-bg); }
+  .tag-live { color: var(--ok-fg); border-color: var(--ok-border); background: var(--ok-bg); }
+  .tag-security { color: var(--err-fg); border-color: var(--err-border); background: var(--err-bg); }
+
+  .actions { margin-top: var(--space-5); display: flex; gap: var(--space-2); }
+  button, input[type=submit] {
+    padding: var(--space-2) var(--space-4); cursor: pointer; font: inherit;
+    border: var(--border-width) solid var(--border-strong); border-radius: var(--radius-md);
     background: var(--panel); color: var(--fg);
   }
-  button:hover { border-color: var(--link); color: var(--link); }
-  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); font-weight: 600; }
-  button.primary:hover { filter: brightness(1.08); color: var(--accent-fg); }
+  button:hover, input[type=submit]:hover { border-color: var(--link); color: var(--link); }
+  button.primary, input[type=submit].primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); font-weight: 600; }
+  button.primary:hover, input[type=submit].primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); color: var(--accent-fg); }
+
+  .empty {
+    display: flex; align-items: flex-start; gap: var(--space-4);
+    padding: var(--space-5); margin: var(--space-4) 0;
+    border: var(--border-width) dashed var(--border-strong);
+    border-radius: var(--radius-lg); background: var(--panel);
+  }
+  .empty-icon { flex: 0 0 auto; color: var(--fg-muted); }
+  .empty-icon svg { width: 1.6rem; height: 1.6rem; }
+  .empty-title { font-weight: 600; margin: 0 0 var(--space-1); }
+  .empty-body { margin: 0; color: var(--fg-muted); font-size: var(--text-sm); max-width: 72ch; }
+
+  .state {
+    display: flex; align-items: flex-start; gap: var(--space-4);
+    margin: var(--space-4) 0; padding: var(--space-4);
+    border: var(--border-width) solid var(--border); border-left-width: 6px;
+    border-radius: var(--radius-md);
+  }
+  .state-icon { flex: 0 0 auto; }
+  .state-icon svg { width: 1.6rem; height: 1.6rem; display: block; }
+  .state-body { min-width: 0; }
+  .state-title { display: block; font-size: var(--text-lg); }
+  .state-detail { margin: var(--space-1) 0 0; }
+  .state-error { background: var(--err-bg); border-color: var(--err-border); color: var(--err-fg); }
+  .state-notice { background: var(--info-bg); border-color: var(--info-border); color: var(--info-fg); }
+  .state-ok { background: var(--ok-bg); border-color: var(--ok-border); color: var(--ok-fg); }
+
+  .outcome {
+    display: flex; align-items: flex-start; gap: var(--space-4);
+    margin: var(--space-4) 0; padding: var(--space-4);
+    border: var(--border-width) solid var(--border); border-left-width: 6px;
+    border-radius: var(--radius-md);
+  }
+  .outcome-icon { flex: 0 0 auto; }
+  .outcome-icon svg { width: 2rem; height: 2rem; display: block; }
+  .outcome-body { min-width: 0; }
+  .outcome-title { font-size: var(--text-lg); font-weight: 700; display: block; }
+  .outcome-detail { margin: var(--space-1) 0 0; }
+  .outcome-solved { background: var(--ok-bg); border-color: var(--ok-border); color: var(--ok-fg); }
+  .outcome-withheld { background: var(--warn-bg); border-color: var(--warn-border); border-left-style: dashed; color: var(--warn-fg); }
+  .outcome-unresolved { background: var(--err-bg); border-color: var(--err-border); color: var(--err-fg); }
+  .answer { font-family: var(--font-mono); font-size: var(--text-display); font-weight: 700; line-height: 1.1; margin: var(--space-2) 0; }
+
+  .verdict { display: inline-flex; align-items: center; gap: var(--space-1); white-space: nowrap; }
+  .verdict svg { width: 1em; height: 1em; }
+
+  .thumb { display: inline-block; line-height: 0; }
   .thumb img {
     display: block; width: 64px; height: 64px; object-fit: cover;
-    border: 1px solid var(--border-strong); border-radius: 6px; background: var(--panel);
+    border: var(--border-width) solid var(--border-strong); border-radius: var(--radius-md);
+    background: var(--panel);
   }
-  .thumb-missing { color: var(--muted); font-size: 0.78rem; white-space: nowrap; }
-  .thumb-none { color: var(--muted); }
+  .thumb-missing, .thumb-none { color: var(--fg-muted); font-size: var(--text-xs); white-space: nowrap; }
+
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    *, *::before, *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+    }
+  }
 `;
 
 /** A link to the same page with a theme choice, so the toggle is a GET, not a script. */
@@ -306,6 +461,137 @@ function themeToggle(theme, base) {
   return `<nav class="theme" aria-label="Colour theme"><span>Theme</span><span class="options">${links}</span></nav>`;
 }
 
+/**
+ * The inline icon set. There is no icon font and no SVG sprite: the CSP is
+ * `default-src 'none'`, so an inline `<svg>` in the document is the only icon
+ * available. `currentColor` lets the surrounding state role colour it, and the
+ * shape is what makes an outcome readable without relying on colour (#104).
+ */
+function svgIcon(inner) {
+  return (
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+    `stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${inner}</svg>`
+  );
+}
+const ICONS = Object.freeze({
+  check: svgIcon('<path d="M20 6 9 17l-5-5"/>'),
+  pause: svgIcon('<circle cx="12" cy="12" r="9"/><path d="M10 9v6M14 9v6"/>'),
+  question: svgIcon('<circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 2-3 4"/><path d="M12 17h.01"/>'),
+  alert: svgIcon('<path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/>'),
+  info: svgIcon('<circle cx="12" cy="12" r="9"/><path d="M12 16v-4"/><path d="M12 8h.01"/>'),
+  box: svgIcon('<path d="M3 7h18v13H3z"/><path d="M3 7l2-3h14l2 3"/><path d="M3 11h18"/>'),
+});
+
+/** A banner with a shape, so a state is never colour alone. `body` is trusted HTML. */
+function banner(kind, iconName, body) {
+  return `<div class="banner ${kind}"><span class="banner-icon">${ICONS[iconName]}</span><span class="banner-body">${body}</span></div>`;
+}
+
+/**
+ * A designed empty state. A fresh install must not show a bare, unlabelled table:
+ * every list and aggregate with nothing to show gets a title, an explanation and a
+ * way forward.
+ */
+function emptyState({ title, body, action = null, icon = 'box' }) {
+  return (
+    '<div class="empty">' +
+    `<span class="empty-icon">${ICONS[icon]}</span>` +
+    `<div><p class="empty-title">${escapeHtml(title)}</p>` +
+    `<p class="empty-body">${body}</p>${action ?? ''}</div></div>`
+  );
+}
+
+/** A full-width state card for a whole page (a refusal, a not-found, a cancel). */
+function statePage(tone, title, message) {
+  const icon = tone === 'error' ? 'alert' : tone === 'ok' ? 'check' : 'info';
+  return (
+    `<div class="state state-${tone}">` +
+    `<span class="state-icon">${ICONS[icon]}</span>` +
+    `<div class="state-body"><strong class="state-title">${escapeHtml(title)}</strong>` +
+    `<p class="state-detail">${escapeHtml(message)}</p></div></div>`
+  );
+}
+
+/**
+ * The one reading of a solve result (issue #104). Solved, withheld and unresolved
+ * are three different facts, and the page must say which one it is in words and in
+ * shape, not only in colour. `formatSolveResponse` already distinguishes them: a
+ * withheld candidate has no `answer` but carries `reason === 'unconfirmed'`.
+ */
+export function solveOutcome(result) {
+  if (result?.answer != null) {
+    return { kind: 'solved', label: 'Solved.', detail: 'A validated answer was produced. This page displays it; it does not send it.' };
+  }
+  if (result?.reason === 'unconfirmed') {
+    return {
+      kind: 'withheld',
+      label: 'Withheld.',
+      detail: 'An answer was found, but it was not corroborated, so the reply policy withheld it and nothing was sent.',
+    };
+  }
+  return { kind: 'unresolved', label: 'Not solved.', detail: null };
+}
+
+const OUTCOME_ICON = Object.freeze({ solved: 'check', withheld: 'pause', unresolved: 'question' });
+
+function outcomeCard(outcome, detailHtml = '') {
+  return (
+    `<section class="outcome outcome-${outcome.kind}" aria-label="Solve result">` +
+    `<span class="outcome-icon">${ICONS[OUTCOME_ICON[outcome.kind]]}</span>` +
+    `<div class="outcome-body"><strong class="outcome-title">${outcome.label}</strong>` +
+    (outcome.detail ? `<p class="outcome-detail">${escapeHtml(outcome.detail)}</p>` : '') +
+    detailHtml +
+    '</div></section>'
+  );
+}
+
+const VERDICT_ICON = Object.freeze({ solved: 'check', withheld: 'pause', unresolved: 'question', sent: 'check', pending: 'info' });
+
+/** A small shape + word verdict for the tables, so the status is not colour alone. */
+function verdictBadge(kind, label) {
+  return `<span class="verdict verdict-${kind}">${ICONS[VERDICT_ICON[kind] ?? 'info']}${escapeHtml(label)}</span>`;
+}
+
+/** The labels for the settings groups, by the `id` prefix. */
+const GROUP_LABELS = Object.freeze({
+  pushbullet: 'Pushbullet',
+  llm: 'Model provider',
+  solver: 'Solver and models',
+  reply: 'Replies',
+  storage: 'Storage and retention',
+  ocr: 'OCR',
+  image: 'Image limits',
+  http: 'HTTP ingress',
+  web_ui: 'Web UI access',
+  ui: 'Interface',
+});
+/** The order the groups appear in; any future prefix follows these, in list order. */
+const GROUP_ORDER = Object.freeze(['pushbullet', 'llm', 'solver', 'reply', 'storage', 'ocr', 'image', 'http', 'web_ui', 'ui']);
+
+/**
+ * Group the descriptor rows by their `id` prefix (the setting's topic). Topic, not
+ * lifecycle, is the axis someone actually searches by ("where do I change the reply
+ * text?"); the `[live]`/`[restart]`/`[security]` facts stay on every row and in each
+ * group's summary. Exported so the grouping rule is testable without a server.
+ */
+export function groupSettings(items) {
+  const groups = new Map();
+  for (const item of items ?? []) {
+    const key = String(item.id ?? '').split('.')[0] || 'other';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(item);
+  }
+  const ordered = [];
+  const take = (key) => {
+    if (!groups.has(key)) return;
+    ordered.push({ key, label: GROUP_LABELS[key] ?? key, items: groups.get(key) });
+    groups.delete(key);
+  };
+  for (const key of GROUP_ORDER) take(key);
+  for (const key of [...groups.keys()]) take(key);
+  return ordered;
+}
+
 function page({ body, theme = null, themeBase = null, configPath = null, credentialPath = null }) {
   const where = [
     configPath ? `Config: <code>${escapeHtml(configPath)}</code>` : null,
@@ -319,11 +605,13 @@ function page({ body, theme = null, themeBase = null, configPath = null, credent
   return `<!doctype html>
 <html lang="en"${themeAttr}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PuzzleSolver settings</title><style>${STYLE}</style></head>
-<body><header class="top"><h1>PuzzleSolver</h1>${toggle}</header>${where ? `<p class="where">${where}</p>` : ''}${body}</body></html>`;
+<body><a class="skip" href="#main">Skip to content</a>` +
+    `<header class="top"><span class="brand"><h1>PuzzleSolver</h1></span>${toggle}</header>` +
+    `<main id="main">${where ? `<p class="where">${where}</p>` : ''}${body}</main></body></html>`;
 }
 
 function messagePage(title, message, options = {}) {
-  return page({ body: `<h2>${escapeHtml(title)}</h2><p>${escapeHtml(message)}</p>`, ...options });
+  return page({ body: statePage(options.tone ?? 'error', title, message), ...options });
 }
 
 function renderField(item) {
@@ -357,16 +645,22 @@ function renderField(item) {
 /**
  * Render the whole editor. Exported so a test can assert the descriptor list is the
  * only input: a descriptor that exists in `list()` appears here with no second edit.
+ *
+ * The ~50 rows are grouped by topic (the `id` prefix), with a jump list of anchors,
+ * because that is how someone actually finds a setting. The lifecycle tags
+ * (`[live]`/`[restart]`/`[security]`) stay on every row and are summarised per group,
+ * so grouping never hides what a setting does (#104).
  */
 export function renderSettingsPage({ items, session, theme = null, configPath = null, credentialPath = null, error = null, test = null }) {
   const newItems = items.filter((item) => item.isNew === true);
-  // The rows stay in registry order; the offer summary puts security-relevant
-  // additions first, the same order the startup log and `config review` use (#67).
+  // The offer summary puts security-relevant additions first, the same order the
+  // startup log and `config review` use (#67).
   const offeredItems = [
     ...newItems.filter((item) => item.securityRelevant === true),
     ...newItems.filter((item) => item.securityRelevant !== true),
   ];
-  const rows = items.map((item) => {
+
+  const rowHtml = (item) => {
     const tag = item.restart ? 'restart' : 'live';
     const probe =
       item.secret && item.testable !== false
@@ -376,27 +670,59 @@ export function renderSettingsPage({ items, session, theme = null, configPath = 
     const isNew = item.isNew ? ' <span class="new">[new]</span>' : '';
     const security = item.securityRelevant ? ' <span class="new">[security]</span>' : '';
     return `<tr><th>${escapeHtml(item.id)}</th><td>${renderField(item)}</td>` +
-      `<td class="display">${escapeHtml(item.display)}${pending} <span class="tag">[${tag}]</span>${isNew}${security}</td><td>${probe}</td></tr>`;
-  });
+      `<td class="display">${escapeHtml(item.display)}${pending} <span class="tag tag-${tag}">[${tag}]</span>${isNew}${security}</td><td>${probe}</td></tr>`;
+  };
+
+  const anchorOf = (key) => `settings-${String(key).replace(/[^a-z0-9_-]/gi, '-')}`;
+  const groups = groupSettings(items);
+  const jump =
+    groups.length > 1
+      ? `<nav class="jump" aria-label="Setting groups"><span class="toc-label">Jump to</span>` +
+        groups.map((group) => `<a href="#${anchorOf(group.key)}">${escapeHtml(group.label)}</a>`).join('') +
+        '</nav>'
+      : '';
+  const sections = groups
+    .map((group) => {
+      const restartCount = group.items.filter((item) => item.restart).length;
+      const securityCount = group.items.filter((item) => item.securityRelevant).length;
+      const summary =
+        `${group.items.length} settings` +
+        ` &middot; ${restartCount} need a restart` +
+        (securityCount ? ` &middot; ${securityCount} security-relevant` : '');
+      return (
+        `<section class="group" id="${anchorOf(group.key)}">` +
+        `<h2 class="group-title">${escapeHtml(group.label)} <span class="count">${summary}</span></h2>` +
+        '<table><thead><tr><th>Setting</th><th>Value</th><th>Current</th><th></th></tr></thead>' +
+        `<tbody>${group.items.map(rowHtml).join('')}</tbody></table></section>`
+      );
+    })
+    .join('');
+
   const banners = [
-    error ? `<div class="banner error"><strong>Rejected:</strong> ${escapeHtml(error)}</div>` : '',
-    test
-      ? `<div class="banner test">${escapeHtml(test.id)}: ${test.ok ? 'ok' : 'failed'} - ${escapeHtml(test.detail)}</div>`
-      : '',
+    error ? banner('error', 'alert', `<strong>Rejected:</strong> ${escapeHtml(error)}`) : '',
+    test ? banner('test', 'info', `${escapeHtml(test.id)}: ${test.ok ? 'ok' : 'failed'} - ${escapeHtml(test.detail)}`) : '',
     newItems.length > 0
-      ? `<div class="banner newbanner"><strong>${newItems.length} setting(s) added since your last review</strong> ` +
-        '(marked <span class="new">[new]</span>, security-relevant first): ' +
-        offeredItems.map((item) => `<code>${escapeHtml(item.id)}</code>`).join(', ') +
-        '</div>'
+      ? banner(
+          'newbanner',
+          'alert',
+          `<strong>${newItems.length} setting(s) added since your last review</strong> ` +
+            '(marked <span class="new">[new]</span>, security-relevant first): ' +
+            offeredItems.map((item) => `<code>${escapeHtml(item.id)}</code>`).join(', ')
+        )
       : '',
   ].join('');
+
   const sessionParam = escapeHtml(session);
   const body =
     banners +
     `<nav class="links"><a href="/solve?session=${sessionParam}">Solve an uploaded image &rarr;</a> ` +
     `<a href="/stats?session=${sessionParam}">Statistics &rarr;</a></nav>` +
+    '<p class="display">Every setting is shown; nothing is hidden behind a disclosure. ' +
+    'The tag on each row says whether a save takes effect live or needs a restart, and ' +
+    '<span class="new">[security]</span> marks a setting whose default matters for safety.</p>' +
+    jump +
     `<form method="post" action="/save"><input type="hidden" name="session" value="${sessionParam}">` +
-    `<table><thead><tr><th>Setting</th><th>Value</th><th>Current</th><th></th></tr></thead><tbody>${rows.join('')}</tbody></table>` +
+    sections +
     `<div class="actions"><button class="primary" type="submit">Save</button>` +
     `<button type="submit" formaction="/cancel" formnovalidate>Cancel</button></div></form>`;
   return page({ body, theme, themeBase: `/?session=${sessionParam}`, configPath, credentialPath });
@@ -404,26 +730,39 @@ export function renderSettingsPage({ items, session, theme = null, configPath = 
 
 /** The solve form and, after a post, the result. Exported for a direct render test. */
 export function renderSolvePage({ session, result = null, timingMs = null, theme = null, error = null, configPath = null, credentialPath = null }) {
-  const banners = error ? `<div class="banner error"><strong>Rejected:</strong> ${escapeHtml(error)}</div>` : '';
+  const banners = error ? banner('error', 'alert', `<strong>Rejected:</strong> ${escapeHtml(error)}`) : '';
   let outcome = '';
   if (result) {
-    if (result.answer != null) {
-      outcome =
-        '<div class="banner ok"><strong>Solved.</strong></div>' +
+    // Solved, withheld and unresolved are three different facts. The card carries a
+    // distinct shape and word for each, so the verdict is readable without colour.
+    const state = solveOutcome(result);
+    const acknowledgement =
+      state.kind === 'unresolved'
+        ? (result.unresolvedReply?.text ?? 'No answer passed validation, so nothing was sent. The image was left unresolved.')
+        : state.detail;
+    const timing = timingMs == null ? 'unknown' : `${Math.round(timingMs)} ms`;
+    let detail = '';
+    if (state.kind === 'solved') {
+      detail =
+        `<p class="answer">${escapeHtml(result.answer)}</p>` +
         '<table><tbody>' +
-        `<tr><th>answer</th><td>${escapeHtml(result.answer)}</td></tr>` +
         `<tr><th>method</th><td>${escapeHtml(result.method ?? 'unknown')}</td></tr>` +
         `<tr><th>confident</th><td>${result.confident === true ? 'true' : 'false'}</td></tr>` +
-        `<tr><th>took</th><td>${timingMs == null ? 'unknown' : `${Math.round(timingMs)} ms`}</td></tr>` +
+        `<tr><th>took</th><td>${timing}</td></tr>` +
         '</tbody></table>';
     } else {
-      // Never a guess: an unresolved puzzle (or one withheld for lack of corroboration)
-      // shows the acknowledgement wording, the same text a Pushbullet reply would use.
-      const acknowledgement =
-        result.unresolvedReply?.text ??
-        'No answer passed validation, so nothing was sent. The image was left unresolved.';
-      outcome = `<div class="banner test"><strong>Not solved.</strong> ${escapeHtml(acknowledgement)}</div>`;
+      // A withheld answer was never shown, so the candidate value is deliberately
+      // absent from the page too - only the fact that it was withheld. An unresolved
+      // puzzle shows the same acknowledgement wording a Pushbullet reply would use.
+      detail =
+        '<table><tbody>' +
+        `<tr><th>method</th><td>${escapeHtml(result.method ?? 'unknown')}</td></tr>` +
+        `<tr><th>confident</th><td>${result.confident === true ? 'true' : 'false'}</td></tr>` +
+        `<tr><th>took</th><td>${timing}</td></tr>` +
+        `<tr><th>reason</th><td>${escapeHtml(result.reason ?? 'no valid answer')}</td></tr>` +
+        '</tbody></table>';
     }
+    outcome = outcomeCard({ ...state, detail: acknowledgement }, detail);
   }
   const form =
     '<h2>Solve an image</h2>' +
@@ -431,7 +770,7 @@ export function renderSolvePage({ session, result = null, timingMs = null, theme
     'one solve lock, the same queue bound and the same image caps.</p>' +
     `<form method="post" action="/solve?session=${escapeHtml(session)}" enctype="multipart/form-data">` +
     '<input type="file" name="image" accept="image/*" required> ' +
-    '<button type="submit">Solve</button></form>';
+    '<button class="primary" type="submit">Solve</button></form>';
   return page({ body: banners + form + outcome, theme, themeBase: `/solve?session=${escapeHtml(session)}`, configPath, credentialPath });
 }
 
@@ -511,27 +850,39 @@ export function renderStatsPage({
   configPath = null,
   credentialPath = null,
 }) {
-  const banners = error ? `<div class="banner error"><strong>Rejected:</strong> ${escapeHtml(error)}</div>` : '';
+  const banners = error ? banner('error', 'alert', `<strong>Rejected:</strong> ${escapeHtml(error)}`) : '';
 
   const recentRows = recent
-    .map(
-      (row) =>
+    .map((row) => {
+      const outcome = rowOutcome(row);
+      // The verdict is folded into the answer cell as a shape + word, so the table
+      // keeps its column count and the outcome is still readable without colour.
+      const answer =
+        `${verdictBadge(outcome, outcome)} ` + (row.answer == null ? '<em>none</em>' : escapeHtml(row.answer));
+      return (
         '<tr>' +
         `<td>${escapeHtml(formatWhen(row.at))}</td>` +
         `<td class="thumb">${thumbnailCell(row.image, session)}</td>` +
         `<td><code>${escapeHtml(row.subject)}</code></td>` +
-        `<td>${row.answer == null ? '<em>none</em>' : escapeHtml(row.answer)}</td>` +
+        `<td>${answer}</td>` +
         `<td>${escapeHtml(row.method ?? 'none')}</td>` +
         `<td>${escapeHtml(deliveryLabel(row))}</td>` +
         `<td class="num">${row.ms == null ? 'unknown' : `${Math.round(Number(row.ms))} ms`}</td>` +
         `<td class="num">${row.confident === true ? 'true' : 'false'}</td>` +
         '</tr>'
-    )
+      );
+    })
     .join('');
   const recentTable = recentRows
     ? '<table><thead><tr><th>when</th><th>image</th><th>puzzle</th><th>answer</th><th>method</th><th>sent / withheld</th><th class="num">took</th><th class="num">confident</th></tr></thead>' +
       `<tbody>${recentRows}</tbody></table>`
-    : '<p class="display">No recorded solves yet.</p>';
+    : emptyState({
+        title: 'No solves recorded yet',
+        body:
+          'A fresh install has no history. Solve an image and the result - answer, method, ' +
+          'delivery verdict and timing - will appear here, newest first.',
+        action: `<p><a href="/solve?session=${escapeHtml(session)}">Solve the first image &rarr;</a></p>`,
+      });
 
   // Recorded traffic and the offline corpus are two different populations. They are
   // rendered in two separate sections and are never added, averaged or compared to
@@ -552,7 +903,11 @@ export function renderStatsPage({
       summaryTable('By tier (how the answer was produced)', traffic.byTier) +
       summaryTable('By puzzle class', traffic.byClass) +
       `<p>Model calls made (recorded <code>model-text</code> + <code>model-vision</code> stages): <strong>${stats.modelCalls}</strong></p>`
-    : '<h2>Recorded traffic (real)</h2><p class="display">No recorded traffic yet.</p>';
+    : '<h2>Recorded traffic (real)</h2>' +
+      emptyState({
+        title: 'No recorded traffic yet',
+        body: 'Once the app sees a puzzle over Pushbullet or HTTP, its totals appear here - counted once per puzzle, never blended with the offline corpus below.',
+      });
 
   const corpus = corpusReport?.overall ?? null;
   const corpusSection =
@@ -563,7 +918,10 @@ export function renderStatsPage({
     (corpus
       ? `<table><thead><tr><th class="num">correct</th><th class="num">graded</th><th class="num">accuracy</th></tr></thead>` +
         `<tbody><tr><td class="num">${corpus.correct}</td><td class="num">${corpus.gradeable}</td><td class="num">${escapeHtml(percent(corpus.accuracy))}</td></tr></tbody></table>`
-      : '<p class="display">No offline corpus report has been cached. Run <code>npm run accuracy</code> to produce one.</p>');
+      : emptyState({
+          title: 'No offline corpus report cached',
+          body: 'Run <code>npm run accuracy</code> to grade the committed fixtures and cache a report.',
+        }));
 
   const windowText =
     retainDays == null
@@ -572,15 +930,19 @@ export function renderStatsPage({
         '(<code>storage.retain_days</code>), so this page shows a moving window rather than everything ever seen.';
 
   const sessionParam = escapeHtml(session);
+  const recentIntro = recent.length
+    ? `Newest first, at most ${escapeHtml(String(recent.length))} shown. Read on request only; ` +
+      'there is no auto-refresh. The answer and method come from the same recorded verdict the ' +
+      'solve page formats, so the two cannot disagree. <strong>took</strong> is that solve\'s own ' +
+      'recorded duration; <em>unknown</em> means no timing was recorded for it.'
+    : 'This page is read on request only; there is no auto-refresh. Each recorded solve appears ' +
+      'newest first with its own outcome, answer, method and duration.';
   const body =
     banners +
     `<nav class="links"><a href="/solve?session=${sessionParam}">Solve an uploaded image &rarr;</a> ` +
     `<a href="/stats?session=${sessionParam}">Refresh &rarr;</a></nav>` +
     `<h2>Recent solves</h2>` +
-    `<p>Newest first, at most ${escapeHtml(String(recent.length))} shown. Read on request only; ` +
-    'there is no auto-refresh. The answer and method come from the same recorded verdict the ' +
-    'solve page formats, so the two cannot disagree. <strong>took</strong> is that solve\'s own ' +
-    'recorded duration; <em>unknown</em> means no timing was recorded for it.</p>' +
+    `<p>${recentIntro}</p>` +
     recentTable +
     trafficSection +
     corpusSection +
@@ -588,11 +950,22 @@ export function renderStatsPage({
   return page({ body, theme, themeBase: `/stats?session=${sessionParam}`, configPath, credentialPath });
 }
 
+/**
+ * The statistics row's own outcome, kept separate from `deliveryLabel`: a withheld
+ * candidate still has a value in the row, so `answer != null` alone would call it
+ * solved. `formatSolveResponse` marks the withheld case with `reason: 'unconfirmed'`.
+ */
+export function rowOutcome(row) {
+  if (row?.reason === 'unconfirmed') return 'withheld';
+  if (row?.answer != null) return 'solved';
+  return 'unresolved';
+}
+
 /** The login form for a non-loopback client. No username: only a password exists. */
 export function renderLoginPage({ error = null, theme = null, configPath = null, credentialPath = null } = {}) {
-  const banner = error ? `<div class="banner error">${escapeHtml(error)}</div>` : '';
+  const bannerHtml = error ? banner('error', 'alert', escapeHtml(error)) : '';
   const body =
-    banner +
+    bannerHtml +
     '<h2>Sign in</h2>' +
     '<p>This web UI is reachable from a non-loopback address, so it requires the configured credential.</p>' +
     '<form method="post" action="/login">' +
@@ -610,7 +983,13 @@ function renderDonePage(result, options = {}) {
     ? `<p>Applied live: ${result.live.map((id) => `<code>${escapeHtml(id)}</code>`).join(', ')}</p>`
     : '';
   const backup = result.backupPath ? `<p>Previous config backed up to <code>${escapeHtml(result.backupPath)}</code></p>` : '';
-  const body = `<div class="banner ok"><strong>Saved.</strong></div>${changed ? `<ul>${changed}</ul>` : ''}${restart}${live}${backup}<p>You can close this tab.</p>`;
+  const body =
+    statePage('ok', 'Saved.', 'Your changes were written.') +
+    (changed ? `<ul>${changed}</ul>` : '') +
+    restart +
+    live +
+    backup +
+    '<p>You can close this tab.</p>';
   return page({ body, ...options });
 }
 
@@ -1153,7 +1532,7 @@ export function createWebSettingsServer({
 
         if (url.pathname === '/cancel') {
           finish({ saved: false, cancelled: true });
-          send(res, 200, messagePage('Cancelled', 'No changes were saved. This settings UI is now closed.', view(theme)));
+          send(res, 200, messagePage('Cancelled', 'No changes were saved. This settings UI is now closed.', { ...view(theme), tone: 'notice' }));
           res.on('finish', () => void stop());
           return undefined;
         }
@@ -1188,7 +1567,7 @@ export function createWebSettingsServer({
           return send(res, 400, renderSettingsPage({ ...view(theme), session: sessionToken, error: result.detail ?? 'nothing was saved' }));
         }
         finish(result);
-        send(res, result.saved ? 200 : 200, result.saved ? renderDonePage(result, view(theme)) : messagePage('No changes', 'Nothing was changed, so nothing was saved.', view(theme)));
+        send(res, result.saved ? 200 : 200, result.saved ? renderDonePage(result, view(theme)) : messagePage('No changes', 'Nothing was changed, so nothing was saved.', { ...view(theme), tone: 'notice' }));
         res.on('finish', () => void stop());
         return undefined;
       }
