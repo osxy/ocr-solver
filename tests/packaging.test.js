@@ -73,9 +73,13 @@ test('the check-version CLI fails on a mismatched tag and passes on a branch', (
   assert.equal(mismatched.status, 1, 'a mismatched tag must fail the build');
   assert.match(mismatched.stderr, /VERSION GUARD FAILED/);
 
-  const matching = run({ GITHUB_REF_TYPE: 'tag', GITHUB_REF_NAME: 'v0.1.0' });
+  // Derive the matching tag from package.json rather than pinning it. A hardcoded
+  // release version makes this test fail on every version bump (it did at v0.2.0)
+  // without testing anything the pure-function test above does not already cover.
+  const { version } = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'));
+  const matching = run({ GITHUB_REF_TYPE: 'tag', GITHUB_REF_NAME: `v${version}` });
   assert.equal(matching.status, 0);
-  assert.match(matching.stdout, /matches package\.json version 0\.1\.0/);
+  assert.match(matching.stdout, new RegExp(`matches package\\.json version ${version.replaceAll('.', '\\.')}`));
 
   const branch = run({ GITHUB_REF_TYPE: 'branch', GITHUB_REF_NAME: 'feat/x' });
   assert.equal(branch.status, 0);

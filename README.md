@@ -22,7 +22,7 @@ guess (see [What happens to a puzzle](#what-happens-to-a-puzzle)).
 
 ## Status
 
-**0.1.0 — a pre-release.** The offline solver, model tiers, Pushbullet listener and
+**0.2.0 — a pre-release.** The offline solver, model tiers, Pushbullet listener and
 reply path are implemented and tested. The Windows install/tray/autostart path ships
 but has never run on a real Windows machine (see [Known limitations](#known-limitations)).
 Work is tracked in the [issue tracker](https://github.com/osxy/ocr-solver/issues); the
@@ -31,21 +31,21 @@ design and its reasoning live in [DESIGN.md](./DESIGN.md).
 ## Install
 
 Install from a **release**, not from source. From the
-[v0.1.0 pre-release](https://github.com/osxy/ocr-solver/releases/tag/v0.1.0) download
-`PuzzleSolver-0.1.0-win-x64.zip` (~81 MiB) and its `.sha256` checksum. The ZIP carries
+[v0.2.0 pre-release](https://github.com/osxy/ocr-solver/releases/tag/v0.2.0) download
+`PuzzleSolver-0.2.0-win-x64.zip` (~81 MiB) and its `.sha256` checksum. The ZIP carries
 its own pinned `node.exe`, so Node does not have to be installed.
 
 The binary is **unsigned**, so **Windows SmartScreen will warn on first run** and the
 SHA256 checksum is the only integrity signal. Verify it before extracting:
 
 ```powershell
-Get-FileHash .\PuzzleSolver-0.1.0-win-x64.zip -Algorithm SHA256
-Get-Content .\PuzzleSolver-0.1.0-win-x64.zip.sha256
+Get-FileHash .\PuzzleSolver-0.2.0-win-x64.zip -Algorithm SHA256
+Get-Content .\PuzzleSolver-0.2.0-win-x64.zip.sha256
 ```
 
 The two hashes must match. (On Linux or macOS:
-`sha256sum -c PuzzleSolver-0.1.0-win-x64.zip.sha256`.) If Windows flags the download,
-`Unblock-File .\PuzzleSolver-0.1.0-win-x64.zip` first.
+`sha256sum -c PuzzleSolver-0.2.0-win-x64.zip.sha256`.) If Windows flags the download,
+`Unblock-File .\PuzzleSolver-0.2.0-win-x64.zip` first.
 
 Then extract the ZIP and, from the extracted folder, run the installer:
 
@@ -462,7 +462,7 @@ folders. Manually: `schtasks /Delete /TN PuzzleSolver /F`, then delete
 
 ## Known limitations
 
-- **Pre-release.** 0.1.0 is a pre-release: expect rough edges and no stability promise.
+- **Pre-release.** 0.2.0 is a pre-release: expect rough edges and no stability promise.
 - **The Windows-specific paths have never executed on a real Windows machine.** The
   tray widget, the `schtasks` registration and restart behaviour, the Credential Manager
   provider (which is not shipped at all - see
