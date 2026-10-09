@@ -348,9 +348,11 @@ export function createDpapiCredentialProvider({
 } = {}) {
   const dpapi = runner ?? createDpapiRunner();
   let pendingWarnings = [];
-  // Migration and the first decrypt happen once per process. `null` is a cached
-  // failure: the provider then declines every read, so the file provider serves the
-  // legacy value with source `file` and the warning explains why.
+  // Reads are cached for the process lifetime: a decrypt is a PowerShell round trip
+  // and `loadSecrets` asks for every secret. `null` is a cached failure: the provider
+  // then declines every read, so the file provider serves the legacy value with
+  // source `file` and the warning explains why. The cache is *not* trusted by `set`,
+  // which re-decrypts before merging so a write from another process survives (#84).
   let storePromise = null;
 
   function readObject(file) {
@@ -364,6 +366,33 @@ export function createDpapiCredentialProvider({
 
   function isEnvelope(value) {
     return value != null && typeof value === 'object' && value.format === format && typeof value.data === 'string';
+  }
+
+  /**
+   * Decrypt the protected file that is on disk *right now*. Called by `loadStore`
+   * once per process for reads, and by `set` immediately before every write (#84).
+   * `null` means "present but unreadable"; the caller must not treat that as empty.
+   */
+  async function readProtectedStore() {
+    const envelope = readObject(protectedPath);
+    if (!isEnvelope(envelope)) {
+      pendingWarnings.push(`the protected credential store ${protectedPath} is not a recognised DPAPI envelope; it was ignored`);
+      return null;
+    }
+    try {
+      const parsed = JSON.parse(await dpapi.unprotect(envelope.data));
+      if (parsed == null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        pendingWarnings.push(`the protected credential store ${protectedPath} did not hold a JSON object; it was ignored`);
+        return null;
+      }
+      return parsed;
+    } catch (err) {
+      pendingWarnings.push(
+        `the protected credential store ${protectedPath} could not be decrypted (${err?.message ?? err}); ` +
+          'nothing was changed and the plaintext fallback is being used'
+      );
+      return null;
+    }
   }
 
   /** Encrypt the whole store and replace the protected file atomically. */
@@ -401,27 +430,23 @@ export function createDpapiCredentialProvider({
     }
   }
 
+  /** Report the outcome of removing the legacy plaintext file, without ever quoting a value. */
+  function removeLegacyPlaintext() {
+    const outcome = scrubLegacy();
+    if (outcome === 'left') {
+      pendingWarnings.push(
+        `credentials were migrated to ${protectedPath} but the plaintext file ${path} could not be removed; delete it manually`
+      );
+    } else if (outcome === 'scrubbed') {
+      pendingWarnings.push(
+        `credentials were migrated to ${protectedPath} but the plaintext file ${path} could not be deleted; it was overwritten with an empty store`
+      );
+    }
+  }
+
   async function loadStore() {
     if (fileExists(protectedPath)) {
-      const envelope = readObject(protectedPath);
-      if (!isEnvelope(envelope)) {
-        pendingWarnings.push(`the protected credential store ${protectedPath} is not a recognised DPAPI envelope; it was ignored`);
-        return null;
-      }
-      try {
-        const parsed = JSON.parse(await dpapi.unprotect(envelope.data));
-        if (parsed == null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-          pendingWarnings.push(`the protected credential store ${protectedPath} did not hold a JSON object; it was ignored`);
-          return null;
-        }
-        return parsed;
-      } catch (err) {
-        pendingWarnings.push(
-          `the protected credential store ${protectedPath} could not be decrypted (${err?.message ?? err}); ` +
-            'nothing was changed and the plaintext fallback is being used'
-        );
-        return null;
-      }
+      return readProtectedStore();
     }
 
     // No protected store: migrate a legacy plaintext file on this first read.
@@ -435,16 +460,7 @@ export function createDpapiCredentialProvider({
         );
         return null;
       }
-      const outcome = scrubLegacy();
-      if (outcome === 'left') {
-        pendingWarnings.push(
-          `credentials were migrated to ${protectedPath} but the plaintext file ${path} could not be removed; delete it manually`
-        );
-      } else if (outcome === 'scrubbed') {
-        pendingWarnings.push(
-          `credentials were migrated to ${protectedPath} but the plaintext file ${path} could not be deleted; it was overwritten with an empty store`
-        );
-      }
+      removeLegacyPlaintext();
       return legacy;
     }
     // Nothing to migrate. The file provider still reports an unparseable legacy file
@@ -475,10 +491,39 @@ export function createDpapiCredentialProvider({
       if (!key) throw new Error(`unknown secret name ${JSON.stringify(name)}`);
       const text = String(value ?? '');
       if (text.trim() === '') throw new Error(`refusing to store an empty secret for ${name}`);
-      const store = await ensureStore();
-      if (store == null) throw new Error('the DPAPI credential store is unavailable');
+
+      // Read-modify-write: decrypt what is on disk *now*, not the process cache. A
+      // second process (the CLI while the tray service runs) can write between this
+      // provider's initial load and this save; merging from the on-disk copy keeps
+      // its secret instead of deleting it (#84).
+      //
+      // Residual: this narrows the race but does not close it. Two processes that
+      // both decrypt, merge and rename at the same instant still end last-writer-wins,
+      // and the loser's key is gone. Closing it needs a lock file around the
+      // read-merge-write, which was judged not worth the cross-platform complexity
+      // while writes come from short-lived `config set` calls and one long-running
+      // service. The narrow window is documented rather than silent.
+      let store;
+      let migratingLegacy = false;
+      if (fileExists(protectedPath)) {
+        store = await readProtectedStore();
+        if (store == null) {
+          throw new Error(
+            `refusing to overwrite the protected credential store ${protectedPath} because it could not be decrypted`
+          );
+        }
+      } else {
+        // No protected store yet: the first write performs the same legacy migration
+        // the first read would have.
+        const legacy = readObject(path);
+        store = legacy ?? {};
+        migratingLegacy = legacy != null;
+      }
       store[key] = text;
       await writeProtected(store);
+      if (migratingLegacy || fileExists(path)) removeLegacyPlaintext();
+      // The cache is fresh as of this write (it includes any concurrent writer's key).
+      storePromise = Promise.resolve(store);
       return { stored: true, store: 'windows-dpapi', path: protectedPath };
     },
     warnings() {

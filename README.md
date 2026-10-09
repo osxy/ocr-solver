@@ -160,7 +160,10 @@ manage. A pre-existing plaintext `credentials.json` is read once, migrated and r
 protected call cannot be made, the app still starts on the file store and **says which store it
 used** — `config list` reports the source (`windows-dpapi` vs `file`) and the startup log names
 the chain. The round trip is executed on a real `windows-latest` runner by the deploy job
-(`packaging/run-dpapi.ps1`), not merely asserted from the code calling DPAPI.
+(`packaging/run-dpapi.ps1`): one `node` process migrates and writes, then a **second, fresh
+process** decrypts the file from disk and asserts that `Unprotect` ran. The two processes are the
+point — a single process could return the value from its in-memory cache, and the check would pass
+with DPAPI never being called (issue #83).
 
 **What DPAPI does and does not protect.** At `CurrentUser` scope the blob is readable only by
 this account on this machine, and a copy taken elsewhere (a backup, a profile copy, another
@@ -338,7 +341,10 @@ Secrets go to the credential store, never to `config.toml`. That covers all thre
 them: `config set pushbullet.token o.xxxxxxxx`, `config set llm.api_key sk-xxxxxxxx` and
 `config set http.token a-long-random-enough-token` each write the credential store (the DPAPI
 blob on Windows, `credentials.json` elsewhere) and leave
-the TOML file alone (or uncreated). The HTTP token is checked against the same strength
+the TOML file alone (or uncreated). A write **re-reads the store immediately before merging**
+(read-modify-write), so a `config set` from a second process while the tray service is running is
+not wiped by the service's next save (issue #84). Residual: two writers racing at the same instant
+still have a last-writer-wins window; that is narrow and documented rather than closed with a lock. The HTTP token is checked against the same strength
 rule the server enforces at startup, so the editor cannot store a token the app then
 refuses to start with. Everything else is checked with the same `validateConfig` the
 loader uses, then written **atomically** — a temp file renamed over the old one, with the
@@ -689,8 +695,9 @@ folders. Manually: `schtasks /Delete /TN PuzzleSolver /F`, then delete
   the `explorer.exe` browser hand-off for the settings UI (issue #56). The
   restart-on-failure *properties* are inspected; a crash loop has not been seen
   restarting the task. The **DPAPI credential round trip is executed** on the runner by
-  the deploy job (`packaging/run-dpapi.ps1`): a plaintext file is migrated, removed and read
-  back through the shipped `app/src/secrets.js`. What DPAPI cannot protect is a process
+  the deploy job (`packaging/run-dpapi.ps1`): a plaintext file is migrated and removed by one
+  process, and a **second `node` process** decrypts it from disk through the shipped
+  `app/src/secrets.js` and asserts that `Unprotect` was called. What DPAPI cannot protect is a process
   running as the same user (see
   [Secrets](#secrets-go-in-the-environment-or-the-credential-store)). `--headless`
   remains the supported fallback for an unattended machine.

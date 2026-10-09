@@ -5,6 +5,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -52,6 +53,28 @@ function fakeDpapiRunner({ protectFail = null, unprotectFail = null } = {}) {
     },
   };
 }
+
+// A stand-in for the packaged round-trip script's read half: a genuinely separate
+// `node` process that imports the shipped provider and decrypts a file on disk. The
+// fake transform mirrors `fakeDpapiRunner`, so a value it returns can only have come
+// from `unprotect` of the file, never from the writer's memory (#83).
+const CROSS_PROCESS_READER = `
+const { createDpapiCredentialProvider, createFileCredentialProvider, loadSecrets } = await import(process.argv[2]);
+const protectedPath = process.argv[3];
+const legacyPath = process.argv[4];
+let unprotectCalls = 0;
+const runner = {
+  protect: async (s) => Buffer.from('dpapi:' + s, 'utf8').toString('base64'),
+  unprotect: async (c) => {
+    unprotectCalls += 1;
+    return Buffer.from(c, 'base64').toString('utf8').slice('dpapi:'.length);
+  },
+};
+const dpapi = createDpapiCredentialProvider({ platform: 'win32', path: legacyPath, protectedPath, runner });
+const file = createFileCredentialProvider({ path: legacyPath });
+const loaded = await loadSecrets({ platform: 'win32', env: {}, providers: [dpapi, file] });
+console.log(JSON.stringify({ llm: loaded.llm, pushbullet: loaded.pushbullet, unprotectCalls, warnings: loaded.warnings }));
+`;
 
 test('the environment variable names are the ones the CLI and live tests use', () => {
   assert.equal(SECRET_ENV.pushbullet, 'PUSHBULLET_TOKEN');
@@ -453,9 +476,80 @@ test('a fresh Windows write goes to the protected path and never creates the pla
   const protectedPath = protectedCredentialPath(path);
   assert.ok(existsSync(protectedPath));
   assert.equal(readFileSync(protectedPath, 'utf8').includes('o.FRESH'), false);
-  const reloaded = await loadSecrets({ platform: 'win32', env: {}, providers: [dpapi, file] });
+
+  // A *fresh* provider, not the one that wrote: the value can only come from Unprotect.
+  const runner = fakeDpapiRunner();
+  const reloaded = await loadSecrets({
+    platform: 'win32',
+    env: {},
+    providers: [
+      createDpapiCredentialProvider({ platform: 'win32', path, runner }),
+      createFileCredentialProvider({ path }),
+    ],
+  });
   assert.equal(reloaded.pushbullet.value, 'o.FRESH');
   assert.equal(reloaded.pushbullet.source, 'windows-dpapi');
+  assert.ok(runner.calls.unprotect >= 1, 'a fresh provider must decrypt the file, not recall a cache');
+});
+
+test('a separate process decrypts a store another process wrote (#83)', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'puzzlesolver-dpapi-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, 'credentials.json');
+  const protectedPath = protectedCredentialPath(path);
+
+  // Process A: write the protected store with the fake transform.
+  await createDpapiCredentialProvider({ platform: 'win32', path, runner: fakeDpapiRunner() }).set('llm', 'sk-cross-process');
+  assert.ok(existsSync(protectedPath));
+
+  // Process B: a real child process, fresh module cache, same file.
+  const reader = join(dir, 'reader.mjs');
+  writeFileSync(reader, CROSS_PROCESS_READER);
+  const secretsUrl = new URL('../src/secrets.js', import.meta.url).href;
+  const result = spawnSync(process.execPath, [reader, secretsUrl, protectedPath, path], { encoding: 'utf8' });
+  assert.equal(result.status, 0, `the reader process failed: ${result.stderr}`);
+  const out = JSON.parse(result.stdout.trim());
+  assert.deepEqual(out.warnings, [], 'cross-process read should not warn');
+  assert.equal(out.llm.value, 'sk-cross-process', 'the value must come back from the file, not memory');
+  assert.equal(out.llm.source, 'windows-dpapi');
+  assert.ok(out.unprotectCalls >= 1, 'the separate process must have called Unprotect');
+});
+
+test('the proof fails when decryption is broken (#83)', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'puzzlesolver-dpapi-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, 'credentials.json');
+  await createDpapiCredentialProvider({ platform: 'win32', path, runner: fakeDpapiRunner() }).set('llm', 'sk-written');
+
+  // A fresh provider whose Unprotect throws: the exact mutation a broken DPAPI script
+  // represents. If the round trip could still return the value, the proof would be
+  // vacuous; here it must yield null and a warning, never the secret.
+  const broken = createDpapiCredentialProvider({
+    platform: 'win32',
+    path,
+    runner: { protect: async () => 'x', unprotect: async () => { throw new Error('BROKEN'); } },
+  });
+  const loaded = await loadSecrets({ platform: 'win32', env: {}, providers: [broken, createFileCredentialProvider({ path })] });
+  assert.equal(loaded.llm.value, null, 'a broken Unprotect must not silently yield the value');
+  assert.ok(loaded.warnings.some((w) => /could not be decrypted/.test(w)), 'and it must be reported');
+});
+
+test('a second provider\'s secret survives the first provider\'s next save (#84)', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'puzzlesolver-dpapi-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, 'credentials.json');
+  const mk = () => createDpapiCredentialProvider({ platform: 'win32', path, runner: fakeDpapiRunner() });
+
+  const service = mk();
+  await service.set('pushbullet', 'PB1'); // the service loads and would cache
+  const cli = mk();
+  await cli.set('llm', 'LLMKEY'); // a separate process writes between service saves
+  await service.set('http', 'HTTPTOK'); // the service saves another secret
+
+  const fresh = mk();
+  assert.equal(await fresh.get('llm'), 'LLMKEY', 'the CLI secret must survive the service save');
+  assert.equal(await fresh.get('http'), 'HTTPTOK');
+  assert.equal(await fresh.get('pushbullet'), 'PB1');
 });
 
 test('loadSecrets names the store chain and the effective destination', async () => {
