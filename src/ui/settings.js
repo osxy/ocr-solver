@@ -26,7 +26,7 @@
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { stringify } from 'smol-toml';
+import { parse as parseToml, stringify } from 'smol-toml';
 import { DEFAULTS, validateConfig } from '../config.js';
 import { COST_TIERS } from '../model/client.js';
 import { httpTokenProblem } from '../http/defaults.js';
@@ -548,6 +548,20 @@ function lineEndAfter(text, index) {
 }
 
 /**
+ * True when `sectionPath` is already spoken for without a `[section]` header: a
+ * root-level dotted key (`web_ui.bind = ...`) has the section as a proper prefix,
+ * and an inline table (`web_ui = { ... }`) or scalar assignment matches it exactly.
+ * Appending a fresh `[section]` block would redefine that table, which TOML rejects,
+ * so `editConfigInPlace` refuses instead of writing bytes that do not parse (#82).
+ */
+function sectionDefinedByDottedOrInlineKey(statements, sectionPath) {
+  return statements.some((statement) => {
+    const full = [...statement.sectionPath, ...statement.keyPath];
+    return sectionPath.every((segment, index) => full[index] === segment);
+  });
+}
+
+/**
  * Apply `edits` (`[{ path: ['section', 'key'], value }]`) to the raw config text,
  * changing only the value bytes of each key. An absent key is inserted at the end of
  * its section when `overrides` says it is a non-default value; otherwise it is left
@@ -577,7 +591,7 @@ export function editConfigInPlace(text, edits, overrides = {}) {
           `cannot edit ${full.join('.')} in place: its value in config.toml spans more than one line; edit the file by hand`
         );
       }
-      operations.push({ start: statement.valueStart, end: statement.valueEnd, text: serializeInlineValue(edit.value) });
+      operations.push({ start: statement.valueStart, end: statement.valueEnd, text: serializeInlineValue(edit.value), order: 0 });
       continue;
     }
     if (!overrideHas(overrides, full)) continue;
@@ -592,6 +606,11 @@ export function editConfigInPlace(text, edits, overrides = {}) {
     const block = entries.map(({ key, value }) => `${key} = ${serializeInlineValue(value)}\n`).join('');
     const header = headers.find((candidate) => candidate.path.join('\u0000') === sectionPath.join('\u0000'));
     if (!header) {
+      if (sectionDefinedByDottedOrInlineKey(statements, sectionPath)) {
+        throw new ConfigEditError(
+          `cannot add ${sectionPath.join('.')}.* in config.toml in place: [${sectionPath.join('.')}] is defined by dotted keys or an inline table; edit the file by hand`
+        );
+      }
       appended.push(`[${sectionPath.join('.')}]\n${block}`);
       continue;
     }
@@ -604,7 +623,7 @@ export function editConfigInPlace(text, edits, overrides = {}) {
     }
     const start = lineEndAfter(text, last);
     const prefix = start > 0 && text[start - 1] !== '\n' ? '\n' : '';
-    operations.push({ start, end: start, text: `${prefix}${block}` });
+    operations.push({ start, end: start, text: `${prefix}${block}`, order: 0 });
   }
   if (appended.length > 0) {
     let block = appended.join('\n');
@@ -617,14 +636,28 @@ export function editConfigInPlace(text, edits, overrides = {}) {
         block = `\n\n${block}`;
       }
     }
-    operations.push({ start: text.length, end: text.length, text: block });
+    operations.push({ start: text.length, end: text.length, text: block, order: 1 });
   }
 
-  operations.sort((a, b) => b.start - a.start || b.end - a.end);
-  let out = text;
+  // Apply the changes in one ascending pass, with an explicit `order` tie-break. The
+  // end-of-file case is the one that used to corrupt the file (#81): a new key for
+  // the last existing section and an appended [section] block share the same offset,
+  // and applying two zero-width edits one after another by slicing the *growing*
+  // string reverses them. Sorting by intent instead puts a key for an existing
+  // section (order 0) inside that section, before any new section block at EOF
+  // (order 1), regardless of how the ties fall out.
+  operations.sort((a, b) => a.start - b.start || a.order - b.order || a.end - b.end);
+  let out = '';
+  let cursor = 0;
   for (const operation of operations) {
-    out = out.slice(0, operation.start) + operation.text + out.slice(operation.end);
+    if (operation.start < cursor) {
+      throw new ConfigEditError('cannot edit config.toml in place: two edits overlap; refusing to write');
+    }
+    out += text.slice(cursor, operation.start);
+    out += operation.text;
+    cursor = operation.end;
   }
+  out += text.slice(cursor);
   return out;
 }
 
@@ -638,6 +671,71 @@ function overrideHas(overrides, path) {
   return false;
 }
 
+/** Look a dotted path up in a parsed TOML document. */
+function valueAtPath(doc, path) {
+  let node = doc;
+  for (const segment of path) {
+    if (node == null || typeof node !== 'object' || !Object.prototype.hasOwnProperty.call(node, segment)) {
+      return { present: false, value: undefined };
+    }
+    node = node[segment];
+  }
+  return { present: true, value: node };
+}
+
+/** Deep equality for the value shapes a TOML config can hold (scalars, arrays, tables). */
+function tomlValuesEqual(a, b) {
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    return a.every((item, index) => tomlValuesEqual(item, b[index]));
+  }
+  if (a && b && typeof a === 'object' && typeof b === 'object') {
+    const keysA = Object.keys(a);
+    const keysB = Object.keys(b);
+    if (keysA.length !== keysB.length) return false;
+    return keysA.every((key) => Object.prototype.hasOwnProperty.call(b, key) && tomlValuesEqual(a[key], b[key]));
+  }
+  return a === b;
+}
+
+/**
+ * The writer's self-check. Re-parse the candidate bytes and prove every intended
+ * override really has its path and value before the original file is replaced. It
+ * fails closed on a locator bug (a key written under the wrong `[section]`, #81)
+ * and on output that is not TOML at all (#82). A writer that cannot check its own
+ * result has no business overwriting a user's file.
+ */
+function verifyWrittenConfig(text, overrides) {
+  let parsed;
+  try {
+    parsed = parseToml(text);
+  } catch (err) {
+    throw new ConfigEditError(`refusing to write config.toml: the edited text is not valid TOML (${err?.message ?? err})`);
+  }
+  if (overrides == null || typeof overrides !== 'object') return;
+  const walk = (node, path) => {
+    for (const [key, value] of Object.entries(node)) {
+      const nextPath = [...path, key];
+      if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+        walk(value, nextPath);
+        continue;
+      }
+      const found = valueAtPath(parsed, nextPath);
+      if (!found.present) {
+        throw new ConfigEditError(
+          `refusing to write config.toml: ${nextPath.join('.')} is not present at its intended path after the edit`
+        );
+      }
+      if (!tomlValuesEqual(found.value, value)) {
+        throw new ConfigEditError(
+          `refusing to write config.toml: ${nextPath.join('.')} does not have its intended value after the edit`
+        );
+      }
+    }
+  };
+  walk(overrides, []);
+}
+
 /**
  * The atomically-written config file. The old file is copied to `<path>.bak` before
  * the rename so a rejected or bad edit is recoverable; the temp file lives in the
@@ -646,6 +744,10 @@ function overrideHas(overrides, path) {
  * With `edits` and an existing file, only the changed values are written in place
  * (`editConfigInPlace`); everything else is byte-identical. Without it - a missing
  * file, or a direct caller that passes only `config` - the whole config is serialised.
+ *
+ * The candidate bytes are parsed back and checked against `config` **before** any
+ * file or backup is touched, so a locator that produced the wrong result refuses
+ * rather than replacing a correct file with a broken one.
  */
 export function writeConfigAtomically({
   path,
@@ -659,6 +761,7 @@ export function writeConfigAtomically({
   exists = existsSync,
   mkdir = mkdirSync,
   unlink = unlinkSync,
+  editInPlace = editConfigInPlace,
   now = () => Date.now(),
   pid = process.pid,
 } = {}) {
@@ -668,8 +771,10 @@ export function writeConfigAtomically({
   const fileExists = exists(path);
   const text =
     fileExists && Array.isArray(edits)
-      ? editConfigInPlace(readFile(path, 'utf8'), edits, config)
+      ? editInPlace(readFile(path, 'utf8'), edits, config)
       : stringify(config);
+  // Verify the writer's own output before the backup is taken or the rename happens.
+  verifyWrittenConfig(text, config);
   const dir = dirname(path);
   mkdir(dir, { recursive: true });
 

@@ -17,6 +17,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { ConfigError, loadConfig, validateConfig } from '../src/config.js';
+import { parse as parseToml } from 'smol-toml';
 import { verifyWebUiPassword } from '../src/ui/access.js';
 import {
   ConfigEditError,
@@ -789,6 +790,180 @@ test('#69: CRLF line endings are preserved outside the changed line', async (t) 
   await editor.save();
   const after = readFileSync(path, 'utf8');
   assert.equal(after, '# note\r\n[http]\r\nport = 9999  # inline\r\nenabled = true\r\n');
+});
+
+// ---------------------------------------------------------------------------
+// Section placement under a save that changes two things at once (#81) and
+// dotted-key / inline-table sections (#82)
+// ---------------------------------------------------------------------------
+
+test('#81: a key for the last section stays in it when a new section is appended', () => {
+  const text = '[ui]\ntray = true\n';
+  const overrides = { ui: { stats_recent_solves: 7 }, web_ui: { allowed_cidrs: ['10.0.0.0/8'] } };
+  const out = editConfigInPlace(
+    text,
+    [
+      { path: ['ui', 'stats_recent_solves'], value: 7 },
+      { path: ['web_ui', 'allowed_cidrs'], value: ['10.0.0.0/8'] },
+    ],
+    overrides
+  );
+  const parsed = parseToml(out);
+  assert.equal(parsed.ui.stats_recent_solves, 7, 'the new key must land in [ui]');
+  assert.equal(parsed.web_ui.stats_recent_solves, undefined, 'and not under [web_ui]');
+  assert.deepEqual(parsed.web_ui.allowed_cidrs, ['10.0.0.0/8']);
+  assert.ok(
+    out.indexOf('stats_recent_solves') < out.indexOf('[web_ui]'),
+    'the [ui] key must precede the appended section'
+  );
+});
+
+test('#81: the editor save that triggers it writes both settings where intended', async (t) => {
+  const text = '[ui]\ntray = true\n';
+  const { editor, path } = editorOverConfig(t, text);
+  editor.set('ui.stats_recent_solves', '7');
+  editor.set('web_ui.allowed_cidrs', '10.0.0.0/8');
+  const result = await editor.save();
+  assert.equal(result.saved, true);
+  const parsed = parseToml(readFileSync(path, 'utf8'));
+  assert.equal(parsed.ui.stats_recent_solves, 7);
+  assert.equal('stats_recent_solves' in parsed.web_ui, false);
+  assert.deepEqual(parsed.web_ui.allowed_cidrs, ['10.0.0.0/8']);
+});
+
+test('#81: a key added to a middle section is inserted before the following section', () => {
+  const text = '[solver]\ntier0 = true\n\n[reply]\nenabled = true\n\n[http]\nenabled = false\n';
+  const out = editConfigInPlace(
+    text,
+    [
+      { path: ['reply', 'title'], value: 'Custom' },
+      { path: ['web_ui', 'bind'], value: '0.0.0.0' },
+    ],
+    { reply: { title: 'Custom' }, web_ui: { bind: '0.0.0.0' } }
+  );
+  const parsed = parseToml(out);
+  assert.equal(parsed.reply.title, 'Custom');
+  assert.equal(parsed.web_ui.bind, '0.0.0.0');
+  assert.ok(out.indexOf('title = "Custom"') < out.indexOf('[http]'), 'the [reply] key stays in [reply]');
+});
+
+test('#81: two new sections are appended in order and parse cleanly', () => {
+  const text = '[ui]\ntray = true\n';
+  const out = editConfigInPlace(
+    text,
+    [
+      { path: ['web_ui', 'bind'], value: '0.0.0.0' },
+      { path: ['http', 'port'], value: 9999 },
+    ],
+    { web_ui: { bind: '0.0.0.0' }, http: { port: 9999 } }
+  );
+  const parsed = parseToml(out);
+  assert.equal(parsed.web_ui.bind, '0.0.0.0');
+  assert.equal(parsed.http.port, 9999);
+  assert.ok(out.indexOf('[web_ui]') < out.indexOf('[http]'), 'the appended sections keep their order');
+});
+
+test('#82: an existing dotted key is edited in place, not redefined', async (t) => {
+  const text = 'web_ui.bind = "127.0.0.1"\n';
+  const { editor, path } = editorOverConfig(t, text);
+  editor.set('web_ui.bind', '0.0.0.0');
+  await editor.save();
+  const after = readFileSync(path, 'utf8');
+  assert.equal(after, 'web_ui.bind = "0.0.0.0"\n', 'only the value bytes change');
+  assert.equal(parseToml(after).web_ui.bind, '0.0.0.0');
+});
+
+test('#82: adding a key to a dotted-key section refuses and writes nothing', async (t) => {
+  const text = 'web_ui.bind = "127.0.0.1"\n';
+  const { editor, path } = editorOverConfig(t, text);
+  editor.set('web_ui.allowed_cidrs', '10.0.0.0/8');
+  await assert.rejects(() => editor.save(), (err) => err instanceof ConfigEditError && /dotted keys or an inline table/.test(err.message));
+  assert.equal(readFileSync(path, 'utf8'), text, 'a refused edit writes nothing');
+  assert.equal(existsSync(`${path}.bak`), false, 'a refused edit takes no backup');
+});
+
+test('#82: adding a key to an inline-table section refuses and writes nothing', async (t) => {
+  const text = 'web_ui = { bind = "127.0.0.1" }\n';
+  const { editor, path } = editorOverConfig(t, text);
+  editor.set('web_ui.allowed_cidrs', '10.0.0.0/8');
+  await assert.rejects(() => editor.save(), (err) => err instanceof ConfigEditError && /dotted keys or an inline table/.test(err.message));
+  assert.equal(readFileSync(path, 'utf8'), text, 'a refused edit writes nothing');
+  assert.equal(existsSync(`${path}.bak`), false, 'a refused edit takes no backup');
+});
+
+test('#82: a refusal leaves an existing backup byte-identical', async (t) => {
+  const text = 'web_ui.bind = "127.0.0.1"\n';
+  const dir = tempDir(t);
+  const path = join(dir, 'config.toml');
+  writeFileSync(path, text);
+  writeFileSync(`${path}.bak`, 'previous backup\n');
+  const editor = createSettingsEditor({
+    config: validateConfig({}).config,
+    configPath: path,
+    saveSecrets: async () => ({ saved: [] }),
+  });
+  editor.set('web_ui.allowed_cidrs', '10.0.0.0/8');
+  await assert.rejects(() => editor.save(), ConfigEditError);
+  assert.equal(readFileSync(path, 'utf8'), text, 'the config file is untouched');
+  assert.equal(readFileSync(`${path}.bak`, 'utf8'), 'previous backup\n', 'an existing backup is not overwritten');
+});
+
+test('the self-check refuses when the intended value is at the wrong path (#81)', (t) => {
+  const dir = tempDir(t);
+  const path = join(dir, 'config.toml');
+  writeFileSync(path, '[ui]\ntray = true\n');
+  // A locator that reproduces the #81 shape: the value lands under a new section.
+  const misplacingLocator = (text) => `${text}\n[web_ui]\nstats_recent_solves = 7\n`;
+  assert.throws(
+    () =>
+      writeConfigAtomically({
+        path,
+        config: { ui: { stats_recent_solves: 7 } },
+        edits: [{ path: ['ui', 'stats_recent_solves'], value: 7 }],
+        editInPlace: misplacingLocator,
+      }),
+    (err) => err instanceof ConfigEditError && /not present at its intended path/.test(err.message)
+  );
+  assert.equal(readFileSync(path, 'utf8'), '[ui]\ntray = true\n', 'a refused edit leaves the file untouched');
+  assert.equal(existsSync(`${path}.bak`), false, 'the self-check refuses before taking a backup');
+});
+
+test('the self-check refuses when the intended value differs', (t) => {
+  const dir = tempDir(t);
+  const path = join(dir, 'config.toml');
+  writeFileSync(path, '[ui]\ntray = true\n');
+  const wrongValueLocator = (text) => `${text}stats_recent_solves = 9\n`;
+  assert.throws(
+    () =>
+      writeConfigAtomically({
+        path,
+        config: { ui: { stats_recent_solves: 7 } },
+        edits: [{ path: ['ui', 'stats_recent_solves'], value: 7 }],
+        editInPlace: wrongValueLocator,
+      }),
+    (err) => err instanceof ConfigEditError && /does not have its intended value/.test(err.message)
+  );
+  assert.equal(readFileSync(path, 'utf8'), '[ui]\ntray = true\n');
+  assert.equal(existsSync(`${path}.bak`), false);
+});
+
+test('the self-check refuses locator output that is not valid TOML (#82)', (t) => {
+  const dir = tempDir(t);
+  const path = join(dir, 'config.toml');
+  writeFileSync(path, '[ui]\ntray = true\n');
+  const brokenLocator = (text) => `${text}\n[web_ui\n`;
+  assert.throws(
+    () =>
+      writeConfigAtomically({
+        path,
+        config: { web_ui: { bind: '0.0.0.0' } },
+        edits: [{ path: ['web_ui', 'bind'], value: '0.0.0.0' }],
+        editInPlace: brokenLocator,
+      }),
+    (err) => err instanceof ConfigEditError && /not valid TOML/.test(err.message)
+  );
+  assert.equal(readFileSync(path, 'utf8'), '[ui]\ntray = true\n');
+  assert.equal(existsSync(`${path}.bak`), false);
 });
 
 test('ui.stats_recent_solves is a bounded integer in the editor too (#64)', (t) => {
