@@ -18,7 +18,7 @@
 import { homedir as osHomedir } from 'node:os';
 import { readdirSync, statSync } from 'node:fs';
 import { join, basename, extname } from 'node:path';
-import { loadConfig, defaultStatePath } from './config.js';
+import { loadConfig, defaultStatePath, autoRouterOptions } from './config.js';
 import { loadSecrets, describeSecret, saveSecrets, defaultCredentialPath } from './secrets.js';
 import { createLogger, defaultLogPath } from './logging.js';
 import { openStore } from './state/db.js';
@@ -118,7 +118,13 @@ export function buildReasonerFromConfig(config, { llmApiKey, store, logger, crea
     return { reasoner: null, reason: 'no-key' };
   }
 
-  const client = createChatClientImpl({ baseUrl: config.solver.llm_base_url, apiKey: llmApiKey });
+  const client = createChatClientImpl({
+    baseUrl: config.solver.llm_base_url,
+    apiKey: llmApiKey,
+    // #78: the auto-router policy has to reach the client the service builds, or
+    // `allowed_models`/`cost_tier` silently do nothing for a routed text tier.
+    autoRouter: autoRouterOptions(config),
+  });
   const n = config.solver.self_consistency_n;
   const sampleCounts = {
     count: 1,
@@ -303,6 +309,9 @@ export async function createApp({
         // optional, matching the documented behaviour.
         saveSecrets: (args) => saveSecrets({ ...args, providers, platform, env, homedir, logger }),
         requireModelKey: false,
+        // #79: Test connection probes the provider the user configured, not a
+        // hardwired OpenAI endpoint.
+        modelProbe: { baseUrl: config.solver.llm_base_url, model: config.solver.llm_text_model },
         logger,
       });
       let outcome;

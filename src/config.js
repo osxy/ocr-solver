@@ -24,6 +24,7 @@ import { join } from 'node:path';
 import { parse as parseToml } from 'smol-toml';
 import { VARIANTS } from './imaging/preprocess.js';
 import { DEFAULT_MAX_PIXELS, DEFAULT_MAX_WIDTH } from './imaging/limits.js';
+import { COST_TIERS } from './model/client.js';
 import { HISTORY_MODES } from './pushbullet/listener.js';
 import { STRATEGIES, DEFAULT_UNRESOLVED_TITLE, DEFAULT_UNRESOLVED_TEXT } from './pushbullet/respond.js';
 import {
@@ -76,6 +77,13 @@ export const DEFAULTS = {
     llm_text_model: 'gpt-4o-mini',
     llm_vision_model: 'gpt-4o',
     llm_base_url: 'https://api.openai.com/v1',
+    // OpenRouter auto-router controls. They apply only to auto-routed slugs
+    // (`openrouter/auto`, `openrouter/auto-beta`); a pinned model ignores them, so
+    // they are policy knobs rather than provider settings. `cost_tier` empty means
+    // "send no band", which OpenRouter routes at its cheapest.
+    cost_tier: '',
+    allowed_models: [],
+    excluded_models: [],
     offline_only: false,
     // Circuit breaker per model tier (DESIGN 7). Three consecutive transient failures
     // trip it; a permanent one (bad key/model/cost tier) trips it immediately. It then
@@ -275,11 +283,15 @@ function requireNumber(config, section, key, { min = null, max = null, integer =
   if (max != null && value > max) throw new ConfigError(`${section}.${key} must be <= ${max}, got ${value}`);
 }
 
-function requireEnum(config, section, key, allowed) {
+function requireEnum(config, section, key, allowed, { allowEmpty = false } = {}) {
   const value = config[section][key];
+  // `cost_tier` uses the empty string for "unset": TOML has no null and a missing
+  // key already falls back to the default, so an explicit empty is how a user clears
+  // a previously configured band.
+  if (allowEmpty && value === '') return;
   if (!allowed.includes(value)) {
     throw new ConfigError(
-      `${section}.${key} must be one of ${allowed.join(', ')}, got ${JSON.stringify(value)}`
+      `${section}.${key} must be one of ${allowed.join(', ')}${allowEmpty ? ', or empty for the provider default' : ''}, got ${JSON.stringify(value)}`
     );
   }
 }
@@ -375,6 +387,9 @@ export function validateConfig(raw = {}) {
   requireString(config, 'solver', 'llm_text_model');
   requireString(config, 'solver', 'llm_vision_model');
   requireString(config, 'solver', 'llm_base_url');
+  requireEnum(config, 'solver', 'cost_tier', COST_TIERS, { allowEmpty: true });
+  requireStringArray(config, 'solver', 'allowed_models');
+  requireStringArray(config, 'solver', 'excluded_models');
   requireBoolean(config, 'solver', 'offline_only');
   requireNumber(config, 'solver', 'breaker_threshold', { min: 1, integer: true });
   requireNumber(config, 'solver', 'breaker_cooldown_sec', { min: 0 });
@@ -440,6 +455,53 @@ export function validateConfig(raw = {}) {
   }
 
   return { config, warnings };
+}
+
+/**
+ * The auto-router options `createChatClient` accepts, read from a validated config.
+ * One mapping, so `buildReasonerFromConfig`, the CLI and `live-eval` cannot drift on
+ * which config key means which router option. `cost_tier` is normalised to `null`
+ * ("send no band") because an empty string is how the config spells unset.
+ */
+export function autoRouterOptions(config) {
+  const solver = config?.solver ?? {};
+  return {
+    costTier: solver.cost_tier || null,
+    allowedModels: [...(solver.allowed_models ?? [])],
+    excludedModels: [...(solver.excluded_models ?? [])],
+  };
+}
+
+/** The environment spelling of the same three options, kept for the CLI/live-eval. */
+export function autoRouterFromEnv(env = process.env) {
+  const splitList = (value) =>
+    String(value ?? '')
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+  return {
+    costTier: env?.LLM_COST_TIER || null,
+    allowedModels: splitList(env?.LLM_ALLOWED_MODELS),
+    excludedModels: splitList(env?.LLM_EXCLUDED_MODELS),
+  };
+}
+
+/**
+ * Resolve the router options the way the CLI and live-eval need them: an explicit
+ * flag beats the environment, which beats the config file. An empty list is treated
+ * as "not set" rather than "clear the restriction", so an unrelated empty flag
+ * cannot silently drop a policy control the user configured.
+ */
+export function resolveAutoRouter({ config = null, env = null, explicit = null } = {}) {
+  const fromConfig = autoRouterOptions(config);
+  const fromEnv = env ? autoRouterFromEnv(env) : { costTier: null, allowedModels: [], excludedModels: [] };
+  const flags = explicit ?? {};
+  const firstNonEmptyList = (...lists) => lists.find((list) => Array.isArray(list) && list.length > 0) ?? [];
+  return {
+    costTier: flags.costTier || fromEnv.costTier || fromConfig.costTier || null,
+    allowedModels: firstNonEmptyList(flags.allowedModels, fromEnv.allowedModels, fromConfig.allowedModels),
+    excludedModels: firstNonEmptyList(flags.excludedModels, fromEnv.excludedModels, fromConfig.excludedModels),
+  };
 }
 
 /**

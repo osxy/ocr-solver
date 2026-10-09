@@ -21,6 +21,7 @@ import { createOcrWorker } from '../src/ocr/recognize.js';
 import { solveImage } from '../src/solver/pipeline.js';
 import { createReasoner } from '../src/solver/reason.js';
 import { createChatClient } from '../src/model/client.js';
+import { loadConfig, resolveAutoRouter } from '../src/config.js';
 import { parsePuzzle } from '../src/solver/puzzle.js';
 import { normalizeTranscript } from '../src/solver/transcript.js';
 import { OBSERVED_OCR_DAMAGE } from '../src/corpus/observed.js';
@@ -36,14 +37,14 @@ if (!apiKey) {
   process.exit(2);
 }
 
+// #78: same three keys and the same precedence as the service and the CLI. The live
+// harness keeps its base URL and models from the environment, but the auto-router
+// policy now also reads `[solver] cost_tier / allowed_models / excluded_models`.
+const config = loadConfig({ env: process.env }).config;
 const client = createChatClient({
   baseUrl: process.env.LLM_BASE_URL ?? 'https://api.openai.com/v1',
   apiKey,
-  autoRouter: {
-    costTier: process.env.LLM_COST_TIER ?? null,
-    allowedModels: (process.env.LLM_ALLOWED_MODELS ?? '').split(',').filter(Boolean),
-    excludedModels: (process.env.LLM_EXCLUDED_MODELS ?? '').split(',').filter(Boolean),
-  },
+  autoRouter: resolveAutoRouter({ config, env: process.env }),
 });
 
 // One sample per class keeps the run cheap; voting is covered by unit tests.

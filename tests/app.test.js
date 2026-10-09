@@ -372,6 +372,38 @@ test('buildReasonerFromConfig reports why it produced nothing', () => {
   assert.deepEqual(noKey, { reasoner: null, reason: 'no-key' });
 });
 
+// #78: the service ignored the auto-router settings because buildReasonerFromConfig
+// built the client with baseUrl/apiKey only. Capture the client's options here, the
+// same seam that exposed the bug.
+test('#78: buildReasonerFromConfig passes the auto-router settings to the client', () => {
+  const config = validateConfig({
+    solver: {
+      llm_base_url: 'https://openrouter.ai/api/v1',
+      llm_text_model: 'openrouter/auto',
+      cost_tier: 'high',
+      allowed_models: ['openai/*'],
+      excluded_models: ['anthropic/*'],
+    },
+  }).config;
+  let seen = null;
+  const built = buildReasonerFromConfig(config, {
+    llmApiKey: 'sk-test-key-not-real',
+    logger: collectingLogger(),
+    createChatClientImpl: (options) => {
+      seen = options;
+      return { tag: 'chat' };
+    },
+    createReasonerImpl: () => ({ solveVision: async () => null }),
+  });
+  assert.equal(built.reason, 'model');
+  assert.ok(seen, 'the service client must be built');
+  assert.deepEqual(seen.autoRouter, {
+    costTier: 'high',
+    allowedModels: ['openai/*'],
+    excludedModels: ['anthropic/*'],
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Missing token
 // ---------------------------------------------------------------------------

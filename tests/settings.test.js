@@ -445,6 +445,41 @@ test('the editor Test connection reuses the setup probe seam', async (t) => {
   assert.deepEqual(calls, ['o.stored', 'o.pending'], 'a pending edit is probed before it is saved');
 });
 
+test('#79: the editor probes the configured provider, including a pending edit', async (t) => {
+  const seen = [];
+  const config = validateConfig({
+    solver: { llm_base_url: 'https://openrouter.ai/api/v1', llm_text_model: 'openrouter/auto' },
+  }).config;
+  const editor = createSettingsEditor({
+    config,
+    configPath: join(tempDir(t), 'config.toml'),
+    secrets: { llm: { value: 'sk-stored', source: 'file' } },
+    saveSecrets: async () => ({ saved: [] }),
+    testModel: async (key, options) => {
+      seen.push({ key, ...options });
+      return { ok: true, detail: 'ok' };
+    },
+  });
+
+  await editor.test('llm.api_key');
+  assert.deepEqual(seen[0], {
+    key: 'sk-stored',
+    baseUrl: 'https://openrouter.ai/api/v1',
+    model: 'openrouter/auto',
+  });
+
+  // Testing before saving should report on the provider the user is about to use,
+  // not the one still on disk.
+  editor.set('solver.llm_base_url', 'https://api.example.test/v1');
+  editor.set('solver.llm_text_model', 'example-model');
+  await editor.test('llm.api_key');
+  assert.deepEqual(seen[1], {
+    key: 'sk-stored',
+    baseUrl: 'https://api.example.test/v1',
+    model: 'example-model',
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Live versus restart
 // ---------------------------------------------------------------------------

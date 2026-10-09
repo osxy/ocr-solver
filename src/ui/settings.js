@@ -28,6 +28,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSy
 import { dirname, join } from 'node:path';
 import { stringify } from 'smol-toml';
 import { DEFAULTS, validateConfig } from '../config.js';
+import { COST_TIERS } from '../model/client.js';
 import { httpTokenProblem } from '../http/defaults.js';
 import { VARIANTS } from '../imaging/preprocess.js';
 import { HISTORY_MODES } from '../pushbullet/listener.js';
@@ -123,6 +124,13 @@ export const SETTINGS = Object.freeze([
 
   Object.freeze({ id: 'ui.tray', label: 'Show the tray', path: ['ui', 'tray'], type: 'boolean', restart: true, since: '0.1.0' }),
   Object.freeze({ id: 'ui.notify_on_unresolved', label: 'Notify on an unresolved puzzle', path: ['ui', 'notify_on_unresolved'], type: 'boolean', restart: false, since: '0.1.0' }),
+  // #78: the OpenRouter auto-router controls. They only affect an auto-routed slug,
+  // so they are restart-bound like the model settings they qualify. The empty cost
+  // tier means "send no band"; it is a real choice, so the enum carries an explicit
+  // blank. They sit with the other v0.3.0 additions, after the security-relevant ones.
+  Object.freeze({ id: 'solver.cost_tier', label: 'Auto-router cost band (blank = provider default)', path: ['solver', 'cost_tier'], type: 'enum', choices: [...COST_TIERS, ''], restart: true, since: '0.3.0' }),
+  Object.freeze({ id: 'solver.allowed_models', label: 'Auto-router allowed models (wildcards)', path: ['solver', 'allowed_models'], type: 'string-array', allowEmpty: true, restart: true, since: '0.3.0' }),
+  Object.freeze({ id: 'solver.excluded_models', label: 'Auto-router excluded models (wildcards)', path: ['solver', 'excluded_models'], type: 'string-array', allowEmpty: true, restart: true, since: '0.3.0' }),
   // Read by the statistics page on each load. Bounded like every other numeric
   // setting, so an absurd value cannot be used to dump the attempts table (#64).
   Object.freeze({ id: 'ui.stats_recent_solves', label: 'Recent solves shown on the statistics page', path: ['ui', 'stats_recent_solves'], type: 'integer', min: 1, max: 100, restart: true, since: '0.3.0' }),
@@ -716,8 +724,21 @@ export function createSettingsEditor({
   if (typeof saveSecrets !== 'function') throw new Error('createSettingsEditor needs the saveSecrets provider function');
 
   const newIds = new Set(newSettingIds ?? []);
-  const setup = createSetup({ saveSecrets, testPushbullet, testModel, requireModelKey: false, logger });
   const pending = new Map();
+  const setup = createSetup({
+    saveSecrets,
+    testPushbullet,
+    testModel,
+    // #79: probe the configured provider. The function reads at call time, so a
+    // pending change to the base URL or text model is what the Test connection
+    // button reports on, not the value that is still on disk.
+    modelProbe: () => ({
+      baseUrl: pending.get('solver.llm_base_url') ?? config.solver.llm_base_url,
+      model: pending.get('solver.llm_text_model') ?? config.solver.llm_text_model,
+    }),
+    requireModelKey: false,
+    logger,
+  });
   let lastSave = null;
 
   function currentValue(setting) {

@@ -48,6 +48,9 @@ const V030 = Object.freeze([
   'web_ui.allowed_cidrs',
   'web_ui.allowed_hosts',
   'web_ui.password',
+  'solver.cost_tier',
+  'solver.allowed_models',
+  'solver.excluded_models',
   'ui.stats_recent_solves',
 ]);
 

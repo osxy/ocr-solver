@@ -157,7 +157,12 @@ function renderField(item) {
   }
   if (item.type === 'enum') {
     const options = (item.choices ?? [])
-      .map((choice) => `<option value="${escapeHtml(choice)}"${choice === item.value ? ' selected' : ''}>${escapeHtml(choice)}</option>`)
+      .map((choice) => {
+        // An empty enum choice is a real "unset" (the cost band's provider default),
+        // so it needs a visible label rather than a blank row in the select.
+        const label = choice === '' ? '(blank)' : choice;
+        return `<option value="${escapeHtml(choice)}"${choice === item.value ? ' selected' : ''}>${escapeHtml(label)}</option>`;
+      })
       .join('');
     return `<select name="${escapeHtml(name)}">${options}</select>`;
   }
