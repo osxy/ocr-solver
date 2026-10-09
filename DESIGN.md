@@ -662,6 +662,44 @@ GUI. First-run uses the same descriptors through `createSetupSettingsController`
 `createSetup` (`pushbullet.token`, `llm.api_key`), so the first-run labels and validation cannot
 drift either.
 
+**The upgrade review registry (issue #67).** A new release can add a setting an existing install
+silently never sees. The enabling change is a `since` field on each descriptor in
+`src/ui/settings.js` — the release that introduced the setting — and `securityRelevant` for a
+setting whose default being ignored has a security consequence (`http.allow_image_url` and the
+`image_url_hosts` allowlist, the HTTP ingress/bind/rate/limits, and the whole `web_ui.*` access
+block). The values are the real release boundaries, read from the tags rather than remembered:
+v0.1.0's `DEFAULTS` is `0.1.0`; the `reply.unresolved_*`, `image.*` and the first `http.*` block
+landed in v0.2.0; `http.allow_image_url`, `http.image_url_hosts`, `web_ui.*` and
+`ui.stats_recent_solves` are the `0.3.0` additions. `src/version.js` holds `APP_VERSION` (kept in
+step with `package.json`, asserted by a test) and the comparison the flow needs.
+
+The comparison is **per setting**, not per release, so a user who skips `0.1.0 -> 0.3.0` is shown
+the `0.2.0` additions *and* the `0.3.0` additions; the alternative — compare release numbers —
+would silently drop everything from the skipped release. When no version has been recorded the
+baseline is the oldest `since` in the registry, so an existing install that predates the registry
+is offered every addition after the first release exactly once, rather than nothing.
+
+The reviewed state is **app state in the `kv` table of the state database**, never in
+`config.toml`: the file is the user's and belongs hand-editable, the state must survive upgrades,
+and a notification must not rewrite it. Two keys, deliberately:
+
+- `settings_prompted_version` is the last version whose additions were announced at startup. It
+  advances the moment the offer is logged, so a repeated start does not nag and an unattended
+  install is left alone after one line. `config review --dismiss` (and an editor review) can set it
+  explicitly.
+- `settings_reviewed_version` is the last version whose settings were actually shown in the editor
+  or through `config review`. It is the baseline for the `isNew` badges, and is **not** advanced by
+  the startup offer: dismissing the prompt silences it, but the settings stay marked `[new]` in
+  the terminal editor, the web page and `config list`, so a user who dismisses can still find them.
+
+The offer is a startup log line and the badged editor; it **never opens a browser on its own** and
+never blocks startup. `planStartupReview` catches its own store errors and returns `null`, so a
+store that cannot be read leaves the app running on defaults. A fresh install (no config file)
+records the current version and skips — first-run setup already covers it — and a downgrade (a
+stored version at or beyond the running one) produces nothing. Headless gets the same set from the
+log and from `config review`; the command runs the editor with the new settings marked and records
+the review when it finishes.
+
 **The security is the point, because this endpoint writes the config *and* the secrets.** Non-negotiables,
 each enforced in code and in a test:
 

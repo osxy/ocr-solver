@@ -58,67 +58,74 @@ const VARIANT_NAMES = Object.freeze(Object.keys(VARIANTS));
  * responder or HTTP server is constructed, so the editor says "restart" rather than
  * pretending a live save took effect. Each descriptor's `restart` is checked against
  * the actual re-read site rather than defaulted.
+ *
+ * `since` is the release that introduced the setting, and is what the upgrade review
+ * compares per setting rather than per release, so a user who skips a version still
+ * sees the additions of every release in between (#67). `securityRelevant` marks a
+ * setting whose default being ignored has a security consequence; the review puts
+ * those first. Both are established from the release history: v0.1.0's DEFAULTS,
+ * v0.2.0's additions, and the settings added for v0.3.0.
  */
 export const SETTINGS = Object.freeze([
-  Object.freeze({ id: 'pushbullet.token', label: 'Pushbullet token', secret: 'pushbullet', type: 'secret', restart: true }),
-  Object.freeze({ id: 'llm.api_key', label: 'Model API key', secret: 'llm', type: 'secret', restart: true }),
+  Object.freeze({ id: 'pushbullet.token', label: 'Pushbullet token', secret: 'pushbullet', type: 'secret', restart: true, since: '0.1.0' }),
+  Object.freeze({ id: 'llm.api_key', label: 'Model API key', secret: 'llm', type: 'secret', restart: true, since: '0.1.0' }),
 
-  Object.freeze({ id: 'solver.offline_only', label: 'Offline only (never call a model)', path: ['solver', 'offline_only'], type: 'boolean', restart: true }),
-  Object.freeze({ id: 'solver.tier0', label: 'Use the offline tier (Tier 0)', path: ['solver', 'tier0'], type: 'boolean', restart: false }),
-  Object.freeze({ id: 'solver.escalate_to_vision', label: 'Escalate to the vision model', path: ['solver', 'escalate_to_vision'], type: 'boolean', restart: true }),
-  Object.freeze({ id: 'solver.self_consistency_n', label: 'Self-consistency samples (voting classes)', path: ['solver', 'self_consistency_n'], type: 'integer', min: 1, restart: true }),
-  Object.freeze({ id: 'solver.breaker_threshold', label: 'Circuit-breaker failure threshold', path: ['solver', 'breaker_threshold'], type: 'integer', min: 1, restart: true }),
-  Object.freeze({ id: 'solver.breaker_cooldown_sec', label: 'Circuit-breaker cooldown (seconds)', path: ['solver', 'breaker_cooldown_sec'], type: 'number', min: 0, restart: true }),
-  Object.freeze({ id: 'solver.llm_text_model', label: 'Text model', path: ['solver', 'llm_text_model'], type: 'string', restart: true }),
-  Object.freeze({ id: 'solver.llm_vision_model', label: 'Vision model', path: ['solver', 'llm_vision_model'], type: 'string', restart: true }),
-  Object.freeze({ id: 'solver.llm_base_url', label: 'Model base URL', path: ['solver', 'llm_base_url'], type: 'string', restart: true }),
+  Object.freeze({ id: 'solver.offline_only', label: 'Offline only (never call a model)', path: ['solver', 'offline_only'], type: 'boolean', restart: true, since: '0.1.0' }),
+  Object.freeze({ id: 'solver.tier0', label: 'Use the offline tier (Tier 0)', path: ['solver', 'tier0'], type: 'boolean', restart: false, since: '0.1.0' }),
+  Object.freeze({ id: 'solver.escalate_to_vision', label: 'Escalate to the vision model', path: ['solver', 'escalate_to_vision'], type: 'boolean', restart: true, since: '0.1.0' }),
+  Object.freeze({ id: 'solver.self_consistency_n', label: 'Self-consistency samples (voting classes)', path: ['solver', 'self_consistency_n'], type: 'integer', min: 1, restart: true, since: '0.1.0' }),
+  Object.freeze({ id: 'solver.breaker_threshold', label: 'Circuit-breaker failure threshold', path: ['solver', 'breaker_threshold'], type: 'integer', min: 1, restart: true, since: '0.1.0' }),
+  Object.freeze({ id: 'solver.breaker_cooldown_sec', label: 'Circuit-breaker cooldown (seconds)', path: ['solver', 'breaker_cooldown_sec'], type: 'number', min: 0, restart: true, since: '0.1.0' }),
+  Object.freeze({ id: 'solver.llm_text_model', label: 'Text model', path: ['solver', 'llm_text_model'], type: 'string', restart: true, since: '0.1.0' }),
+  Object.freeze({ id: 'solver.llm_vision_model', label: 'Vision model', path: ['solver', 'llm_vision_model'], type: 'string', restart: true, since: '0.1.0' }),
+  Object.freeze({ id: 'solver.llm_base_url', label: 'Model base URL', path: ['solver', 'llm_base_url'], type: 'string', restart: true, since: '0.1.0' }),
 
-  Object.freeze({ id: 'reply.enabled', label: 'Reply at all', path: ['reply', 'enabled'], type: 'boolean', restart: true }),
-  Object.freeze({ id: 'reply.strategy', label: 'Reply strategy', path: ['reply', 'strategy'], type: 'enum', choices: Object.keys(STRATEGIES), restart: true }),
-  Object.freeze({ id: 'reply.min_interval_sec', label: 'Minimum interval between sends (seconds)', path: ['reply', 'min_interval_sec'], type: 'number', min: 0, restart: true }),
-  Object.freeze({ id: 'reply.require_confidence', label: 'Reply only to corroborated answers', path: ['reply', 'require_confidence'], type: 'boolean', restart: true }),
-  Object.freeze({ id: 'reply.title', label: 'Reply title', path: ['reply', 'title'], type: 'string', restart: true }),
-  Object.freeze({ id: 'reply.prefix', label: 'Reply prefix', path: ['reply', 'prefix'], type: 'string', allowEmpty: true, restart: true }),
-  Object.freeze({ id: 'reply.unresolved_title', label: 'Unresolved acknowledgement title', path: ['reply', 'unresolved_title'], type: 'string', restart: true }),
-  Object.freeze({ id: 'reply.unresolved_text', label: 'Unresolved acknowledgement text', path: ['reply', 'unresolved_text'], type: 'string', multiline: true, restart: true }),
-  Object.freeze({ id: 'reply.unresolved_max_per_hour', label: 'Acknowledgement budget (per hour)', path: ['reply', 'unresolved_max_per_hour'], type: 'integer', min: 0, restart: true }),
+  Object.freeze({ id: 'reply.enabled', label: 'Reply at all', path: ['reply', 'enabled'], type: 'boolean', restart: true, since: '0.1.0' }),
+  Object.freeze({ id: 'reply.strategy', label: 'Reply strategy', path: ['reply', 'strategy'], type: 'enum', choices: Object.keys(STRATEGIES), restart: true, since: '0.1.0' }),
+  Object.freeze({ id: 'reply.min_interval_sec', label: 'Minimum interval between sends (seconds)', path: ['reply', 'min_interval_sec'], type: 'number', min: 0, restart: true, since: '0.1.0' }),
+  Object.freeze({ id: 'reply.require_confidence', label: 'Reply only to corroborated answers', path: ['reply', 'require_confidence'], type: 'boolean', restart: true, since: '0.1.0' }),
+  Object.freeze({ id: 'reply.title', label: 'Reply title', path: ['reply', 'title'], type: 'string', restart: true, since: '0.1.0' }),
+  Object.freeze({ id: 'reply.prefix', label: 'Reply prefix', path: ['reply', 'prefix'], type: 'string', allowEmpty: true, restart: true, since: '0.1.0' }),
+  Object.freeze({ id: 'reply.unresolved_title', label: 'Unresolved acknowledgement title', path: ['reply', 'unresolved_title'], type: 'string', restart: true, since: '0.2.0' }),
+  Object.freeze({ id: 'reply.unresolved_text', label: 'Unresolved acknowledgement text', path: ['reply', 'unresolved_text'], type: 'string', multiline: true, restart: true, since: '0.2.0' }),
+  Object.freeze({ id: 'reply.unresolved_max_per_hour', label: 'Acknowledgement budget (per hour)', path: ['reply', 'unresolved_max_per_hour'], type: 'integer', min: 0, restart: true, since: '0.2.0' }),
 
-  Object.freeze({ id: 'pushbullet.poll_interval_sec', label: 'Fallback poll interval (seconds)', path: ['pushbullet', 'poll_interval_sec'], type: 'number', min: 0, restart: true }),
-  Object.freeze({ id: 'pushbullet.history_mode', label: 'History mode', path: ['pushbullet', 'history_mode'], type: 'enum', choices: HISTORY_MODES, restart: true }),
+  Object.freeze({ id: 'pushbullet.poll_interval_sec', label: 'Fallback poll interval (seconds)', path: ['pushbullet', 'poll_interval_sec'], type: 'number', min: 0, restart: true, since: '0.1.0' }),
+  Object.freeze({ id: 'pushbullet.history_mode', label: 'History mode', path: ['pushbullet', 'history_mode'], type: 'enum', choices: HISTORY_MODES, restart: true, since: '0.1.0' }),
 
-  Object.freeze({ id: 'storage.retain_days', label: 'Retain inbox/attempts (days)', path: ['storage', 'retain_days'], type: 'number', min: 0, restart: true }),
-  Object.freeze({ id: 'storage.log_images', label: 'Keep a file reference for unresolved images', path: ['storage', 'log_images'], type: 'boolean', restart: false }),
+  Object.freeze({ id: 'storage.retain_days', label: 'Retain inbox/attempts (days)', path: ['storage', 'retain_days'], type: 'number', min: 0, restart: true, since: '0.1.0' }),
+  Object.freeze({ id: 'storage.log_images', label: 'Keep a file reference for unresolved images', path: ['storage', 'log_images'], type: 'boolean', restart: false, since: '0.1.0' }),
 
-  Object.freeze({ id: 'ocr.languages', label: 'OCR languages', path: ['ocr', 'languages'], type: 'string-array', restart: true }),
-  Object.freeze({ id: 'ocr.min_confidence', label: 'Minimum OCR confidence', path: ['ocr', 'min_confidence'], type: 'number', min: 0, max: 100, restart: false }),
-  Object.freeze({ id: 'ocr.variants', label: 'OCR preprocessing variants', path: ['ocr', 'variants'], type: 'string-array', choices: VARIANT_NAMES, restart: false }),
+  Object.freeze({ id: 'ocr.languages', label: 'OCR languages', path: ['ocr', 'languages'], type: 'string-array', restart: true, since: '0.1.0' }),
+  Object.freeze({ id: 'ocr.min_confidence', label: 'Minimum OCR confidence', path: ['ocr', 'min_confidence'], type: 'number', min: 0, max: 100, restart: false, since: '0.1.0' }),
+  Object.freeze({ id: 'ocr.variants', label: 'OCR preprocessing variants', path: ['ocr', 'variants'], type: 'string-array', choices: VARIANT_NAMES, restart: false, since: '0.1.0' }),
 
-  Object.freeze({ id: 'image.max_width', label: 'Maximum image width (pixels)', path: ['image', 'max_width'], type: 'integer', min: 1, restart: false }),
-  Object.freeze({ id: 'image.max_pixels', label: 'Maximum decoded pixels', path: ['image', 'max_pixels'], type: 'integer', min: 1, restart: false }),
+  Object.freeze({ id: 'image.max_width', label: 'Maximum image width (pixels)', path: ['image', 'max_width'], type: 'integer', min: 1, restart: false, since: '0.2.0' }),
+  Object.freeze({ id: 'image.max_pixels', label: 'Maximum decoded pixels', path: ['image', 'max_pixels'], type: 'integer', min: 1, restart: false, since: '0.2.0' }),
 
-  Object.freeze({ id: 'http.enabled', label: 'HTTP ingress', path: ['http', 'enabled'], type: 'boolean', restart: true }),
-  Object.freeze({ id: 'http.token', label: 'HTTP bearer token', secret: 'http', type: 'secret', restart: true, testable: false, check: httpTokenProblem }),
-  Object.freeze({ id: 'http.bind', label: 'HTTP bind address', path: ['http', 'bind'], type: 'string', restart: true }),
-  Object.freeze({ id: 'http.port', label: 'HTTP port', path: ['http', 'port'], type: 'integer', min: 0, max: 65_535, restart: true }),
-  Object.freeze({ id: 'http.rate_limit_per_min', label: 'HTTP rate limit (per minute)', path: ['http', 'rate_limit_per_min'], type: 'integer', min: 0, restart: true }),
-  Object.freeze({ id: 'http.timeout_ms', label: 'HTTP solve timeout (ms)', path: ['http', 'timeout_ms'], type: 'integer', min: 0, restart: true }),
-  Object.freeze({ id: 'http.max_body_bytes', label: 'HTTP max body bytes', path: ['http', 'max_body_bytes'], type: 'integer', min: 1, restart: true }),
-  Object.freeze({ id: 'http.max_queue', label: 'HTTP max queue', path: ['http', 'max_queue'], type: 'integer', min: 1, restart: true }),
-  Object.freeze({ id: 'http.allow_image_url', label: 'Allow image_url fetching (SSRF risk)', path: ['http', 'allow_image_url'], type: 'boolean', restart: true }),
-  Object.freeze({ id: 'http.image_url_hosts', label: 'Allowed image_url hosts (default deny)', path: ['http', 'image_url_hosts'], type: 'string-array', restart: true }),
+  Object.freeze({ id: 'http.enabled', label: 'HTTP ingress', path: ['http', 'enabled'], type: 'boolean', restart: true, securityRelevant: true, since: '0.2.0' }),
+  Object.freeze({ id: 'http.token', label: 'HTTP bearer token', secret: 'http', type: 'secret', restart: true, testable: false, check: httpTokenProblem, securityRelevant: true, since: '0.2.0' }),
+  Object.freeze({ id: 'http.bind', label: 'HTTP bind address', path: ['http', 'bind'], type: 'string', restart: true, securityRelevant: true, since: '0.2.0' }),
+  Object.freeze({ id: 'http.port', label: 'HTTP port', path: ['http', 'port'], type: 'integer', min: 0, max: 65_535, restart: true, since: '0.2.0' }),
+  Object.freeze({ id: 'http.rate_limit_per_min', label: 'HTTP rate limit (per minute)', path: ['http', 'rate_limit_per_min'], type: 'integer', min: 0, restart: true, securityRelevant: true, since: '0.2.0' }),
+  Object.freeze({ id: 'http.timeout_ms', label: 'HTTP solve timeout (ms)', path: ['http', 'timeout_ms'], type: 'integer', min: 0, restart: true, since: '0.2.0' }),
+  Object.freeze({ id: 'http.max_body_bytes', label: 'HTTP max body bytes', path: ['http', 'max_body_bytes'], type: 'integer', min: 1, restart: true, securityRelevant: true, since: '0.2.0' }),
+  Object.freeze({ id: 'http.max_queue', label: 'HTTP max queue', path: ['http', 'max_queue'], type: 'integer', min: 1, restart: true, securityRelevant: true, since: '0.2.0' }),
+  Object.freeze({ id: 'http.allow_image_url', label: 'Allow image_url fetching (SSRF risk)', path: ['http', 'allow_image_url'], type: 'boolean', restart: true, securityRelevant: true, since: '0.3.0' }),
+  Object.freeze({ id: 'http.image_url_hosts', label: 'Allowed image_url hosts (default deny)', path: ['http', 'image_url_hosts'], type: 'string-array', restart: true, securityRelevant: true, since: '0.3.0' }),
 
-  Object.freeze({ id: 'web_ui.bind', label: 'Web UI bind address', path: ['web_ui', 'bind'], type: 'string', restart: true }),
-  Object.freeze({ id: 'web_ui.allowed_cidrs', label: 'Web UI allowed CIDR ranges (blank = loopback only)', path: ['web_ui', 'allowed_cidrs'], type: 'string-array', allowEmpty: true, restart: true }),
-  Object.freeze({ id: 'web_ui.allowed_hosts', label: 'Web UI extra Host names (blank = default deny)', path: ['web_ui', 'allowed_hosts'], type: 'string-array', allowEmpty: true, restart: true }),
+  Object.freeze({ id: 'web_ui.bind', label: 'Web UI bind address', path: ['web_ui', 'bind'], type: 'string', restart: true, securityRelevant: true, since: '0.3.0' }),
+  Object.freeze({ id: 'web_ui.allowed_cidrs', label: 'Web UI allowed CIDR ranges (blank = loopback only)', path: ['web_ui', 'allowed_cidrs'], type: 'string-array', allowEmpty: true, restart: true, securityRelevant: true, since: '0.3.0' }),
+  Object.freeze({ id: 'web_ui.allowed_hosts', label: 'Web UI extra Host names (blank = default deny)', path: ['web_ui', 'allowed_hosts'], type: 'string-array', allowEmpty: true, restart: true, securityRelevant: true, since: '0.3.0' }),
   // The only secret whose stored value is not the entered value: `prepare` hashes it to
   // a scrypt verifier first, so the credential store never holds the password (#65).
-  Object.freeze({ id: WEB_UI_CREDENTIAL_SETTING, label: 'Web UI remote-access password', secret: 'web_ui', type: 'secret', restart: true, testable: false, prepare: hashWebUiPassword }),
+  Object.freeze({ id: WEB_UI_CREDENTIAL_SETTING, label: 'Web UI remote-access password', secret: 'web_ui', type: 'secret', restart: true, testable: false, prepare: hashWebUiPassword, securityRelevant: true, since: '0.3.0' }),
 
-  Object.freeze({ id: 'ui.tray', label: 'Show the tray', path: ['ui', 'tray'], type: 'boolean', restart: true }),
-  Object.freeze({ id: 'ui.notify_on_unresolved', label: 'Notify on an unresolved puzzle', path: ['ui', 'notify_on_unresolved'], type: 'boolean', restart: false }),
+  Object.freeze({ id: 'ui.tray', label: 'Show the tray', path: ['ui', 'tray'], type: 'boolean', restart: true, since: '0.1.0' }),
+  Object.freeze({ id: 'ui.notify_on_unresolved', label: 'Notify on an unresolved puzzle', path: ['ui', 'notify_on_unresolved'], type: 'boolean', restart: false, since: '0.1.0' }),
   // Read by the statistics page on each load. Bounded like every other numeric
   // setting, so an absurd value cannot be used to dump the attempts table (#64).
-  Object.freeze({ id: 'ui.stats_recent_solves', label: 'Recent solves shown on the statistics page', path: ['ui', 'stats_recent_solves'], type: 'integer', min: 1, max: 100, restart: true }),
+  Object.freeze({ id: 'ui.stats_recent_solves', label: 'Recent solves shown on the statistics page', path: ['ui', 'stats_recent_solves'], type: 'integer', min: 1, max: 100, restart: true, since: '0.3.0' }),
 ]);
 
 const SETTINGS_BY_ID = new Map(SETTINGS.map((setting) => [setting.id, setting]));
@@ -700,10 +707,15 @@ export function createSettingsEditor({
   writeConfig = writeConfigAtomically,
   validate = validateConfig,
   logger = null,
+  // The ids of settings introduced after the last reviewed version (#67). They are
+  // flagged `isNew` so the terminal editor, the web page and `config review` can
+  // mark them; the descriptor list stays the single source of truth.
+  newSettingIds = null,
 } = {}) {
   if (!config || typeof config !== 'object') throw new Error('createSettingsEditor needs the loaded config');
   if (typeof saveSecrets !== 'function') throw new Error('createSettingsEditor needs the saveSecrets provider function');
 
+  const newIds = new Set(newSettingIds ?? []);
   const setup = createSetup({ saveSecrets, testPushbullet, testModel, requireModelKey: false, logger });
   const pending = new Map();
   let lastSave = null;
@@ -723,6 +735,9 @@ export function createSettingsEditor({
         restart: setting.restart !== false,
         type: setting.type,
         pending: pending.has(setting.id),
+        since: setting.since ?? null,
+        securityRelevant: setting.securityRelevant === true,
+        isNew: newIds.has(setting.id),
       };
       // A secret with nothing to probe (the HTTP bearer token has no endpoint to
       // connect to) carries `testable: false`; the editor and the dialog honour it.

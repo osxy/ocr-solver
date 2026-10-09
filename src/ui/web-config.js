@@ -120,6 +120,8 @@ const STYLE = `
   .error { background: #fdecea; border: 1px solid #f5c6cb; }
   .test { background: #eef6ff; border: 1px solid #cfe2ff; }
   .ok { background: #eafaef; border: 1px solid #b7e4c7; }
+  .newbanner { background: #fff8e1; border: 1px solid #ffe08a; }
+  .new { color: #8a6d00; font-weight: 600; }
   .secret { color: #555; font-size: 0.85em; }
   .actions { margin-top: 1rem; }
   button { padding: 0.35rem 0.7rem; margin-right: 0.5rem; }
@@ -170,6 +172,13 @@ function renderField(item) {
  * only input: a descriptor that exists in `list()` appears here with no second edit.
  */
 export function renderSettingsPage({ items, session, configPath = null, credentialPath = null, error = null, test = null }) {
+  const newItems = items.filter((item) => item.isNew === true);
+  // The rows stay in registry order; the offer summary puts security-relevant
+  // additions first, the same order the startup log and `config review` use (#67).
+  const offeredItems = [
+    ...newItems.filter((item) => item.securityRelevant === true),
+    ...newItems.filter((item) => item.securityRelevant !== true),
+  ];
   const rows = items.map((item) => {
     const tag = item.restart ? 'restart' : 'live';
     const probe =
@@ -177,13 +186,21 @@ export function renderSettingsPage({ items, session, configPath = null, credenti
         ? `<button type="submit" formaction="/test" name="test_id" value="${escapeHtml(item.id)}">Test connection</button>`
         : '';
     const pending = item.pending ? ' (pending)' : '';
+    const isNew = item.isNew ? ' <span class="new">[new]</span>' : '';
+    const security = item.securityRelevant ? ' <span class="new">[security]</span>' : '';
     return `<tr><th>${escapeHtml(item.id)}</th><td>${renderField(item)}</td>` +
-      `<td class="display">${escapeHtml(item.display)}${pending} <span class="secret">[${tag}]</span></td><td>${probe}</td></tr>`;
+      `<td class="display">${escapeHtml(item.display)}${pending} <span class="secret">[${tag}]</span>${isNew}${security}</td><td>${probe}</td></tr>`;
   });
   const banners = [
     error ? `<div class="banner error"><strong>Rejected:</strong> ${escapeHtml(error)}</div>` : '',
     test
       ? `<div class="banner test">${escapeHtml(test.id)}: ${test.ok ? 'ok' : 'failed'} - ${escapeHtml(test.detail)}</div>`
+      : '',
+    newItems.length > 0
+      ? `<div class="banner newbanner"><strong>${newItems.length} setting(s) added since your last review</strong> ` +
+        '(marked <span class="new">[new]</span>, security-relevant first): ' +
+        offeredItems.map((item) => `<code>${escapeHtml(item.id)}</code>`).join(', ') +
+        '</div>'
       : '',
   ].join('');
   const body =
