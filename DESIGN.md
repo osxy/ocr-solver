@@ -679,6 +679,21 @@ GUI. First-run uses the same descriptors through `createSetupSettingsController`
 `createSetup` (`pushbullet.token`, `llm.api_key`), so the first-run labels and validation cannot
 drift either.
 
+**The theme is a cookie plus a server-side render, and CSS owns the OS default (issue #99).**
+The served CSP is `default-src 'none'; style-src 'unsafe-inline'` — it forbids scripts. A
+`localStorage` + inline-script toggle would have to relax that with `script-src
+'unsafe-inline'`, and a JS-off visitor would silently get the default. The cookie approach
+needs neither: the server validates `?theme=light|dark|auto` against an allowlist, sets a
+`theme` cookie, and writes `data-theme` into `<html>` before any HTML is sent, so there is
+no flash and no script. `auto` (and no cookie at all) leaves the attribute off, and CSS
+`@media (prefers-color-scheme: dark)` supplies the palette, so an OS-dark visitor is dark
+on the first load with no toggle. The dark palette is declared once and interpolated into
+both the media query and the explicit `[data-theme="dark"]` rule, because CSS cannot apply
+a media query to an attribute selector. The cookie value is never read back as text — only
+the two known values reach the attribute — so a theme cookie cannot inject markup. Both
+themes' foreground/background pairs were measured against WCAG AA rather than judged by
+eye; the ratios are in the issue's PR body.
+
 **The upgrade review registry (issue #67).** A new release can add a setting an existing install
 silently never sees. The enabling change is a `since` field on each descriptor in
 `src/ui/settings.js` — the release that introduced the setting — and `securityRelevant` for a

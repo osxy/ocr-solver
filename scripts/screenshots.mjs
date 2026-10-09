@@ -202,15 +202,20 @@ async function main() {
     await server.start();
     const base = `http://127.0.0.1:${server.port}`;
 
+    // Pin the explicit light theme on the captured requests so the committed images do
+    // not depend on the capture machine's OS colour preference. The dark variant is
+    // captured separately below, chosen with the same cookie the toggle sets.
+    const light = { headers: { cookie: 'theme=light' } };
+
     // Opening the launch URL both returns the settings page and opens the one-time
     // session the other pages need. `server.url` carries the launch token.
-    const settings = await fetch(server.url);
+    const settings = await fetch(server.url, light);
     const settingsHtml = await settings.text();
     if (settings.status !== 200) throw new Error(`settings page returned ${settings.status}: ${settingsHtml}`);
     const session = /name="session" value="([^"]+)"/.exec(settingsHtml)?.[1];
     if (!session) throw new Error('the settings page carried no session token');
 
-    const stats = await fetch(`${base}/stats?session=${encodeURIComponent(session)}`);
+    const stats = await fetch(`${base}/stats?session=${encodeURIComponent(session)}`, light);
     const statsHtml = await stats.text();
     if (stats.status !== 200) throw new Error(`statistics page returned ${stats.status}: ${statsHtml}`);
 
@@ -218,20 +223,28 @@ async function main() {
     const image = readFileSync(solveSample);
     const form = new FormData();
     form.append('image', new Blob([image], { type: 'image/png' }), '001-count-kleuren.png');
-    const solve = await fetch(`${base}/solve?session=${encodeURIComponent(session)}`, { method: 'POST', body: form });
+    const solve = await fetch(`${base}/solve?session=${encodeURIComponent(session)}`, { method: 'POST', body: form, ...light });
     const solveHtml = await solve.text();
     if (solve.status !== 200) throw new Error(`solve page returned ${solve.status}: ${solveHtml}`);
     if (!/Solved\./.test(solveHtml)) throw new Error('the committed corpus sample did not solve offline; refusing a misleading screenshot');
 
     // GET /login is always rendered, so the credential requirement is visible without
     // configuring a non-loopback bind.
-    const login = await fetch(`${base}/login`);
+    const login = await fetch(`${base}/login`, light);
     const loginHtml = await login.text();
     if (login.status !== 200) throw new Error(`login page returned ${login.status}: ${loginHtml}`);
+
+    // The same settings page with an explicit dark cookie, so the README can show both
+    // themes without a browser ever needing the OS preference.
+    const dark = await fetch(`${base}/?session=${encodeURIComponent(session)}&theme=dark`);
+    const darkHtml = await dark.text();
+    if (dark.status !== 200) throw new Error(`dark settings page returned ${dark.status}: ${darkHtml}`);
+    if (!/data-theme="dark"/.test(darkHtml)) throw new Error('the dark settings capture did not render dark');
 
     // Render each captured page and screenshot it.
     const pages = [
       ['settings', settingsHtml, 'settings.png'],
+      ['settings-dark', darkHtml, 'settings-dark.png'],
       ['statistics', statsHtml, 'statistics.png'],
       ['solve', solveHtml, 'solve.png'],
       ['login', loginHtml, 'login.png'],

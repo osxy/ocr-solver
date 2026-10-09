@@ -110,36 +110,209 @@ function escapeHtml(value) {
   });
 }
 
+/**
+ * Theme (issue #99). A cookie plus a server-side render, deliberately not
+ * `localStorage`: the served CSP forbids scripts, so a JS switch would mean relaxing
+ * it, and a cookie cannot flash the wrong theme because the server writes the choice
+ * into the HTML before the browser paints. `prefers-color-scheme` stays the default
+ * through CSS, so an OS-dark visitor is dark on the first load with no toggle.
+ */
+export const THEME_COOKIE = 'theme';
+/** The known theme values. `auto` means "follow the OS" and clears the cookie. */
+export const THEME_CHOICES = Object.freeze(['light', 'dark', 'auto']);
+const THEME_MAX_AGE_SEC = 365 * 24 * 60 * 60;
+/** The visible label for each toggle choice. */
+export const THEME_CHOICE_LABELS = Object.freeze({ light: 'Light', dark: 'Dark', auto: 'Auto' });
+
+/** Only the two concrete themes are renderable; anything else is ignored. */
+export function normalizeTheme(value) {
+  const text = String(value ?? '');
+  return text === 'light' || text === 'dark' ? text : null;
+}
+
+/** A `?theme=` query value, allowlisted like the cookie. `null` when unknown. */
+export function themeFromParam(value) {
+  const text = String(value ?? '');
+  return THEME_CHOICES.includes(text) ? text : null;
+}
+
+function readCookie(cookieHeader, name) {
+  for (const part of String(cookieHeader ?? '').split(';')) {
+    const eq = part.indexOf('=');
+    if (eq === -1) continue;
+    if (part.slice(0, eq).trim() === name) return part.slice(eq + 1).trim();
+  }
+  return null;
+}
+
+/** The cookie's theme, or `null` (unknown / absent -> the OS preference). */
+export function themeFromCookie(cookieHeader) {
+  return normalizeTheme(readCookie(cookieHeader, THEME_COOKIE));
+}
+
+/**
+ * The `Set-Cookie` value for an explicit choice. The value comes from the allowlist,
+ * never from caller text, so a theme cookie cannot carry markup. `auto` expires it so
+ * the OS preference takes over again.
+ */
+export function themeCookieHeader(choice) {
+  const value = themeFromParam(choice);
+  if (value == null) return null;
+  if (value === 'auto') return `${THEME_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax; HttpOnly`;
+  return `${THEME_COOKIE}=${value}; Path=/; Max-Age=${THEME_MAX_AGE_SEC}; SameSite=Lax; HttpOnly`;
+}
+
+/**
+ * The dark palette, declared once and interpolated into both the OS media query and
+ * the explicit `[data-theme="dark"]` rule. CSS cannot let a media query qualify an
+ * attribute selector, so the block is used twice by interpolation rather than copied.
+ * Every foreground/background pair below is >= 4.5:1 (WCAG AA normal text); see the
+ * PR body for the measured ratios.
+ */
+const DARK_PALETTE = `
+    color-scheme: dark;
+    --bg: #14161a;
+    --fg: #e7e9ee;
+    --muted: #a8b0bd;
+    --link: #8ab4ff;
+    --accent: #8ab4ff;
+    --accent-fg: #0b1020;
+    --border: #333a45;
+    --border-strong: #7a8494;
+    --panel: #1c2027;
+    --panel-border: #2a313b;
+    --ok-bg: #16301f; --ok-border: #2f6b45; --ok-fg: #b7e4c7;
+    --info-bg: #15263c; --info-border: #2c4f7c; --info-fg: #cfe2ff;
+    --err-bg: #3a1d20; --err-border: #7a3a40; --err-fg: #ffb4ab;
+    --new-bg: #332b12; --new-border: #7a6524; --new-fg: #ffe08a;`;
+
 const STYLE = `
-  body { font: 14px system-ui, sans-serif; margin: 1.5rem auto; max-width: 60rem; color: #111; }
-  h1 { font-size: 1.3rem; }
-  table { border-collapse: collapse; width: 100%; }
-  th, td { text-align: left; padding: 0.35rem 0.5rem; border-bottom: 1px solid #ddd; vertical-align: middle; }
+  :root {
+    color-scheme: light;
+    --bg: #ffffff;
+    --fg: #1a1a1a;
+    --muted: #565b64;
+    --link: #0b57d0;
+    --accent: #0b57d0;
+    --accent-fg: #ffffff;
+    --border: #d4d7dd;
+    --border-strong: #6b7280;
+    --panel: #f6f7f9;
+    --panel-border: #e2e5ea;
+    --ok-bg: #eafaef; --ok-border: #9ad4ae; --ok-fg: #14532d;
+    --info-bg: #eef6ff; --info-border: #a9c9f5; --info-fg: #0b3d75;
+    --err-bg: #fdecea; --err-border: #f0b4ba; --err-fg: #7a1f1f;
+    --new-bg: #fff8e1; --new-border: #ecd27a; --new-fg: #6b5200;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {${DARK_PALETTE}
+    }
+  }
+  :root[data-theme="dark"] {${DARK_PALETTE}
+  }
+  * { box-sizing: border-box; }
+  body {
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+    margin: 0 auto; max-width: 64rem; padding: 0 1.25rem 3rem;
+    background: var(--bg); color: var(--fg);
+  }
+  header.top {
+    display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+    flex-wrap: wrap; padding: 1.1rem 0 0.6rem; margin-bottom: 0.4rem;
+    border-bottom: 1px solid var(--border);
+  }
+  h1 { font-size: 1.3rem; margin: 0; letter-spacing: -0.01em; }
+  h2 { font-size: 1.08rem; margin: 1.6rem 0 0.5rem; }
+  h3 { font-size: 0.95rem; margin: 1.3rem 0 0.4rem; color: var(--muted); }
+  a { color: var(--link); }
+  p { margin: 0.6rem 0; }
+  .where { color: var(--muted); font-size: 0.8rem; }
+  nav.links { margin: 1rem 0; display: flex; gap: 1.25rem; flex-wrap: wrap; }
+  code {
+    font-family: ui-monospace, SFMono-Regular, monospace; font-size: 0.88em;
+    background: var(--panel); border: 1px solid var(--panel-border);
+    border-radius: 4px; padding: 0.05em 0.35em;
+  }
+  .theme { display: inline-flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; color: var(--muted); }
+  .theme .options { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 999px; overflow: hidden; }
+  .theme a { padding: 0.28rem 0.75rem; text-decoration: none; color: var(--muted); background: var(--panel); }
+  .theme a + a { border-left: 1px solid var(--border); }
+  .theme a:hover { color: var(--link); }
+  .theme a.active { background: var(--accent); color: var(--accent-fg); font-weight: 600; }
+  table { border-collapse: collapse; width: 100%; margin: 0.5rem 0 1rem; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 0.45rem 0.6rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  thead th {
+    background: var(--panel); color: var(--muted); font-size: 0.78rem; font-weight: 600;
+    border-bottom: 2px solid var(--border-strong);
+  }
+  tbody tr:hover { background: var(--panel); }
   th { white-space: nowrap; font-family: ui-monospace, monospace; font-size: 0.85em; }
-  input[type=text], input[type=password], select, textarea { width: 24rem; max-width: 100%; }
-  .display { color: #555; font-size: 0.85em; }
-  .banner { padding: 0.6rem 0.8rem; margin: 0.8rem 0; border-radius: 4px; }
-  .error { background: #fdecea; border: 1px solid #f5c6cb; }
-  .test { background: #eef6ff; border: 1px solid #cfe2ff; }
-  .ok { background: #eafaef; border: 1px solid #b7e4c7; }
-  .newbanner { background: #fff8e1; border: 1px solid #ffe08a; }
-  .new { color: #8a6d00; font-weight: 600; }
-  .secret { color: #555; font-size: 0.85em; }
-  .actions { margin-top: 1rem; }
-  button { padding: 0.35rem 0.7rem; margin-right: 0.5rem; }
+  td.num, th.num { text-align: right; }
+  input[type=text], input[type=password], select, textarea {
+    width: 24rem; max-width: 100%; padding: 0.4rem 0.55rem;
+    border: 1px solid var(--border-strong); border-radius: 6px;
+    background: var(--bg); color: var(--fg); font: inherit;
+  }
+  input[type=file] { color: var(--fg); font: inherit; }
+  input[type=checkbox] { width: auto; accent-color: var(--accent); }
+  input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible, a:focus-visible {
+    outline: 2px solid var(--link); outline-offset: 1px;
+  }
+  .display { color: var(--muted); font-size: 0.85em; }
+  .banner {
+    padding: 0.65rem 0.85rem; margin: 0.9rem 0; border-radius: 8px;
+    border: 1px solid; border-left-width: 4px;
+  }
+  .error { background: var(--err-bg); border-color: var(--err-border); color: var(--err-fg); }
+  .test { background: var(--info-bg); border-color: var(--info-border); color: var(--info-fg); }
+  .ok { background: var(--ok-bg); border-color: var(--ok-border); color: var(--ok-fg); }
+  .newbanner { background: var(--new-bg); border-color: var(--new-border); color: var(--new-fg); }
+  .new { color: var(--new-fg); font-weight: 600; }
+  .tag {
+    font-family: ui-monospace, monospace; font-size: 0.72em; white-space: nowrap;
+    padding: 0.08em 0.45em; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--panel); color: var(--muted);
+  }
+  .actions { margin-top: 1.25rem; display: flex; gap: 0.5rem; }
+  button {
+    padding: 0.4rem 0.85rem; cursor: pointer; font: inherit;
+    border: 1px solid var(--border-strong); border-radius: 6px;
+    background: var(--panel); color: var(--fg);
+  }
+  button:hover { border-color: var(--link); color: var(--link); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); font-weight: 600; }
+  button.primary:hover { filter: brightness(1.08); color: var(--accent-fg); }
 `;
 
-function page({ body, configPath = null, credentialPath = null }) {
+/** A link to the same page with a theme choice, so the toggle is a GET, not a script. */
+function themeHref(base, value) {
+  const separator = String(base).includes('?') ? '&' : '?';
+  return `${escapeHtml(base)}${separator}theme=${value}`;
+}
+
+function themeToggle(theme, base) {
+  const links = THEME_CHOICES.map((value) => {
+    const active = value === 'auto' ? theme == null : theme === value;
+    const current = active ? ' class="active" aria-current="true"' : '';
+    return `<a href="${themeHref(base, value)}"${current}>${THEME_CHOICE_LABELS[value]}</a>`;
+  }).join('');
+  return `<nav class="theme" aria-label="Colour theme"><span>Theme</span><span class="options">${links}</span></nav>`;
+}
+
+function page({ body, theme = null, themeBase = null, configPath = null, credentialPath = null }) {
   const where = [
     configPath ? `Config: <code>${escapeHtml(configPath)}</code>` : null,
     credentialPath ? `Secrets: <code>${escapeHtml(credentialPath)}</code>` : null,
   ]
     .filter(Boolean)
     .join(' &middot; ');
+  // Only a validated theme reaches the attribute; a cookie cannot inject markup.
+  const themeAttr = theme ? ` data-theme="${theme}"` : '';
+  const toggle = themeBase ? themeToggle(theme, themeBase) : '';
   return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<html lang="en"${themeAttr}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PuzzleSolver settings</title><style>${STYLE}</style></head>
-<body><h1>PuzzleSolver</h1>${where ? `<p>${where}</p>` : ''}${body}</body></html>`;
+<body><header class="top"><h1>PuzzleSolver</h1>${toggle}</header>${where ? `<p class="where">${where}</p>` : ''}${body}</body></html>`;
 }
 
 function messagePage(title, message, options = {}) {
@@ -178,7 +351,7 @@ function renderField(item) {
  * Render the whole editor. Exported so a test can assert the descriptor list is the
  * only input: a descriptor that exists in `list()` appears here with no second edit.
  */
-export function renderSettingsPage({ items, session, configPath = null, credentialPath = null, error = null, test = null }) {
+export function renderSettingsPage({ items, session, theme = null, configPath = null, credentialPath = null, error = null, test = null }) {
   const newItems = items.filter((item) => item.isNew === true);
   // The rows stay in registry order; the offer summary puts security-relevant
   // additions first, the same order the startup log and `config review` use (#67).
@@ -196,7 +369,7 @@ export function renderSettingsPage({ items, session, configPath = null, credenti
     const isNew = item.isNew ? ' <span class="new">[new]</span>' : '';
     const security = item.securityRelevant ? ' <span class="new">[security]</span>' : '';
     return `<tr><th>${escapeHtml(item.id)}</th><td>${renderField(item)}</td>` +
-      `<td class="display">${escapeHtml(item.display)}${pending} <span class="secret">[${tag}]</span>${isNew}${security}</td><td>${probe}</td></tr>`;
+      `<td class="display">${escapeHtml(item.display)}${pending} <span class="tag">[${tag}]</span>${isNew}${security}</td><td>${probe}</td></tr>`;
   });
   const banners = [
     error ? `<div class="banner error"><strong>Rejected:</strong> ${escapeHtml(error)}</div>` : '',
@@ -210,19 +383,20 @@ export function renderSettingsPage({ items, session, configPath = null, credenti
         '</div>'
       : '',
   ].join('');
+  const sessionParam = escapeHtml(session);
   const body =
     banners +
-    `<p><a href="/solve?session=${escapeHtml(session)}">Solve an uploaded image &rarr;</a> ` +
-    `<a href="/stats?session=${escapeHtml(session)}">Statistics &rarr;</a></p>` +
-    `<form method="post" action="/save"><input type="hidden" name="session" value="${escapeHtml(session)}">` +
+    `<nav class="links"><a href="/solve?session=${sessionParam}">Solve an uploaded image &rarr;</a> ` +
+    `<a href="/stats?session=${sessionParam}">Statistics &rarr;</a></nav>` +
+    `<form method="post" action="/save"><input type="hidden" name="session" value="${sessionParam}">` +
     `<table><thead><tr><th>Setting</th><th>Value</th><th>Current</th><th></th></tr></thead><tbody>${rows.join('')}</tbody></table>` +
-    `<div class="actions"><button type="submit">Save</button>` +
+    `<div class="actions"><button class="primary" type="submit">Save</button>` +
     `<button type="submit" formaction="/cancel" formnovalidate>Cancel</button></div></form>`;
-  return page({ body, configPath, credentialPath });
+  return page({ body, theme, themeBase: `/?session=${sessionParam}`, configPath, credentialPath });
 }
 
 /** The solve form and, after a post, the result. Exported for a direct render test. */
-export function renderSolvePage({ session, result = null, timingMs = null, error = null, configPath = null, credentialPath = null }) {
+export function renderSolvePage({ session, result = null, timingMs = null, theme = null, error = null, configPath = null, credentialPath = null }) {
   const banners = error ? `<div class="banner error"><strong>Rejected:</strong> ${escapeHtml(error)}</div>` : '';
   let outcome = '';
   if (result) {
@@ -251,7 +425,7 @@ export function renderSolvePage({ session, result = null, timingMs = null, error
     `<form method="post" action="/solve?session=${escapeHtml(session)}" enctype="multipart/form-data">` +
     '<input type="file" name="image" accept="image/*" required> ' +
     '<button type="submit">Solve</button></form>';
-  return page({ body: banners + form + outcome, configPath, credentialPath });
+  return page({ body: banners + form + outcome, theme, themeBase: `/solve?session=${escapeHtml(session)}`, configPath, credentialPath });
 }
 
 function formatWhen(at) {
@@ -282,8 +456,8 @@ function summaryRows(group) {
   return Object.entries(group ?? {})
     .sort()
     .map(([name, summary]) =>
-      `<tr><th>${escapeHtml(name)}</th><td>${summary.seen}</td><td>${summary.valid}</td>` +
-      `<td>${summary.withheld}</td><td>${summary.sentable}/${summary.seen} (${escapeHtml(percent(summary.sentableRate))})</td></tr>`
+      `<tr><th>${escapeHtml(name)}</th><td class="num">${summary.seen}</td><td class="num">${summary.valid}</td>` +
+      `<td class="num">${summary.withheld}</td><td class="num">${summary.sentable}/${summary.seen} (${escapeHtml(percent(summary.sentableRate))})</td></tr>`
     )
     .join('');
 }
@@ -293,7 +467,7 @@ function summaryTable(title, group) {
   if (!rows) return '';
   return (
     `<h3>${escapeHtml(title)}</h3>` +
-    '<table><thead><tr><th></th><th>distinct puzzles</th><th>solved</th><th>withheld</th><th>sent-able</th></tr></thead>' +
+    '<table><thead><tr><th></th><th class="num">distinct puzzles</th><th class="num">solved</th><th class="num">withheld</th><th class="num">sent-able</th></tr></thead>' +
     `<tbody>${rows}</tbody></table>`
   );
 }
@@ -305,6 +479,7 @@ function summaryTable(title, group) {
  */
 export function renderStatsPage({
   session,
+  theme = null,
   recent = [],
   stats = null,
   corpusReport = null,
@@ -324,13 +499,13 @@ export function renderStatsPage({
         `<td>${row.answer == null ? '<em>none</em>' : escapeHtml(row.answer)}</td>` +
         `<td>${escapeHtml(row.method ?? 'none')}</td>` +
         `<td>${escapeHtml(deliveryLabel(row))}</td>` +
-        `<td>${row.ms == null ? 'unknown' : `${Math.round(Number(row.ms))} ms`}</td>` +
-        `<td>${row.confident === true ? 'true' : 'false'}</td>` +
+        `<td class="num">${row.ms == null ? 'unknown' : `${Math.round(Number(row.ms))} ms`}</td>` +
+        `<td class="num">${row.confident === true ? 'true' : 'false'}</td>` +
         '</tr>'
     )
     .join('');
   const recentTable = recentRows
-    ? '<table><thead><tr><th>when</th><th>puzzle</th><th>answer</th><th>method</th><th>sent / withheld</th><th>took</th><th>confident</th></tr></thead>' +
+    ? '<table><thead><tr><th>when</th><th>puzzle</th><th>answer</th><th>method</th><th>sent / withheld</th><th class="num">took</th><th class="num">confident</th></tr></thead>' +
       `<tbody>${recentRows}</tbody></table>`
     : '<p class="display">No recorded solves yet.</p>';
 
@@ -347,9 +522,9 @@ export function renderStatsPage({
       'accuracy figure here: the real number is the <strong>sent-able rate</strong> - answers ' +
       'that passed validation and were corroborated, and so would have been sent. Re-solving ' +
       'the same image counts once here, while the recent-solves list above shows each solve.</p>' +
-      '<table><thead><tr><th>distinct puzzles</th><th>solved (valid)</th><th>unresolved</th><th>withheld</th><th>sent-able</th></tr></thead>' +
-      `<tbody><tr><td>${overall.seen}</td><td>${overall.valid}</td><td>${unresolved}</td>` +
-      `<td>${overall.withheld}</td><td>${overall.sentable}/${overall.seen} (${escapeHtml(percent(overall.sentableRate))})</td></tr></tbody></table>` +
+      '<table><thead><tr><th class="num">distinct puzzles</th><th class="num">solved (valid)</th><th class="num">unresolved</th><th class="num">withheld</th><th class="num">sent-able</th></tr></thead>' +
+      `<tbody><tr><td class="num">${overall.seen}</td><td class="num">${overall.valid}</td><td class="num">${unresolved}</td>` +
+      `<td class="num">${overall.withheld}</td><td class="num">${overall.sentable}/${overall.seen} (${escapeHtml(percent(overall.sentableRate))})</td></tr></tbody></table>` +
       summaryTable('By tier (how the answer was produced)', traffic.byTier) +
       summaryTable('By puzzle class', traffic.byClass) +
       `<p>Model calls made (recorded <code>model-text</code> + <code>model-vision</code> stages): <strong>${stats.modelCalls}</strong></p>`
@@ -362,8 +537,8 @@ export function renderStatsPage({
     'our own generated fixtures, chosen for solvability, run through the same pipeline. ' +
     'It is shown separately from recorded traffic and is never blended with it.</p>' +
     (corpus
-      ? `<table><thead><tr><th>correct</th><th>graded</th><th>accuracy</th></tr></thead>` +
-        `<tbody><tr><td>${corpus.correct}</td><td>${corpus.gradeable}</td><td>${escapeHtml(percent(corpus.accuracy))}</td></tr></tbody></table>`
+      ? `<table><thead><tr><th class="num">correct</th><th class="num">graded</th><th class="num">accuracy</th></tr></thead>` +
+        `<tbody><tr><td class="num">${corpus.correct}</td><td class="num">${corpus.gradeable}</td><td class="num">${escapeHtml(percent(corpus.accuracy))}</td></tr></tbody></table>`
       : '<p class="display">No offline corpus report has been cached. Run <code>npm run accuracy</code> to produce one.</p>');
 
   const windowText =
@@ -372,10 +547,11 @@ export function renderStatsPage({
       : `Attempts older than <strong>${escapeHtml(String(retainDays))} day(s)</strong> are deleted by the retention window ` +
         '(<code>storage.retain_days</code>), so this page shows a moving window rather than everything ever seen.';
 
+  const sessionParam = escapeHtml(session);
   const body =
     banners +
-    `<p><a href="/solve?session=${escapeHtml(session)}">Solve an uploaded image &rarr;</a> ` +
-    `<a href="/stats?session=${escapeHtml(session)}">Refresh &rarr;</a></p>` +
+    `<nav class="links"><a href="/solve?session=${sessionParam}">Solve an uploaded image &rarr;</a> ` +
+    `<a href="/stats?session=${sessionParam}">Refresh &rarr;</a></nav>` +
     `<h2>Recent solves</h2>` +
     `<p>Newest first, at most ${escapeHtml(String(recent.length))} shown. Read on request only; ` +
     'there is no auto-refresh. The answer and method come from the same recorded verdict the ' +
@@ -385,11 +561,11 @@ export function renderStatsPage({
     trafficSection +
     corpusSection +
     `<p class="display">${windowText}</p>`;
-  return page({ body, configPath, credentialPath });
+  return page({ body, theme, themeBase: `/stats?session=${sessionParam}`, configPath, credentialPath });
 }
 
 /** The login form for a non-loopback client. No username: only a password exists. */
-export function renderLoginPage({ error = null, configPath = null, credentialPath = null } = {}) {
+export function renderLoginPage({ error = null, theme = null, configPath = null, credentialPath = null } = {}) {
   const banner = error ? `<div class="banner error">${escapeHtml(error)}</div>` : '';
   const body =
     banner +
@@ -397,8 +573,8 @@ export function renderLoginPage({ error = null, configPath = null, credentialPat
     '<p>This web UI is reachable from a non-loopback address, so it requires the configured credential.</p>' +
     '<form method="post" action="/login">' +
     '<input type="password" name="password" autocomplete="current-password" required> ' +
-    '<button type="submit">Sign in</button></form>';
-  return page({ body, configPath, credentialPath });
+    '<button class="primary" type="submit">Sign in</button></form>';
+  return page({ body, theme, themeBase: '/login', configPath, credentialPath });
 }
 
 function renderDonePage(result, options = {}) {
@@ -616,7 +792,7 @@ export function createWebSettingsServer({
     res.end(buffer);
   }
 
-  const view = () => ({ items: controller.list(), configPath, credentialPath });
+  const view = (theme = null) => ({ items: controller.list(), configPath, credentialPath, theme });
 
   function openSession(remote) {
     sessionToken = randomToken();
@@ -639,16 +815,16 @@ export function createWebSettingsServer({
     return httpModulePromise;
   }
 
-  async function handleLogin(req, res, remote) {
+  async function handleLogin(req, res, remote, theme = null) {
     if (!credentialVerifier) {
-      return send(res, 403, messagePage('Refused', 'Login is not configured on this web UI.'));
+      return send(res, 403, messagePage('Refused', 'Login is not configured on this web UI.', { theme }));
     }
     const gate = loginThrottle.check(remote);
     if (!gate.allowed) {
       return send(
         res,
         429,
-        renderLoginPage({ error: `Too many failed attempts. Try again in ${gate.retryAfterSec}s.`, configPath, credentialPath }),
+        renderLoginPage({ error: `Too many failed attempts. Try again in ${gate.retryAfterSec}s.`, theme, configPath, credentialPath }),
         { 'retry-after': String(gate.retryAfterSec) }
       );
     }
@@ -663,20 +839,20 @@ export function createWebSettingsServer({
         return send(
           res,
           429,
-          renderLoginPage({ error: `Too many failed attempts. Try again in ${outcome.retryAfterSec}s.`, configPath, credentialPath }),
+          renderLoginPage({ error: `Too many failed attempts. Try again in ${outcome.retryAfterSec}s.`, theme, configPath, credentialPath }),
           { 'retry-after': String(outcome.retryAfterSec) }
         );
       }
-      return send(res, 401, renderLoginPage({ error: LOGIN_FAILED_MESSAGE, configPath, credentialPath }));
+      return send(res, 401, renderLoginPage({ error: LOGIN_FAILED_MESSAGE, theme, configPath, credentialPath }));
     }
     loginThrottle.succeed(remote);
     openSession(remote);
-    return send(res, 200, renderSettingsPage({ ...view(), session: sessionToken }));
+    return send(res, 200, renderSettingsPage({ ...view(theme), session: sessionToken }));
   }
 
-  async function handleSolve(req, res, url, remote) {
+  async function handleSolve(req, res, url, remote, theme = null) {
     if (!solveCore || typeof solveCore.solve !== 'function') {
-      return send(res, 404, messagePage('Not found', 'Solving is not available from this web UI.'));
+      return send(res, 404, messagePage('Not found', 'Solving is not available from this web UI.', { theme }));
     }
     let slot = false;
     const acquire = typeof solveCore.acquireSlot === 'function' ? solveCore.acquireSlot : () => true;
@@ -706,14 +882,14 @@ export function createWebSettingsServer({
         const status = Number.isInteger(err?.status) ? err.status : imageErrorStatus(err);
         const reason = err?.reason ?? err?.message ?? 'the image was rejected';
         logger?.warn?.(`web ui solve rejected: ${reason}`);
-        return send(res, status, renderSolvePage({ session: sessionToken, error: reason, configPath, credentialPath }));
+        return send(res, status, renderSolvePage({ session: sessionToken, theme, error: reason, configPath, credentialPath }));
       }
 
       if (!acquire()) {
         return send(
           res,
           503,
-          renderSolvePage({ session: sessionToken, error: 'The solver queue is full; try again shortly.', configPath, credentialPath }),
+          renderSolvePage({ session: sessionToken, theme, error: 'The solver queue is full; try again shortly.', configPath, credentialPath }),
           { 'retry-after': '1' }
         );
       }
@@ -733,10 +909,10 @@ export function createWebSettingsServer({
       logger?.info?.(
         `web ui: ${formatted.answer != null ? formatted.answer : 'unresolved'} in ${Math.round(timingMs)}ms (${formatted.method ?? 'no method'})`
       );
-      return send(res, 200, renderSolvePage({ session: sessionToken, result: formatted, timingMs, configPath, credentialPath }));
+      return send(res, 200, renderSolvePage({ session: sessionToken, theme, result: formatted, timingMs, configPath, credentialPath }));
     } catch (err) {
       logger?.warn?.(`web ui solve failed: ${err?.message ?? err}`);
-      return send(res, Number.isInteger(err?.status) ? err.status : 500, renderSolvePage({ session: sessionToken, error: 'The solve failed; check the log.', configPath, credentialPath }));
+      return send(res, Number.isInteger(err?.status) ? err.status : 500, renderSolvePage({ session: sessionToken, theme, error: 'The solve failed; check the log.', configPath, credentialPath }));
     }
   }
 
@@ -747,9 +923,9 @@ export function createWebSettingsServer({
    * serialiser the solve page uses - so the two pages cannot disagree on
    * answer/method/confidence/reason.
    */
-  async function handleStats(res) {
+  async function handleStats(res, theme = null) {
     if (!store) {
-      return send(res, 404, messagePage('Not found', 'Statistics are not available from this web UI.'));
+      return send(res, 404, messagePage('Not found', 'Statistics are not available from this web UI.', { theme }));
     }
     const { formatSolveResponse } = await httpModule();
     const limit = Number.isInteger(config?.ui?.stats_recent_solves) ? config.ui.stats_recent_solves : 5;
@@ -772,6 +948,7 @@ export function createWebSettingsServer({
       200,
       renderStatsPage({
         session: sessionToken,
+        theme,
         recent,
         stats: storeStats(store),
         corpusReport,
@@ -783,35 +960,52 @@ export function createWebSettingsServer({
   }
 
   async function handle(req, res) {
+    // Read before any refusal so even a 403 is themed, and before the URL parse so it
+    // is available if parsing the URL were ever to fail.
+    const cookieTheme = themeFromCookie(req?.headers?.cookie);
     try {
       const remote = getRemoteAddress(req);
       // 1. The one access rule, before Host, before token, before any handler. Every
       //    page and every POST goes through it by construction, including an unknown
       //    path (the 404 default is below).
       if (!remote || !addressAllowed(remote, allowedCidrs)) {
-        return send(res, 403, messagePage('Refused', 'This web UI only answers requests from an allowed address.'));
+        return send(res, 403, messagePage('Refused', 'This web UI only answers requests from an allowed address.', { theme: cookieTheme }));
       }
       // 2. DNS-rebinding defence. Widening the bind enumerates more names, never "any".
       if (!isAllowedHostHeader(req.headers.host, { boundAddress, allowedHosts })) {
         return send(
           res,
           403,
-          messagePage('Refused', 'This web UI only answers requests addressed to an allowed hostname (loopback by default).')
+          messagePage('Refused', 'This web UI only answers requests addressed to an allowed hostname (loopback by default).', {
+            theme: cookieTheme,
+          })
         );
       }
       const url = new URL(req.url ?? '/', `http://${WEB_UI_BIND}`);
       const method = String(req.method ?? 'GET').toUpperCase();
       const loopbackClient = isLoopbackAddress(remote);
 
+      // `?theme=light|dark|auto` is the toggle's no-JS GET: it renders with the chosen
+      // theme and sets (or clears) the cookie on the way out. The value is allowlisted,
+      // so the cookie and the `data-theme` attribute are never caller-supplied text.
+      const themeChoice = themeFromParam(url.searchParams.get('theme'));
+      const theme = themeChoice === 'auto' ? null : (themeChoice ?? cookieTheme);
+      const pageHeaders = themeChoice ? { 'set-cookie': themeCookieHeader(themeChoice) } : {};
+
       if (method === 'GET' && url.pathname === '/login') {
-        return send(res, 200, renderLoginPage({ configPath, credentialPath }));
+        return send(res, 200, renderLoginPage({ theme, configPath, credentialPath }), pageHeaders);
       }
       if (method === 'POST' && url.pathname === '/login') {
-        return handleLogin(req, res, remote);
+        return handleLogin(req, res, remote, theme);
       }
 
       if (method === 'GET' && url.pathname === '/') {
         if (loopbackClient) {
+          // An existing session may revisit the editor (the theme toggle does): the
+          // launch token is single-use, so a second GET with it is still refused.
+          if (sessionValid(url.searchParams.get('session') ?? '', remote)) {
+            return send(res, 200, renderSettingsPage({ ...view(theme), session: sessionToken }), pageHeaders);
+          }
           // Loopback keeps #56's behaviour: the one-time launch token is enough.
           const provided = url.searchParams.get('token') ?? '';
           const fresh = launchToken && !launchToken.used && now() - launchToken.issuedAt <= launchTokenTtlMs;
@@ -819,35 +1013,37 @@ export function createWebSettingsServer({
             return send(
               res,
               403,
-              messagePage('Link no longer valid', 'The one-time settings link was already used or has expired. Open Settings again to get a new one.')
+              messagePage('Link no longer valid', 'The one-time settings link was already used or has expired. Open Settings again to get a new one.', {
+                theme: cookieTheme,
+              })
             );
           }
           launchToken.used = true;
           openSession(remote);
-          return send(res, 200, renderSettingsPage({ ...view(), session: sessionToken }));
+          return send(res, 200, renderSettingsPage({ ...view(theme), session: sessionToken }), pageHeaders);
         }
         // Non-loopback already authenticated (session in the query) gets the page;
         // otherwise it must log in. The launch token is not enough there.
         if (sessionValid(url.searchParams.get('session') ?? '', remote)) {
-          return send(res, 200, renderSettingsPage({ ...view(), session: sessionToken }));
+          return send(res, 200, renderSettingsPage({ ...view(theme), session: sessionToken }), pageHeaders);
         }
-        return send(res, 200, renderLoginPage({ configPath, credentialPath }));
+        return send(res, 200, renderLoginPage({ theme, configPath, credentialPath }), pageHeaders);
       }
 
       if (method === 'GET' && url.pathname === '/solve') {
         if (!sessionValid(url.searchParams.get('session') ?? '', remote)) {
           return loopbackClient
-            ? send(res, 403, messagePage('Session expired', 'Reopen Settings to get a fresh session.'))
-            : send(res, 200, renderLoginPage({ configPath, credentialPath }));
+            ? send(res, 403, messagePage('Session expired', 'Reopen Settings to get a fresh session.', { theme: cookieTheme }))
+            : send(res, 200, renderLoginPage({ theme, configPath, credentialPath }), pageHeaders);
         }
-        return send(res, 200, renderSolvePage({ session: sessionToken, configPath, credentialPath }));
+        return send(res, 200, renderSolvePage({ session: sessionToken, theme, configPath, credentialPath }), pageHeaders);
       }
 
       if (method === 'POST' && url.pathname === '/solve') {
         if (!sessionValid(url.searchParams.get('session') ?? '', remote)) {
-          return send(res, 403, messagePage('Session expired', 'Reopen Settings to get a fresh session.'));
+          return send(res, 403, messagePage('Session expired', 'Reopen Settings to get a fresh session.', { theme: cookieTheme }));
         }
-        return handleSolve(req, res, url, remote);
+        return handleSolve(req, res, url, remote, theme);
       }
 
       // Read-only: GET only. There is deliberately no POST /stats branch, so a write
@@ -856,22 +1052,22 @@ export function createWebSettingsServer({
       if (method === 'GET' && url.pathname === '/stats') {
         if (!sessionValid(url.searchParams.get('session') ?? '', remote)) {
           return loopbackClient
-            ? send(res, 403, messagePage('Session expired', 'Reopen Settings to get a fresh session.'))
-            : send(res, 200, renderLoginPage({ configPath, credentialPath }));
+            ? send(res, 403, messagePage('Session expired', 'Reopen Settings to get a fresh session.', { theme: cookieTheme }))
+            : send(res, 200, renderLoginPage({ theme, configPath, credentialPath }), pageHeaders);
         }
-        return handleStats(res);
+        return handleStats(res, theme);
       }
 
       if (method === 'POST' && (url.pathname === '/save' || url.pathname === '/test' || url.pathname === '/cancel')) {
         const body = await readBodyCapped(req, WEB_UI_MAX_BODY_BYTES);
         const form = new URLSearchParams(body.toString('utf8'));
         if (!sessionValid(form.get('session') ?? '', remote)) {
-          return send(res, 403, messagePage('Session expired', 'Reopen Settings to get a fresh session.'));
+          return send(res, 403, messagePage('Session expired', 'Reopen Settings to get a fresh session.', { theme: cookieTheme }));
         }
 
         if (url.pathname === '/cancel') {
           finish({ saved: false, cancelled: true });
-          send(res, 200, messagePage('Cancelled', 'No changes were saved. This settings UI is now closed.', view()));
+          send(res, 200, messagePage('Cancelled', 'No changes were saved. This settings UI is now closed.', view(theme)));
           res.on('finish', () => void stop());
           return undefined;
         }
@@ -887,14 +1083,14 @@ export function createWebSettingsServer({
               result = { ok: false, detail: err?.message ?? String(err) };
             }
           }
-          return send(res, 200, renderSettingsPage({ ...view(), session: sessionToken, test: result ? { id, ...result } : null, error: errors.map((e) => `${e.id}: ${e.message}`).join('; ') || null }));
+          return send(res, 200, renderSettingsPage({ ...view(theme), session: sessionToken, test: result ? { id, ...result } : null, error: errors.map((e) => `${e.id}: ${e.message}`).join('; ') || null }));
         }
 
         // /save: reject every invalid value first; nothing is written while any error
         // is outstanding, and the wording names the setting.
         const errors = applySettingsForm(controller, form);
         if (errors.length > 0) {
-          return send(res, 400, renderSettingsPage({ ...view(), session: sessionToken, error: errors.map((e) => `${e.id}: ${e.message}`).join('; ') }));
+          return send(res, 400, renderSettingsPage({ ...view(theme), session: sessionToken, error: errors.map((e) => `${e.id}: ${e.message}`).join('; ') }));
         }
         let result;
         try {
@@ -903,18 +1099,18 @@ export function createWebSettingsServer({
           result = { saved: false, failed: true, detail: err?.message ?? String(err) };
         }
         if (result.failed) {
-          return send(res, 400, renderSettingsPage({ ...view(), session: sessionToken, error: result.detail ?? 'nothing was saved' }));
+          return send(res, 400, renderSettingsPage({ ...view(theme), session: sessionToken, error: result.detail ?? 'nothing was saved' }));
         }
         finish(result);
-        send(res, result.saved ? 200 : 200, result.saved ? renderDonePage(result, view()) : messagePage('No changes', 'Nothing was changed, so nothing was saved.', view()));
+        send(res, result.saved ? 200 : 200, result.saved ? renderDonePage(result, view(theme)) : messagePage('No changes', 'Nothing was changed, so nothing was saved.', view(theme)));
         res.on('finish', () => void stop());
         return undefined;
       }
 
-      return send(res, 404, messagePage('Not found', 'There is nothing at that address.'));
+      return send(res, 404, messagePage('Not found', 'There is nothing at that address.', { theme: cookieTheme }));
     } catch (err) {
       logger?.warn?.(`settings UI request failed: ${err?.message ?? err}`);
-      return send(res, Number.isInteger(err?.status) ? err.status : 500, messagePage('Error', 'The settings UI hit an error. Check the log, then reopen Settings.'));
+      return send(res, Number.isInteger(err?.status) ? err.status : 500, messagePage('Error', 'The settings UI hit an error. Check the log, then reopen Settings.', { theme: cookieTheme }));
     }
   }
 
