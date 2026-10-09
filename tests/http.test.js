@@ -24,6 +24,8 @@ import {
   createRateLimiter,
   decodeBase64Image,
   assertHttpUrl,
+  assertImageUrlAllowed,
+  imageUrlHostAllowed,
   DEFAULT_AUTH_FAILURE_LIMIT,
   httpTokenProblem,
   imageErrorStatus,
@@ -32,7 +34,7 @@ import {
   HttpError,
   SolveTimeoutError,
 } from '../src/http/server.js';
-import { validateImageBuffer } from '../src/pushbullet/files.js';
+import { downloadImage, ImageFetchError, validateImageBuffer } from '../src/pushbullet/files.js';
 import { createResponder } from '../src/pushbullet/respond.js';
 import { memoryStore } from '../src/state/db.js';
 import { createSolveCore } from '../src/solver/core.js';
@@ -103,6 +105,26 @@ async function post(url, { token = TOKEN, body, contentType, method = 'POST' } =
 }
 
 const smallPng = () => sharp({ create: { width: 200, height: 44, channels: 3, background: '#ffffff' } }).png().toBuffer();
+
+/**
+ * A real local image server. `redirectTo` makes it answer a 302 instead of the image,
+ * which is how the redirect-refusal tests get a first hop that really resolves.
+ */
+async function startImageServer(t, { bytes, redirectTo = null, hits = null } = {}) {
+  const server = createServer((req, res) => {
+    hits?.push(req.url);
+    if (redirectTo) {
+      res.writeHead(302, { location: redirectTo });
+      res.end();
+      return;
+    }
+    res.writeHead(200, { 'content-type': 'image/png', 'content-length': String(bytes.length) });
+    res.end(bytes);
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  return `http://127.0.0.1:${server.address().port}/puzzle.png`;
+}
 
 // ---------------------------------------------------------------------------
 // The real end-to-end path + measured latency
@@ -471,20 +493,125 @@ test('a data: URL in image_base64 is accepted', async (t) => {
   assert.equal(res.status, 200, res.text);
 });
 
-test('image_url is fetched and solved', async (t) => {
+test('a permitted host is fetched and solved (image_url still works when enabled)', async (t) => {
   const bytes = await smallPng();
-  const imageServer = createServer((req, res) => {
-    res.writeHead(200, { 'content-type': 'image/png', 'content-length': String(bytes.length) });
-    res.end(bytes);
+  const imageUrl = await startImageServer(t, { bytes });
+  const { url } = await startServer(t, {
+    rawHttp: { allow_image_url: true, image_url_hosts: ['127.0.0.1'] },
   });
-  await new Promise((resolve) => imageServer.listen(0, '127.0.0.1', resolve));
-  t.after(() => new Promise((resolve) => imageServer.close(resolve)));
-  const imageUrl = `http://127.0.0.1:${imageServer.address().port}/puzzle.png`;
-
-  const { url } = await startServer(t);
   const res = await post(url, { body: JSON.stringify({ image_url: imageUrl }), contentType: 'application/json' });
   assert.equal(res.status, 200, res.text);
   assert.equal(res.json.answer, '2');
+  assert.equal(res.json.image.bytes, bytes.length, 'the fetched bytes are the ones solved');
+});
+
+// ---------------------------------------------------------------------------
+// image_url is an SSRF surface: off by default, host-allowlisted when on (#57)
+// ---------------------------------------------------------------------------
+
+test('image_url is refused by default and the reason points at uploading', async (t) => {
+  const calls = [];
+  const { url } = await startServer(t, {
+    fetchImpl: (href, init) => {
+      calls.push(String(href));
+      return globalThis.fetch(href, init);
+    },
+  });
+  const res = await post(url, {
+    body: JSON.stringify({ image_url: 'http://127.0.0.1:9/puzzle.png' }),
+    contentType: 'application/json',
+  });
+
+  assert.equal(res.status, 403, res.text);
+  assert.equal(res.json.error, 'image_url_disabled');
+  assert.match(res.json.reason, /upload the image instead/);
+  assert.equal(calls.length, 0, 'a disabled image_url must not be fetched');
+});
+
+test('image_url is refused when enabled but the allowlist is empty (default deny)', async (t) => {
+  const { url } = await startServer(t, { rawHttp: { allow_image_url: true, image_url_hosts: [] } });
+  const res = await post(url, {
+    body: JSON.stringify({ image_url: 'http://127.0.0.1:9/puzzle.png' }),
+    contentType: 'application/json',
+  });
+
+  assert.equal(res.status, 403, res.text);
+  assert.equal(res.json.error, 'image_url_host_not_allowed');
+  assert.match(res.json.reason, /http\.image_url_hosts/);
+  assert.match(res.json.reason, /upload the image instead/);
+});
+
+test('a loopback, private or link-local image_url is refused by the allowlist', async (t) => {
+  const calls = [];
+  const { url } = await startServer(t, {
+    fetchImpl: (href, init) => {
+      calls.push(String(href));
+      return globalThis.fetch(href, init);
+    },
+    // A public-looking allowlist: none of the internal targets below is on it.
+    rawHttp: { allow_image_url: true, image_url_hosts: ['images.example.test'] },
+  });
+
+  for (const target of [
+    'http://127.0.0.1/p.png',
+    'http://10.0.0.5/p.png',
+    'http://192.168.1.7/p.png',
+    'http://169.254.169.254/latest/meta-data/',
+    'http://[::1]/p.png',
+  ]) {
+    const res = await post(url, { body: JSON.stringify({ image_url: target }), contentType: 'application/json' });
+    assert.equal(res.status, 403, `${target}: ${res.text}`);
+    assert.equal(res.json.error, 'image_url_host_not_allowed', target);
+  }
+  assert.equal(calls.length, 0, 'no internal target may be contacted');
+});
+
+test('a redirect is refused before it is followed, even to another allowed host', async (t) => {
+  const bytes = await smallPng();
+  const targetHits = [];
+  const targetUrl = await startImageServer(t, { bytes, hits: targetHits });
+  const redirectUrl = await startImageServer(t, { bytes, redirectTo: targetUrl });
+  // Both URLs are on 127.0.0.1, so only the redirect policy can stop the second hop.
+  const { url } = await startServer(t, {
+    rawHttp: { allow_image_url: true, image_url_hosts: ['127.0.0.1'] },
+  });
+  const res = await post(url, { body: JSON.stringify({ image_url: redirectUrl }), contentType: 'application/json' });
+
+  assert.equal(res.status, 403, res.text);
+  assert.equal(res.json.error, 'image_url_redirect');
+  assert.match(res.json.reason, /redirects are not followed/);
+  assert.equal(targetHits.length, 0, 'the redirect target must never be contacted');
+});
+
+test('a redirect to a link-local metadata address is refused', async (t) => {
+  const bytes = await smallPng();
+  const redirectUrl = await startImageServer(t, {
+    bytes,
+    redirectTo: 'http://169.254.169.254/latest/meta-data/',
+  });
+  const { url } = await startServer(t, {
+    rawHttp: { allow_image_url: true, image_url_hosts: ['127.0.0.1'] },
+  });
+  const res = await post(url, { body: JSON.stringify({ image_url: redirectUrl }), contentType: 'application/json' });
+
+  assert.equal(res.status, 403, res.text);
+  assert.equal(res.json.error, 'image_url_redirect');
+});
+
+test('downloadImage follows redirects by default but refuses them when asked not to', async (t) => {
+  const bytes = await smallPng();
+  const targetUrl = await startImageServer(t, { bytes });
+  const redirectUrl = await startImageServer(t, { bytes, redirectTo: targetUrl });
+
+  // The Pushbullet path keeps `follow`: a pre-signed S3 URL is not caller-supplied.
+  const followed = await downloadImage(redirectUrl);
+  assert.equal(followed.ext, '.png');
+
+  // The HTTP ingress passes `manual`, and a 3xx is refused rather than followed.
+  await assert.rejects(
+    () => downloadImage(redirectUrl, { redirect: 'manual' }),
+    (err) => err instanceof ImageFetchError && err.reason === 'redirect' && err.status === 302
+  );
 });
 
 test('multipart/form-data with a file part is accepted', async (t) => {
@@ -702,6 +829,7 @@ test('imageErrorStatus maps every fetcher reason', () => {
   assert.equal(imageErrorStatus({ reason: 'pixels' }), 413);
   assert.equal(imageErrorStatus({ reason: 'http' }), 502);
   assert.equal(imageErrorStatus({ reason: 'no-url' }), 400);
+  assert.equal(imageErrorStatus({ reason: 'redirect' }), 403);
   assert.equal(imageErrorStatus({ reason: 'magic' }), 415);
   assert.equal(imageErrorStatus({ reason: 'decode' }), 415);
   assert.equal(imageErrorStatus({ reason: 'height' }), 415);
@@ -778,6 +906,35 @@ test('assertHttpUrl allows http(s) and rejects everything else', () => {
   assert.equal(assertHttpUrl('http://127.0.0.1/a.png'), 'http://127.0.0.1/a.png');
   assert.throws(() => assertHttpUrl('file:///etc/passwd'), HttpError);
   assert.throws(() => assertHttpUrl('not a url'), HttpError);
+});
+
+test('imageUrlHostAllowed matches the host exactly, not a suffix or a URL prefix', () => {
+  const url = (href) => new URL(href);
+  assert.equal(imageUrlHostAllowed(url('https://images.example.test/a.png'), ['images.example.test']), true);
+  // Case and the FQDN root dot are normalised away by the URL parser and the matcher.
+  assert.equal(imageUrlHostAllowed(url('https://IMAGES.Example.test./a.png'), ['images.example.test']), true);
+  assert.equal(imageUrlHostAllowed(url('http://[::1]/a.png'), ['::1']), true);
+  // A suffix must not admit a subdomain, and a prefix must not admit a longer domain.
+  assert.equal(imageUrlHostAllowed(url('https://sub.example.test/a.png'), ['example.test']), false);
+  assert.equal(imageUrlHostAllowed(url('https://evil.example.test/a.png'), ['images.example.test']), false);
+  assert.equal(imageUrlHostAllowed(url('https://example.test.evil.test/a.png'), ['example.test']), false);
+  assert.equal(imageUrlHostAllowed(url('http://127.0.0.1/a.png'), []), false);
+  // The host is the trust boundary; the port is not part of the entry.
+  assert.equal(imageUrlHostAllowed(url('http://images.example.test:8443/a.png'), ['images.example.test']), true);
+});
+
+test('assertImageUrlAllowed refuses by default, on an empty list, and on a foreign host', () => {
+  assert.equal(assertImageUrlAllowed('https://images.example.test/a.png', { enabled: true, hosts: ['images.example.test'] }), 'https://images.example.test/a.png');
+  for (const [policy, code] of [
+    [{ enabled: false, hosts: ['images.example.test'] }, 'image_url_disabled'],
+    [{ enabled: true, hosts: [] }, 'image_url_host_not_allowed'],
+    [{ enabled: true, hosts: ['other.example.test'] }, 'image_url_host_not_allowed'],
+  ]) {
+    assert.throws(
+      () => assertImageUrlAllowed('https://images.example.test/a.png', policy),
+      (err) => err instanceof HttpError && err.status === 403 && err.code === code
+    );
+  }
 });
 
 test('createRateLimiter is a fixed window', () => {

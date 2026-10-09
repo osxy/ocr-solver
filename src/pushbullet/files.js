@@ -198,6 +198,12 @@ export async function validateImageBuffer(
 
 /**
  * Download and validate one image URL.
+ *
+ * `redirect` is forwarded to `fetch`. The Pushbullet path leaves it at `follow` (a
+ * pre-signed S3 URL is not caller-supplied). The HTTP `image_url` path passes
+ * `manual`, and a 3xx is refused rather than followed: a redirect is how a public URL
+ * reaches `169.254.169.254`, so the only URL fetched is the one that was checked (#57).
+ *
  * @returns {{buffer: Buffer, ext: string, mime: string, width: number, height: number, bytes: number, contentType: string|null}}
  */
 export async function downloadImage(
@@ -211,9 +217,18 @@ export async function downloadImage(
     maxWidth = DEFAULT_MAX_WIDTH,
     maxPixels = DEFAULT_MAX_PIXELS,
     sharpImpl = sharp,
+    redirect = 'follow',
   } = {}
 ) {
-  const response = await fetchImpl(url, { signal: AbortSignal.timeout(timeoutMs) });
+  const response = await fetchImpl(url, { redirect, signal: AbortSignal.timeout(timeoutMs) });
+  // With `redirect: 'manual'` fetch hands back the 3xx itself. Following it would
+  // re-resolve a host that was never on the allowlist, so the hop is the attack.
+  if (redirect !== 'follow' && response.status >= 300 && response.status < 400) {
+    throw new ImageFetchError(`image URL redirected with HTTP ${response.status}; redirects are not followed`, {
+      reason: 'redirect',
+      status: response.status,
+    });
+  }
   if (!response.ok) {
     throw new ImageFetchError(`image download failed with HTTP ${response.status}`, {
       reason: 'http',

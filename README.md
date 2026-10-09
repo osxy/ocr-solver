@@ -111,6 +111,8 @@ rate_limit_per_min = 20         # 0 disables the limit
 timeout_ms = 30000      # a solve past this is a 504; nothing is sent
 max_body_bytes = 5242880        # 5 MiB, the same cap as a Pushbullet image
 max_queue = 8                   # requests running/waiting at once; over this is a 503
+allow_image_url = false         # off: image_url makes the server fetch a caller URL (SSRF)
+image_url_hosts = []            # when on: the only hosts image_url may name (default deny)
 ```
 
 `DEFAULTS` in [`src/config.js`](./src/config.js) is the full schema; `DESIGN.md` §4.13
@@ -225,7 +227,8 @@ rejected value names the setting and writes nothing at all, so the editor cannot
 config that stops the app from starting.
 
 The editor covers the HTTP ingress too — `http.enabled`, `http.bind`, `http.port`,
-`http.rate_limit_per_min`, `http.timeout_ms`, `http.max_body_bytes`, `http.max_queue` and
+`http.rate_limit_per_min`, `http.timeout_ms`, `http.max_body_bytes`, `http.max_queue`,
+`http.allow_image_url`, `http.image_url_hosts` and
 `http.token` — so enabling the endpoint no longer means hand-editing TOML **and** writing
 the credential by some other route.
 
@@ -305,13 +308,33 @@ curl -sS -X POST http://127.0.0.1:8765/v1/solve \
 ```
 
 Accepted bodies: `image/*` (raw bytes, as above), `multipart/form-data` with a file
-field, or JSON with `image_base64` (a data URL is fine) or `image_url`:
+field, or JSON with `image_base64` (a data URL is fine). JSON may also carry `image_url`,
+but **fetching a URL is off by default** - see below.
 
 ```bash
 curl -sS -X POST http://127.0.0.1:8765/v1/solve \
   -H "Authorization: Bearer $HTTP_AUTH_TOKEN" -H 'Content-Type: application/json' \
   -d '{"image_base64":"'"$(base64 -w0 puzzle.png)"'"}'
 ```
+
+**`image_url` is off by default (issue #57).** Making the server fetch a URL the caller
+supplies is an SSRF surface: the server can reach services the caller cannot, including
+link-local metadata endpoints. Since uploading the image is the normal path, the default is
+to refuse it - `403` with `"error": "image_url_disabled"` and a reason pointing at
+`image_base64` / multipart / `image/*`. To enable it, name the hosts you trust (default deny):
+
+```toml
+[http]
+allow_image_url = true
+image_url_hosts = ["images.example.com", "cdn.example.com"]
+```
+
+When enabled, a URL whose host is not on that list is a `403` with
+`"error": "image_url_host_not_allowed"`. Redirects are never followed: a public URL that
+`302`s elsewhere is refused with `403` and `"error": "image_url_redirect"`, because the
+redirect target is a second, unchecked host. Entries are exact host names (no wildcards or
+ports). The residual: an allowlisted *hostname* that resolves to an internal address is
+fetched, because `fetch` re-resolves at connect time - keep the list to names you control.
 
 **Status codes are honest, not approximate.** `200` is a **corroborated** validated
 answer; `422` is a puzzle that could not be solved, or an answer that passed validation
