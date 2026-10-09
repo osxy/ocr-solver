@@ -103,9 +103,7 @@ export function openStore({ path = ':memory:', now = () => Date.now() / 1000 } =
     SELECT v.subject, v.created_at, v.payload, v.ok, v.ms,
       (SELECT r.payload FROM attempts r
         WHERE r.subject = v.subject AND r.stage = 'respond'
-        ORDER BY r.id DESC LIMIT 1) AS respond_payload,
-      (SELECT MAX(a.created_at) - MIN(a.created_at) FROM attempts a
-        WHERE a.subject = v.subject) AS elapsed_seconds
+        ORDER BY r.id DESC LIMIT 1) AS respond_payload
     FROM attempts v
     WHERE v.stage = 'validate'
     ORDER BY v.created_at DESC, v.id DESC
@@ -226,8 +224,9 @@ export function openStore({ path = ':memory:', now = () => Date.now() / 1000 } =
 
     /**
      * The last `limit` validate rows, newest first, with the recorded responder
-     * verdict and the subject's elapsed wall time. A single bounded query: the LIMIT
-     * is the only thing standing between a page load and the whole table (#64).
+     * verdict and the solve's own recorded duration (`ms`, set by the pipeline on the
+     * validate row). A single bounded query: the LIMIT is the only thing standing
+     * between a page load and the whole table (#64).
      */
     recentSolves(limit) {
       const n = Number(limit);
@@ -239,7 +238,6 @@ export function openStore({ path = ':memory:', now = () => Date.now() / 1000 } =
         ok: row.ok == null ? null : row.ok === 1,
         ms: row.ms == null ? null : Number(row.ms),
         respond: row.respond_payload ? safeParse(row.respond_payload) : null,
-        elapsedMs: row.elapsed_seconds == null ? null : Math.round(Number(row.elapsed_seconds) * 1000),
       }));
     },
 

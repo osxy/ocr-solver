@@ -567,13 +567,14 @@ when tray mode is on (`resolveTrayMode`, so `ui.tray = false` still vetoes) and 
 token resolves, `createApp` builds a `createSetup` over the *same* injected providers and calls
 the `setupDialog` seam **before** the client, worker and listener are built. The dialog writes
 through `saveSecrets`; `createApp` then re-resolves through `loadSecrets`, so a broken write
-cannot masquerade as a configured app. `runApp` supplies the default terminal prompt
-(`src/ui/setup-dialog.js`) and forwards the tray request. `--headless` passes no dialog, and a
-cancel or a failed save throws `SetupCancelledError`/`SetupFailedError`, which the CLI prints as
-the exit line rather than a stack. Because the credential is resolved before the dialog is ever
-considered, a second start with a stored token does not prompt. The dialog itself is injectable,
-which is what makes the startup path testable on Linux without `systray2` or a display; the
-native tray widget remains unverified (see **§11**).
+cannot masquerade as a configured app. `runApp` supplies the default web setup dialog
+(`defaultWebSetupDialog`, issue #56; the old terminal prompt was deleted as dead code in #90) and
+forwards the tray request. `--headless` passes no dialog, and a cancel or a failed save throws
+`SetupCancelledError`/`SetupFailedError`, which the CLI prints as the exit line rather than a
+stack. Because the credential is resolved before the dialog is ever considered, a second start with
+a stored token does not prompt. The dialog itself is injectable, which is what makes the startup
+path testable on Linux without `systray2` or a display; the native tray widget remains unverified
+(see **§11**).
 
 **Settings editor (issue #27).** Guided setup captured the token and key once; after that
 changing anything meant hand-editing TOML, and the token was not even in that file. The editor
@@ -812,7 +813,13 @@ instead `store.latestValidationRows()` reduces to one SQL-aggregated row per sub
 `buildReport`/`summarize`, not a second implementation of the same numbers. The page lists the last
 `ui.stats_recent_solves` (default 5, bounded 1-100) solves and passes each stored verdict through
 `formatSolveResponse`, the same serialiser the solve page uses, so answer/method/confidence/reason
-cannot drift between the two pages. Recorded traffic (real, no ground truth, headlined as the
+cannot drift between the two pages. Each solve's **took** is the wall time the pipeline records on
+that solve's own `validate` row (`ms`), not the span between the subject's first and last attempt:
+a re-solve therefore reports its own duration instead of the whole subject history, and a row with
+no recorded time renders as `unknown` rather than a fabricated number (#86). The recorded-traffic
+totals count **distinct puzzles** (one latest `validate` row per subject) and are labelled that way,
+so re-solving the same image counts once there while the recent-solves list above shows each solve
+(#86). Recorded traffic (real, no ground truth, headlined as the
 sent-able rate) and the offline corpus (our own generated fixtures) are rendered as **two separate
 labelled figures** and are never blended; the corpus is called a regression guard, not real-world
 accuracy. The page names the `storage.retain_days` window so a moving window does not look like

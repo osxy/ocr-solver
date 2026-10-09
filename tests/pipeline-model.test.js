@@ -183,6 +183,30 @@ test('records the model stages and the final verdict', async () => {
   store.close();
 });
 
+test('the validate row carries the solve\'s own duration (#86)', async () => {
+  const store = memoryStore();
+  const { reasoner } = reasonerWith([{ answer: '2', puzzle_class: 'count', confidence: 0.95 }]);
+  // Two solves of the same subject (a re-solve of the same image, from the store's
+  // point of view): each must get its own row and its own duration.
+  for (let i = 0; i < 2; i += 1) {
+    await solveImage(fakeWorker('Hoeveel kleuren in lijst wit kiwi hoofd paars olifant aap?', 95), IMAGE, {
+      store,
+      subject: 'http-abc',
+      reasoner,
+    });
+  }
+  const validates = store.attemptsFor('http-abc').filter((r) => r.stage === 'validate');
+  assert.equal(validates.length, 2);
+  for (const row of validates) {
+    assert.equal(Number.isFinite(row.ms), true, 'each validate row records its own duration');
+    assert.ok(row.ms >= 0 && row.ms < 60_000, `duration ${row.ms}ms must be plausible`);
+  }
+  // The page shows the row's own duration, not the span between the two solves.
+  const recent = store.recentSolves(2);
+  assert.deepEqual(recent.map((r) => r.ms), validates.map((r) => r.ms).reverse());
+  store.close();
+});
+
 test('useTier0=false withholds the offline answer and forces the model', async () => {
   // The lexicon would confidently answer 2; `solver.tier0 = false` must ignore that
   // and let the model answer instead, without reimplementing the solve path.

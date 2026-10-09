@@ -30,6 +30,17 @@ const RETRYABLE_STATUS = new Set([408, 409, 425, 429, 500, 502, 503, 504, 522, 5
 export const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 
 /**
+ * The one endpoint join. The chat client and the first-run/settings **Test
+ * connection** probe both call this, so a trailing slash in `llm_base_url`
+ * (`https://openrouter.ai/api/v1/`, a very common spelling) cannot make the probe
+ * 404 while the real service works (#88). This is the same collapse the three
+ * redactors and the two corpus paths got: one implementation, every caller.
+ */
+export function chatEndpoint(baseUrl) {
+  return `${String(baseUrl ?? '').replace(/\/+$/, '')}/chat/completions`;
+}
+
+/**
  * OpenRouter slugs that route dynamically, and the plugin id each one listens to.
  *
  * The mapping matters: OpenRouter documents that each slug reads settings ONLY under
@@ -120,7 +131,7 @@ export function createChatClient({
   requestMetadata = /openrouter\.ai/.test(baseUrl),
 } = {}) {
   if (typeof fetchImpl !== 'function') throw new Error('no fetch implementation available');
-  const endpoint = `${baseUrl.replace(/\/+$/, '')}/chat/completions`;
+  const endpoint = chatEndpoint(baseUrl);
   const calls = [];
 
   /** Assemble the request body, injecting the correct auto-router plugin when relevant. */

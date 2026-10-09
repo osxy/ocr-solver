@@ -99,6 +99,10 @@ export async function solveImage(worker, image, options = {}) {
     maxPixels = null,
   } = options;
 
+  // The solve's own clock. `solveImage` is one solve, so the elapsed time from here
+  // to the validate row below is the duration that row owns (#86).
+  const startedAt = Date.now();
+
   const built = await buildVariants(image, variants, { limitInputPixels: maxPixels });
   const ocr = await recognizeVariants(worker, built, psms);
   const ranked = rankResults(ocr).filter((r) => !r.empty && r.confidence >= minConfidence);
@@ -260,6 +264,11 @@ export async function solveImage(worker, image, options = {}) {
         disputed,
       },
       ok: answer != null,
+      // The solve's own wall time, recorded on the row that represents the solve.
+      // Attributing it here, rather than as the span between the subject's first and
+      // last attempt, is what stops a re-solve of the same image from reporting the
+      // whole subject history as its duration (#86).
+      ms: Date.now() - startedAt,
     });
   }
 
