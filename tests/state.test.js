@@ -80,6 +80,74 @@ test('persists to a file and reopens', () => {
   }
 });
 
+test('claims a push exactly once, across a restart', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'puzzlesolver-'));
+  const path = join(dir, 'state.db');
+  try {
+    const push = {
+      iden: 'p1',
+      created: 1,
+      modified: 2,
+      type: 'file',
+      file_name: 'a.png',
+      file_url: 'http://example.test/a.png',
+    };
+    const first = openStore({ path });
+    assert.equal(first.claimPush(push), true);
+    assert.equal(first.claimPush(push), false, 'a duplicate tickle must not re-claim');
+    assert.equal(first.getPush('p1').status, 'new');
+    assert.equal(first.countPushes(), 1);
+    first.setPushStatus('p1', 'solved');
+    first.close();
+
+    const second = openStore({ path });
+    assert.equal(second.claimPush(push), false, 'the claim survives a restart');
+    assert.equal(second.getPush('p1').status, 'solved');
+    second.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('an ignored push is claimed so it is not re-fetched forever', () => {
+  const store = memoryStore();
+  store.claimPush({ iden: 'n1', type: 'note' }, { status: 'ignored' });
+  assert.equal(store.getPush('n1').status, 'ignored');
+  assert.equal(store.claimPush({ iden: 'n1', type: 'note' }), false);
+  store.close();
+});
+
+test('the outbox claim happens before the send and is never released', () => {
+  const store = memoryStore();
+  assert.equal(store.claimOutbox('p1', 'h1'), true);
+  assert.equal(store.claimOutbox('p1', 'h1'), false, 'a second delivery must lose the claim');
+  assert.equal(store.getOutbox('p1', 'h1').sent_at, null, 'claimed is not sent');
+  assert.equal(store.lastSentAt(), null, 'a claim must not count as a send');
+  assert.equal(store.countSentSince(0), 0);
+  assert.equal(store.pendingOutbox().length, 1);
+
+  store.markOutboxSent('p1', 'h1', { response: { iden: 'note-1' } });
+  const row = store.getOutbox('p1', 'h1');
+  assert.ok(row.sent_at > 0);
+  assert.match(row.response, /note-1/);
+  assert.equal(store.countSentSince(0), 1);
+  assert.equal(store.pendingOutbox().length, 0);
+  assert.equal(store.lastSentAt(), row.sent_at);
+  store.close();
+});
+
+test('a failed delivery stays claimed and records why', () => {
+  const store = memoryStore();
+  store.claimOutbox('p1', 'h1');
+  store.noteOutboxError('p1', 'h1', new Error('network exploded'));
+  const row = store.getOutbox('p1', 'h1');
+  assert.equal(row.sent_at, null);
+  assert.match(row.response, /network exploded/);
+  assert.equal(store.claimOutbox('p1', 'h1'), false, 'an error must not release the claim');
+  assert.equal(store.countSentSince(0), 0, 'a failed send does not count against the hourly cap');
+  store.close();
+});
+
 test('loads the shipped solve prompt', () => {
   clearPromptCache();
   const prompt = loadPrompt('solve');
