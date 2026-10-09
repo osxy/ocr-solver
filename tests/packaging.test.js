@@ -132,12 +132,20 @@ test('the required payload includes the app, the Windows sharp binary and the tr
 // Workflow shape
 // ---------------------------------------------------------------------------
 
-test('the package workflow triggers on PRs, main pushes, v* tags and dispatch', () => {
+test('the package workflow triggers on PRs, main and milestone pushes, v* tags and dispatch', () => {
   const workflow = readFileSync(join(repoRoot, '.github', 'workflows', 'package.yml'), 'utf8');
 
-  assert.match(workflow, /pull_request:\s*\n\s*branches:\s*\[main\]/, 'a PR must build without publishing');
-  assert.match(workflow, /push:\s*\n\s*branches:\s*\[main\]\s*\n\s*tags:\s*\['v\*'\]/, 'one push block, branches and tags');
+  assert.match(workflow, /pull_request:\s*\n\s*branches:\s*\[main, 'milestone\/\*\*'\]/, 'a PR into main or a milestone branch must build without publishing');
+  assert.match(workflow, /push:\s*\n\s*branches:\s*\[main, 'milestone\/\*\*'\]\s*\n\s*tags:\s*\['v\*'\]/, 'one push block, both branch families and tags');
   assert.match(workflow, /workflow_dispatch:/);
+
+  // The release step is the only publishing path, and it still requires a `v*` tag:
+  // adding the milestone branch to `push:` must not let a branch push release.
+  assert.match(
+    workflow,
+    /release:\s*\n\s*needs:\s*\[package, deploy\]\s*\n\s*if:\s*startsWith\(github\.ref, 'refs\/tags\/v'\)/,
+    'the release job must stay gated on a v* tag'
+  );
 
   // Only the release job may write; the rest of the workflow is read-only.
   assert.equal((workflow.match(/contents:\s*write/g) ?? []).length, 1);
@@ -147,7 +155,7 @@ test('the package workflow triggers on PRs, main pushes, v* tags and dispatch', 
 test('the CI workflow is reusable and keeps its original triggers', () => {
   const workflow = readFileSync(join(repoRoot, '.github', 'workflows', 'ci.yml'), 'utf8');
   assert.match(workflow, /workflow_call:/);
-  assert.match(workflow, /on:\s*\n\s*push:\s*\n\s*pull_request:\s*\n\s*branches:\s*\[main\]/);
+  assert.match(workflow, /on:\s*\n\s*push:\s*\n\s*pull_request:\s*\n\s*branches:\s*\[main, 'milestone\/\*\*'\]/);
 });
 
 test('the package workflow executes the deployment glue against the artifact it built', () => {

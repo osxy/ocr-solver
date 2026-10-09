@@ -9,19 +9,25 @@
 # If that fails the release job never runs, so a broken tree publishes nothing.
 #
 # Triggers, and why this shape matters:
-#   - pull_request -> main: build + smoke test, publish nothing. This is the only way
-#     to prove the packaging job runs before the workflow exists on the default branch
-#     (`workflow_dispatch` is not available until then).
-#   - push -> main: same, so `main` is known to package.
-#   - push of a `v*` tag: build + smoke test, then create the Release.
+#   - pull_request -> main or a milestone branch: build + smoke test, publish nothing.
+#     This is the only way to prove the packaging job runs before the workflow exists
+#     on the default branch (`workflow_dispatch` is not available until then), and the
+#     Windows packaging job is the only place the deployment glue and the DPAPI round
+#     trip actually execute (#59, #83) — a milestone branch that skipped it would leave
+#     that coverage dark for a whole milestone.
+#   - push -> main or a milestone branch: same, so every integration branch is known
+#     to package.
+#   - push of a `v*` tag: build + smoke test, then create the Release. The release job
+#     alone carries `if: startsWith(github.ref, 'refs/tags/v')`, so adding the branch
+#     filters above cannot make a branch push publish anything.
 #   - workflow_dispatch: manual run of the same pipeline, no release.
 name: Package (Windows)
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, 'milestone/**']
   push:
-    branches: [main]
+    branches: [main, 'milestone/**']
     tags: ['v*']
   workflow_dispatch:
 

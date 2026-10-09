@@ -836,7 +836,7 @@ plain ESM.
 
 ```bash
 npm install
-npm test              # 746 tests (740 pass, 6 skip), offline: no network, no token, no key
+npm test              # 753 tests (747 pass, 6 skip), offline: no network, no token, no key
 npm run test:unit     # fast subset
 npm run test:corpus   # real images through real OCR, ~4s
 npm run test:live     # opt-in; skips unless LLM_API_KEY is set

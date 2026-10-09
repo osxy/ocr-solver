@@ -34,6 +34,50 @@ git switch <type>/<slug>
 Prefer small, single-purpose branches. A review should be able to answer "what does this
 change and why" without reading a mixed diff.
 
+### Milestones: a long-lived branch, so `main` is always the released state
+
+`main` is what users download, so **it must always be the last released version**. Milestone work
+therefore does not happen on it.
+
+- **A milestone gets a long-lived branch**, `milestone/v<major>.<minor>` — e.g. `milestone/v0.5` —
+  created from `main` when the milestone opens.
+- **Every issue in that milestone branches off the milestone branch**, not off `main`, and its pull
+  request targets the milestone branch.
+- **The version bump, the README install link and the release notes live on the milestone branch.**
+- When the milestone's work is finished *and* its peer review's findings are fixed, the **milestone
+  branch merges to `main`**. That merge *is* the release: tag the merge commit and push the tag.
+
+```bash
+git switch -c milestone/v0.5 main                 # when the milestone opens
+git switch -c feat/thing milestone/v0.5           # per issue
+gh pr create --base milestone/v0.5                # into the milestone, not main
+# ...work, review, findings fixed...
+gh pr create --base main --head milestone/v0.5    # the release merge
+git switch main && git pull
+git tag -a v0.5.0 -m 'PuzzleSolver v0.5.0' && git push origin v0.5.0
+```
+
+**Why:** under the previous scheme the version bump happened on `main`, so `main` advertised a
+version that did not exist yet and the README's pinned download link 404'd for the whole development
+cycle (issue #106). A milestone branch keeps unreleased state off `main` entirely.
+
+**Consequences that are easy to miss:**
+
+- **CI must cover the milestone branch.** The workflows trigger on `main` **and** on `milestone/**`;
+  a workflow that watches only `main` leaves milestone pull requests unverified.
+- **The milestone branch is protected like `main`** — the `pre-push` hook refuses it too, so work
+  reaches it through a pull request.
+- Keep the milestone branch current with `main`, so a hotfix released from `main` does not return as
+  a conflict at release time.
+- **Hotfixes** to a released version go `hotfix/<slug>` → pull request to `main` → tag a patch
+  release, and are then merged or cherry-picked into the open milestone branch.
+- Pull requests merged into the milestone branch close their issues, so milestone progress is visible
+  **before** the release exists.
+
+**v0.4 is the last milestone done the old way.** It branches off `main` and bumps `package.json`
+there, because it was already in flight when this rule was written. Do not "fix" `main` during v0.4.
+The rule applies from the next milestone onward.
+
 ### Merging
 
 Merging through a PR is expected. Say in the PR description *what was verified and how* —
@@ -60,7 +104,8 @@ this file.
 
 ## 2. The `pre-push` hook
 
-`scripts/git-hooks/pre-push` refuses to push to `main`. Enable it in a clone with:
+`scripts/git-hooks/pre-push` refuses to push to `main`, `master`, or a `milestone/*` branch.
+Enable it in a clone with:
 
 ```bash
 git config core.hooksPath scripts/git-hooks
@@ -136,7 +181,7 @@ the old code. Behaviour that took live testing to find must not be able to come 
 ## 5. Tests
 
 ```bash
-npm test              # 746 tests (740 pass, 6 skip), fully offline: no network, no token, no key
+npm test              # 753 tests (747 pass, 6 skip), fully offline: no network, no token, no key
 npm run test:unit     # fast subset
 npm run test:corpus   # real images through real OCR, ~4s
 npm run test:live     # opt-in; skips itself unless LLM_API_KEY is set

@@ -11,7 +11,21 @@
 # Git passes one line per ref being pushed on stdin:
 #     <local ref> <local sha> <remote ref> <remote sha>
 
+# Exact protected names, plus the `milestone/*` pattern. A milestone branch is the
+# integration point the release inherits, so it is protected the same way (AGENTS.md §1).
 PROTECTED_BRANCHES="main master"
+
+# True when $1 is a protected branch: an exact name above, or the milestone/* pattern.
+is_protected() {
+  branch=$1
+  for name in $PROTECTED_BRANCHES; do
+    [ "$branch" = "$name" ] && return 0
+  done
+  case "$branch" in
+    milestone/*) return 0 ;;
+  esac
+  return 1
+}
 
 if [ "${ALLOW_MAIN_PUSH:-}" = "1" ]; then
   echo "pre-push: ALLOW_MAIN_PUSH=1 set - allowing a direct push to a protected branch." >&2
@@ -23,10 +37,9 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   [ -n "$remote_ref" ] || continue
 
   branch=${remote_ref#refs/heads/}
-  for protected in $PROTECTED_BRANCHES; do
-    [ "$branch" = "$protected" ] || continue
+  is_protected "$branch" || continue
 
-    cat >&2 <<EOF
+  cat >&2 <<EOF
 
 pre-push: refusing to push to '$branch'.
 
@@ -51,8 +64,7 @@ pre-push: refusing to push to '$branch'.
   See AGENTS.md section 1.
 
 EOF
-    exit 1
-  done
+  exit 1
 done
 
 exit 0
