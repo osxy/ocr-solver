@@ -4,8 +4,10 @@
 # reusing the zip the `package` job built. It runs the artifact's own node.exe against
 # packaging/dpapi-roundtrip.mjs, which imports the artifact's app/src/secrets.js and
 # asserts that a plaintext credentials file is migrated to DPAPI, removed, and readable
-# back. There is no assertion here that DPAPI "should" work: the script fails loudly if
-# the real call does not.
+# back. The migrate/write and the read-back happen in *two separate node processes*, so
+# the read must come from Unprotect of the file on disk, not from the writer's cache.
+# There is no assertion here that DPAPI "should" work: the script fails loudly if the
+# real call does not.
 #
 # UNVERIFIED LOCALLY: PowerShell does not run on the Linux development host.
 
@@ -47,15 +49,17 @@ try {
     Write-Host $stdout
     Assert ($code -eq 0) "the DPAPI round trip exited $code. stderr: $stderr"
     Assert ($stdout -match 'DPAPI round trip') "the round trip did not report success. stdout: $stdout"
-    Write-Host 'DPAPI: plaintext migrated -> removed -> decrypted -> fresh write -> decrypted, all matched'
+    Assert ($stdout -match 'unprotect calls: [1-9]') "the read process never exercised Unprotect. stdout: $stdout"
+    Write-Host 'DPAPI: A migrated + wrote -> B decrypted from disk in a fresh process, all matched'
 
     if ($env:GITHUB_STEP_SUMMARY) {
         Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value @"
 ### DPAPI credential store
 
-Executed on the shipped artifact: a legacy plaintext ``credentials.json`` was migrated to DPAPI, the
-plaintext removed, and the value read back; a fresh write round-tripped too. Protected with
-``ProtectedData`` at ``CurrentUser`` scope through the packaged ``node.exe``.
+Executed on the shipped artifact, in two separate node processes: process A migrated a legacy plaintext
+``credentials.json`` to DPAPI and removed it; process B — with a fresh provider and an empty module cache —
+read the value back and reported that ``Unprotect`` was called. A fresh write round-tripped too. Protected
+with ``ProtectedData`` at ``CurrentUser`` scope through the packaged ``node.exe``.
 "@
     }
 }

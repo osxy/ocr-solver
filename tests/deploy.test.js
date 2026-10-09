@@ -210,6 +210,7 @@ test('run-dpapi.ps1 runs the round trip against the artifact, not this checkout'
   assert.match(ps, /dpapi-roundtrip\.mjs/);
   assert.match(ps, /\$code -eq 0/, 'a non-zero node exit must fail the step');
   assert.match(ps, /DPAPI round trip/, 'the step must confirm the script reported success');
+  assert.match(ps, /unprotect calls/, 'the step must confirm the read half actually called Unprotect');
   assert.match(ps, /WaitForExit\(120000\)/, 'the run is bounded');
 });
 
@@ -220,6 +221,8 @@ test('dpapi-roundtrip.mjs asserts migration, removal and a round trip through th
   assert.match(script, /saveSecrets/);
   assert.match(script, /existsSync\(credentialPath\)/, 'the plaintext file must be asserted gone');
   assert.match(script, /includes\(legacySecret\)/, 'the protected file must be asserted free of the plaintext');
+  assert.match(script, /spawnSync/, 'the read-back must run in a separate process, not the writer');
+  assert.match(script, /calls\.unprotect/, 'it must assert Unprotect was exercised');
   assert.equal(/powershell/i.test(script), false, 'the DPAPI call belongs in secrets.js, not duplicated in the proof');
 });
 

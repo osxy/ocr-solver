@@ -514,6 +514,13 @@ fixed by the implementation and its tests:
   A group/world-readable file still resolves but reports a warning. Resolution order is
   explicit option → environment → provider → `null`, and `describeSecret()` exposes only
   `{ present, source, hint }` — including which store answered (`windows-dpapi`/`file`).
+  A `set` is a **read-modify-write**: it decrypts the protected file on disk immediately before
+  merging, so a `config set` from a second process is not wiped by the service's cached copy
+  (issue #84). Residual: two writers racing at the same instant are still last-writer-wins; the
+  window is narrowed and documented rather than closed with a lock file, because writes come from
+  short-lived CLI calls and one service. The Windows round trip is proven by **two separate `node`
+  processes** — one migrates and writes, a fresh one decrypts from disk and asserts `Unprotect`
+  ran (issue #83); a single-process check could be served by the cache and prove nothing.
 
 A missing config file is not an error: every value has a working default, so the app starts with
 no config at all. A *bad* value (unknown enum, negative or non-numeric interval, unknown OCR
@@ -1310,7 +1317,8 @@ restart-on-failure behaviour, the `_ps1` scripts end to end, Explorer opening a 
 actual tray widget. Every one of those has a testable seam (content, arguments or an injected
 loader) which is asserted. Since issue #59 the installer, task registration and inspection, the
 `--headless` start, the `wscript` launcher and uninstall are also executed on `windows-latest`,
-and since #60 the real DPAPI round trip is (`packaging/run-dpapi.ps1`); what remains native-only
+and since #60 the real DPAPI round trip is (`packaging/run-dpapi.ps1`), run as two processes so the
+read must decrypt from disk and the job asserts `Unprotect` ran (#83); what remains native-only
 is the interactive-desktop behaviour (tray, toast, Explorer hand-off).
 
 **CI packaging and release (issue #19).** `.github/workflows/package.yml` builds and publishes the
@@ -1362,8 +1370,9 @@ What an interactive desktop would be needed for is still unverified: the native 
 widget and the `node-notifier` toast need a window station, and the `explorer.exe` browser hand-off
 (#56) is likewise unexercised. Restart-on-failure is inspected as a task *property*; a crash loop
 has not been observed restarting it. The DPAPI credential round trip, by contrast, *is* executed
-on the runner (see [§8](#8-security--privacy)); what it cannot cover is a process running as the
-same user.
+on the runner as two processes: the writer migrates and saves, the reader decrypts from disk and
+asserts `Unprotect` was called (see [§8](#8-security--privacy)); what it cannot cover is a process
+running as the same user.
 
 **Unverifiable on the Linux development host:** `Compress-Archive`/`Expand-Archive`, running the
 bundled `node.exe`, and the release job's `gh` call. The decisions with a judgement in them (the
