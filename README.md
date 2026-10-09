@@ -153,7 +153,10 @@ same `credentials.json`:
 ```
 
 There is **no anonymous mode**: with `enabled = true` and no token the service refuses
-to start rather than listen unprotected.
+to start rather than listen unprotected. The token must be at least 16 characters and
+not an obvious weak value (a short or dictionary token is rejected at startup, because
+a guessable key on a bound endpoint is an oracle). Generate one with
+`openssl rand -hex 24`.
 
 ## Run
 
@@ -296,11 +299,12 @@ guessed). A `422` for an unresolved puzzle also carries `unresolvedReply` with t
 configured human wording when one is set, so a caller can relay it; the structured fields
 are never replaced by prose. A `422` for a withheld uncorroborated answer instead carries
 `"reason": "unconfirmed"` and **no** `unresolvedReply`, because the Pushbullet path stays
-silent for that case too. `401` is a missing or wrong bearer token; `400`/`413`/`415` is a
-bad, too large, or non-image body; `429` is the rate limit; `503` (with `Retry-After`)
-means too many requests are already running or waiting on the shared solver; `504` means
-the solve passed `timeout_ms`. A model-escalated solve says so in `cost.escalated`,
-because it bills your provider credits.
+silent for that case too. `401` is a missing or wrong bearer token; repeated wrong tokens
+get a `429` with `Retry-After` (a bounded failure count with backoff, per client);
+`400`/`413`/`415` is a bad, too large, or non-image body; `429` is the rate limit;
+`503` (with `Retry-After`) means too many requests are already running or waiting on
+the shared solver; `504` means the solve passed `timeout_ms`. A model-escalated solve
+says so in `cost.escalated`, because it bills your provider credits.
 
 **`reply.require_confidence` holds on HTTP too (issue #42).** An uncorroborated answer is
 not returned as a solved `200`; it is withheld exactly as the Pushbullet responder
@@ -481,7 +485,7 @@ plain ESM.
 
 ```bash
 npm install
-npm test              # 454 tests (448 pass, 6 skip), offline: no network, no token, no key
+npm test              # 517 tests (511 pass, 6 skip), offline: no network, no token, no key
 npm run test:unit     # fast subset
 npm run test:corpus   # real images through real OCR, ~4s
 npm run test:live     # opt-in; skips unless LLM_API_KEY is set

@@ -18,7 +18,7 @@
  * environment is Linux, so that branch has never been executed here: it is behind a
  * one-method provider interface, its loader is injectable, and no test requires it.
  */
-import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir as osHomedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -73,7 +73,11 @@ export function defaultCredentialPath({ platform = process.platform, env = proce
  * credential manager, and the one that is actually testable off Windows.
  *
  * The file is expected mode 600; a group/world-readable file still works (locking
- * someone out of their own credential is worse) but `warnings` reports it.
+ * someone out of their own credential is worse) but `warnings` reports it. A file
+ * that cannot be parsed is never silently treated as an empty store: `get` returns
+ * null *and* records a warning (so the caller can log it), and `set` refuses to
+ * overwrite it, quarantining a `.bak` first. That is the difference between a
+ * credential store and a way to silently lose every secret on the next save.
  */
 export function createFileCredentialProvider({
   path = defaultCredentialPath(),
@@ -82,29 +86,92 @@ export function createFileCredentialProvider({
   fileExists = existsSync,
   mkdir = mkdirSync,
   stat = statSync,
+  chmod = chmodSync,
+  rename = renameSync,
+  unlink = unlinkSync,
+  copyFile = copyFileSync,
   mode = 0o600,
+  backupSuffix = '.bak',
+  now = () => Date.now(),
+  pid = process.pid,
 } = {}) {
   let warnedMode = false;
+  // Set when a read could not parse; reported (and cleared) by `warnings()`, which
+  // `loadSecrets` logs, so a corrupt file is loud instead of invisible.
+  let readError = null;
+
+  /**
+   * Read and parse the store. Returns `{ ok, value, reason }`; `reason` is
+   * `'unreadable'` or `'invalid'` and is deliberately value-free.
+   */
+  function readStore() {
+    let text;
+    try {
+      text = readFile(path, 'utf8');
+    } catch {
+      return { ok: false, reason: 'unreadable' };
+    }
+    try {
+      const parsed = JSON.parse(text);
+      if (parsed == null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        return { ok: false, reason: 'invalid' };
+      }
+      return { ok: true, value: parsed };
+    } catch {
+      return { ok: false, reason: 'invalid' };
+    }
+  }
+
+  /** Write through a same-directory temp file, then rename; chmod covers a pre-existing file. */
+  function writeStore(contents) {
+    mkdir(dirname(path), { recursive: true });
+    const tmp = `${path}.tmp-${pid}-${now()}`;
+    try {
+      writeFile(tmp, contents, { encoding: 'utf8', mode });
+      try {
+        chmod(tmp, mode);
+      } catch {
+        // POSIX mode bits do not exist on Windows; a platform that cannot chmod still writes.
+      }
+      rename(tmp, path);
+      try {
+        // The rename replaces an existing file whose old mode would otherwise persist.
+        chmod(path, mode);
+      } catch {
+        // best effort on platforms without POSIX modes
+      }
+    } catch (err) {
+      try {
+        unlink(tmp);
+      } catch {
+        // the temp file may not exist; the original write error is the one that matters
+      }
+      throw err;
+    }
+  }
+
   return {
     name: 'file',
     get(name) {
       if (!path || !fileExists(path)) return null;
-      let parsed;
-      try {
-        parsed = JSON.parse(readFile(path, 'utf8'));
-      } catch {
-        // A corrupt credentials file is not worth crashing over; env still works.
+      const outcome = readStore();
+      if (!outcome.ok) {
+        readError = outcome.reason;
         return null;
       }
       const key = FILE_SECRET_KEYS[name];
       if (!key) return null;
-      const value = parsed?.[key];
+      const value = outcome.value?.[key];
       return value != null && String(value).trim() !== '' ? String(value) : null;
     },
     /**
      * Persist one secret, merging with whatever is already there. The file is the
      * cross-platform store, so this is the write path the setup dialog uses.
-     * Never logs the value; the mode is 0600 on POSIX and ignored on Windows.
+     * Never logs the value; the mode is enforced on every write, not only at creation.
+     *
+     * A file that cannot be parsed is *not* rewritten: the other secrets may still
+     * be recoverable by hand, and silently replacing them with `{}` plus the new key
+     * is how one typo destroys the whole store. A `.bak` is copied and `set` throws.
      */
     set(name, value) {
       const key = FILE_SECRET_KEYS[name];
@@ -115,21 +182,38 @@ export function createFileCredentialProvider({
 
       let parsed = {};
       if (fileExists(path)) {
-        try {
-          parsed = JSON.parse(readFile(path, 'utf8')) ?? {};
-        } catch {
-          // Overwrite a corrupt file rather than staying permanently unset.
-          parsed = {};
+        const outcome = readStore();
+        if (!outcome.ok) {
+          readError = outcome.reason;
+          const backupPath = `${path}${backupSuffix}`;
+          let backedUp = false;
+          try {
+            copyFile(path, backupPath);
+            backedUp = true;
+          } catch {
+            // If even the backup fails, still refuse rather than clobber.
+          }
+          throw new Error(
+            `refusing to overwrite unreadable credentials file ${path}` +
+              (backedUp ? `; a backup was written to ${backupPath}` : '; the file was left untouched')
+          );
         }
+        parsed = outcome.value;
       }
       parsed[key] = text;
-      mkdir(dirname(path), { recursive: true });
-      writeFile(path, `${JSON.stringify(parsed, null, 2)}\n`, { encoding: 'utf8', mode });
+      writeStore(`${JSON.stringify(parsed, null, 2)}\n`);
       return { stored: true, path, mode };
     },
-    /** Non-fatal problems worth surfacing once, e.g. lax file permissions. */
+    /** Non-fatal problems worth surfacing once, e.g. a corrupt file or lax permissions. */
     warnings() {
       const out = [];
+      if (readError) {
+        out.push(
+          `credentials file ${path} could not be read as JSON (${readError}); ` +
+            'its secrets were ignored and it will not be overwritten until it is fixed'
+        );
+        readError = null;
+      }
       if (!path || !fileExists(path)) return out;
       try {
         const mode = stat(path).mode & 0o777;

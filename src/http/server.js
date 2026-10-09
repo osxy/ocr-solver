@@ -21,6 +21,7 @@
  */
 import { createServer as createHttpServerImpl } from 'node:http';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
+import { isIP } from 'node:net';
 import {
   DEFAULT_MIN_HEIGHT,
   DEFAULT_MAX_HEIGHT,
@@ -36,7 +37,46 @@ import { DEFAULT_HTTP_BIND, DEFAULT_HTTP_PORT, DEFAULT_RATE_LIMIT_PER_MIN, DEFAU
 
 export { DEFAULT_HTTP_BIND, DEFAULT_HTTP_PORT, DEFAULT_RATE_LIMIT_PER_MIN, DEFAULT_TIMEOUT_MS, SOLVE_PATH };
 
-const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost']);
+const LOOPBACK_HOSTS = new Set(['::1', 'localhost']);
+
+/** Minimum HTTP bearer token length (#47). Long enough that guessing is hopeless. */
+export const MIN_HTTP_TOKEN_LENGTH = 16;
+
+// Values that are common enough to be guessed before the first request. Case-insensitive.
+const WEAK_TOKENS = new Set([
+  'changeme',
+  'password',
+  'secret',
+  'token',
+  'admin',
+  'test',
+  'letmein',
+  'default',
+  'http-auth-token',
+  'bearer',
+]);
+
+/**
+ * Describe why an HTTP bearer token is unfit to guard the solver, or `null` if it is fine.
+ * Kept as a plain function so `createApp` and `createHttpServer` report the same reason.
+ */
+export function httpTokenProblem(token) {
+  const value = typeof token === 'string' ? token : '';
+  if (value.trim() === '') return 'the token is empty';
+  if (WEAK_TOKENS.has(value.toLowerCase())) return 'the token is a well-known weak value';
+  if (value.length < MIN_HTTP_TOKEN_LENGTH) {
+    return `the token is ${value.length} character(s); at least ${MIN_HTTP_TOKEN_LENGTH} are required (try \`openssl rand -hex 24\`)`;
+  }
+  if (new Set(value).size < 4) return 'the token has too little variation to resist guessing';
+  return null;
+}
+
+/** Throw with an actionable message when the token is too weak (#47). */
+export function assertHttpToken(token) {
+  const problem = httpTokenProblem(token);
+  if (problem) throw new Error(`the HTTP bearer token is not usable: ${problem}`);
+  return true;
+}
 
 /** A deliberately-tagged error carrying the HTTP status the caller should see. */
 export class HttpError extends Error {
@@ -77,12 +117,27 @@ export function imageErrorStatus(err) {
   }
 }
 
-/** True when `host` is loopback and the bind does not need a warning. */
+/**
+ * True when `host` is loopback and the bind does not need a warning.
+ *
+ * Validates the *whole* host, not a prefix: `127.evil.example` merely starts with
+ * `127.` and is a network hostname, so treating it as loopback would suppress the
+ * exposure warning this function exists to trigger (#47). Only an address in
+ * `127.0.0.0/8`, `::1` (or its IPv4-mapped form) or exactly `localhost` qualifies.
+ */
 export function isLoopbackHost(host) {
   if (!host) return false;
-  const value = String(host).trim().toLowerCase().replace(/^\[|\]$/g, '');
+  let value = String(host).trim().toLowerCase();
+  if (value.startsWith('[') && value.endsWith(']')) value = value.slice(1, -1);
   if (LOOPBACK_HOSTS.has(value)) return true;
-  return value.startsWith('127.');
+  const kind = isIP(value);
+  if (kind === 4) return Number(value.split('.')[0]) === 127;
+  if (kind === 6) {
+    // `::ffff:127.0.0.1` is the same address as `127.0.0.1`; other IPv6 is not loopback.
+    const mapped = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(value);
+    return mapped ? Number(mapped[1].split('.')[0]) === 127 : false;
+  }
+  return false;
 }
 
 /** Constant-time bearer check. Length is compared first because timingSafeEqual requires it. */
@@ -311,6 +366,59 @@ export function createRateLimiter({ limit, windowMs = 60_000, now = () => Date.n
 }
 
 /**
+ * Bounded failed-auth throttle, per client (#47).
+ *
+ * The request limiter only runs after a token check, so before this a caller could
+ * hammer 401s forever. After `limit` failures the client is blocked for a backoff
+ * that doubles with each further trip (1s, 2s, 4s … capped), and a success clears
+ * the record so a user who finally types the right token is not locked out. In-memory
+ * like the rate limiter: one process, low volume.
+ */
+export const DEFAULT_AUTH_FAILURE_LIMIT = 5;
+
+export function createAuthThrottle({
+  limit = DEFAULT_AUTH_FAILURE_LIMIT,
+  windowMs = 60_000,
+  baseBackoffSec = 1,
+  maxBackoffSec = 900,
+  now = () => Date.now(),
+} = {}) {
+  const entries = new Map();
+  const blocked = (entry, at) => entry.blockedUntil > at;
+  const retryAfter = (entry, at) => Math.max(1, Math.ceil((entry.blockedUntil - at) / 1000));
+  return {
+    /** Check before the token comparison so a blocked client never reaches the compare. */
+    check(key) {
+      const at = now();
+      const entry = entries.get(key);
+      if (!entry || !blocked(entry, at)) return { allowed: true, retryAfterSec: 0 };
+      return { allowed: false, retryAfterSec: retryAfter(entry, at) };
+    },
+    /** Record a failed attempt; the trip itself already returns `allowed: false`. */
+    fail(key) {
+      const at = now();
+      let entry = entries.get(key);
+      if (!entry || (entry.blockedUntil <= at && at - entry.windowStart >= windowMs)) {
+        entry = { count: 0, windowStart: at, blockedUntil: 0, trips: 0 };
+        entries.set(key, entry);
+      }
+      entry.count += 1;
+      if (entry.count < limit) return { allowed: true, retryAfterSec: 0 };
+      entry.trips += 1;
+      const backoff = Math.min(maxBackoffSec, baseBackoffSec * 2 ** (entry.trips - 1));
+      entry.blockedUntil = at + backoff * 1000;
+      entry.count = 0;
+      entry.windowStart = at;
+      return { allowed: false, retryAfterSec: backoff };
+    },
+    succeed(key) {
+      entries.delete(key);
+    },
+    size: () => entries.size,
+  };
+}
+
+/**
  * Race a promise against a deadline. The losing solve keeps running and is
  * discarded - cancellation mid-Tesseract is not possible, and this helper does not
  * pretend otherwise. `onTimeout` runs when the deadline wins, which is how HTTP
@@ -352,6 +460,9 @@ export function createHttpServer({
   if (!core?.solve) throw new Error('createHttpServer needs the solve core');
   if (!config?.http) throw new Error('createHttpServer needs config.http');
   if (!token) throw new Error('createHttpServer needs a bearer token; there is no anonymous mode');
+  // A one-character token is accepted by `tokenMatches` but is an oracle with a
+  // guessable key; refuse it rather than pretend the bind is protected (#47).
+  assertHttpToken(token);
 
   const http = config.http;
   // The gate's limits come from config where they are configurable, and from the
@@ -371,6 +482,9 @@ export function createHttpServer({
       ? { title: config.reply.unresolved_title ?? null, text: config.reply.unresolved_text }
       : null;
   const limiter = createRateLimiter({ limit: http.rate_limit_per_min, now });
+  // Separate from the request limiter: before this, a wrong token never reached the
+  // limiter at all, so 401s were unlimited (#47). A correct token clears the record.
+  const authThrottle = createAuthThrottle({ now });
   // `reply.require_confidence` is a policy about answers, not a Pushbullet-only
   // setting: an answer that passed validation but was never corroborated is withheld
   // on both egresses (#42). It applies even with `reply.enabled = false`, because that
@@ -452,11 +566,31 @@ export function createHttpServer({
       if (req.method !== 'POST') {
         return send(res, 405, { error: 'method_not_allowed' }, { allow: 'POST' });
       }
+      const client = clientKey(req);
+      const gate = authThrottle.check(client);
+      if (!gate.allowed) {
+        return send(
+          res,
+          429,
+          { error: 'too_many_auth_failures', retryAfterSec: gate.retryAfterSec },
+          { 'retry-after': String(gate.retryAfterSec) }
+        );
+      }
       if (!tokenMatches(token, req.headers['authorization'])) {
+        const outcome = authThrottle.fail(client);
+        if (!outcome.allowed) {
+          return send(
+            res,
+            429,
+            { error: 'too_many_auth_failures', retryAfterSec: outcome.retryAfterSec },
+            { 'retry-after': String(outcome.retryAfterSec) }
+          );
+        }
         return send(res, 401, { error: 'unauthorized' }, { 'www-authenticate': 'Bearer' });
       }
+      authThrottle.succeed(client);
 
-      const budget = limiter.take(clientKey(req));
+      const budget = limiter.take(client);
       if (!budget.allowed) {
         return send(
           res,

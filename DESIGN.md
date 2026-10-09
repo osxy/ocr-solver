@@ -239,7 +239,10 @@ endpoint works by changing `baseUrl`, there is no dependency to track, and tests
   request is retried once without it instead of failing.
 - `extractJson` accepts bare JSON, fenced JSON and JSON embedded in prose, because models
   reliably emit all three.
-- `redact` keeps only a three-character key prefix, so log lines never carry a usable key.
+- `redact` keeps only a short, identifying prefix of a key, so a log line never carries a
+  usable one. The rule is no longer pattern-only: the shapes below are covered, *and* the app
+  registers every configured secret by value, so a key whose provider shape is not listed is
+  still redacted from the sinks (issue #45). What remains uncovered is named in §8.
 
 `src/model/fake.js` provides a scripted client. This is what makes the entire reasoning path
 testable without a provider key: self-consistency, the escalation ladder and the validator
@@ -464,10 +467,12 @@ tray = true
 notify_on_unresolved = true
 ```
 
-**Secrets are never written to `config.toml`.** The Pushbullet token and LLM key go to the
+**Secrets are never written to `config.toml`.** The Pushbullet token and key go to the
 Windows Credential Manager through a napi binding, with an ACL-restricted file as fallback,
 and environment variables (`PUSHBULLET_TOKEN`, `LLM_API_KEY`) for development on Linux. The
-logger redacts anything matching `o\.[A-Za-z0-9]{20,}`.
+logger redacts the configured secrets by value and the documented shapes (`sk-`, `gsk_`,
+`AIza`, `ghp_`/`github_pat_`, `sk_live_`/`pk_live_`, `xox…`, `AKIA`, `o.`, `Bearer`), plus
+values following a credential key name (`api_key=`, `Authorization:`, `token:`).
 
 **Runtime resolution, settled in M2 leg 2.** Two points the schema above left implicit are now
 fixed by the implementation and its tests:
@@ -591,9 +596,12 @@ signal is contact, not a puzzle, so a quiet week does not look like death.
 **As built in M2 leg 2.** The rotating logger already exists; the tray/notifications/setup dialog
 remain M3. On non-Windows platforms the log lives at
 `${XDG_STATE_HOME:-~/.local/state}/puzzlesolver/logs/app.log` (same 5 MB × 3 rotation). Every
-record passes through both existing redactors (`redact` and `redactPushbullet`) rather than a
-third copy, and a file sink that fails disables itself instead of throwing, matching the attempts
-store's rule that logging must never break solving.
+record passes through the single `redactRecord` (`redact` + `redactPushbullet` +
+`stripImageBytes`) rather than a third copy, and a file sink that fails disables itself instead
+of throwing, matching the attempts store's rule that logging must never break solving. The
+redactor is layered (registered secrets by value, then key-name assignments, then documented
+key shapes, then image bytes) rather than one regex; the false positive that mangled
+`task-assignment-failed` to `task-ass…` is fixed by a word-boundary lookbehind on the `sk-` rule.
 
 ### 4.15 HTTP ingress — `src/http/server.js` ✅ v2 (#15)
 
@@ -806,9 +814,22 @@ What each artefact gives a reader, and what was done about it:
 | Artefact | What it contains | What an attacker learns | Mitigation |
 |---|---|---|---|
 | **Log file** | operational lines, OCR transcripts, model failure text | the puzzles seen, the answers, and — if redaction failed — keys | every line passes through the single `redactRecord` (`redact` + `redactPushbullet` + `stripImageBytes`); image bytes are stripped |
-| **State database** | `attempts` rows (transcripts, model replies, error bodies), `pushes` (file names/URLs), `outbox` (answer hashes, delivery responses) | the puzzle history and what each tier answered | the same `redactRecord` runs inside `store.record` and the outbox writers, so a key in an upstream error body cannot persist |
+| **State database** | `attempts` rows (transcripts, model replies, error bodies), `pushes` (file names/URLs), `outbox` (answer hashes, delivery responses) | the puzzle history and what each tier answered | the same `redactRecord` runs inside `store.record` and the outbox writers, so a configured key or a documented shape in an upstream error body cannot persist |
 | **Config file** | non-secret settings only | the models, base URL, retention, and whether logging is on | secrets are rejected at load; every credential lives in the environment or the credential store |
-| **Credential store** | the Pushbullet token and the LLM key | the account, if the file is not `0600` | `describeSecret` exposes only `{ present, source, hint }`; a world-readable fallback file warns |
+| **Credential store** | the Pushbullet token, the model key and the HTTP token | the account, if the file is not `0600` | `describeSecret` exposes only `{ present, source, hint }`; a world-readable fallback file warns and is tightened to `0600` on the next write; a file that cannot be parsed is reported and never overwritten (issue #46) |
+
+**Redaction is enforced, but it is not omniscience (issue #45).** Both sinks call the one
+`redactRecord`, so there is no second rule set to drift. It redacts, in order: the exact values
+of every secret this process resolved (`registerSecrets`, applied longest-first), values that
+follow a credential key name (`Authorization`, `x-api-key`, `api_key=`, `token:`, …), and the
+documented value shapes (`sk-`, `gsk_`, `AIza`, `ghp_`/`github_pat_`, `sk_live_`/`pk_live_`,
+`xox…`, `AKIA`, `o.`). The `sk-` rule carries a word-boundary lookbehind, so ordinary
+hyphenated words are not corrupted. **The residual gap, stated honestly:** a secret that was
+never resolved by this process (so it was never registered) and that neither follows a known
+key name nor matches a known shape can still pass. Values shorter than eight characters are not
+registered by value because replacing them would shred ordinary text; every real credential is
+longer. The guarantee is therefore “a configured key cannot reach the log or the store”, not the
+older “no key of any kind can”.
 
 **Retention is enforced, not just documented.** On startup the app prunes inbox files and
 `attempts` rows older than `storage.retain_days`. `pushes` and `outbox` are deliberately kept:
@@ -831,8 +852,10 @@ execution:
 
 | Control | What it stops | Where |
 |---|---|---|
-| Bind `127.0.0.1` by default; loud warning otherwise | reachability from the network | `config.http.bind`, `createHttpServer.start` |
+| Bind `127.0.0.1` by default; loud warning otherwise | reachability from the network | `config.http.bind`, `createHttpServer.start`, `isLoopbackHost` |
 | Mandatory `Authorization: Bearer`, compared with `timingSafeEqual` | anonymous use, token guessing | `tokenMatches` |
+| Minimum token length and weak-value rejection at startup | a guessable one-character or dictionary token | `httpTokenProblem`, `createApp`, `createHttpServer` (#47) |
+| Bounded failed-auth count with doubling backoff per client -> `429` + `Retry-After` | unlimited 401s against a bound endpoint | `createAuthThrottle` (#47) |
 | Streaming body cap (default 5 MiB) | memory exhaustion | `readBodyCapped` |
 | Shared magic-byte/decode/width/pixel gate | a body that is not a real image, or a tiny file that decodes to a pixel bomb | `validateImageBuffer` |
 | Fixed-window rate limit | credit burn from a loop | `createRateLimiter` |
@@ -1255,8 +1278,10 @@ tracked template `config/llm.env.example` holds no secrets, and `.gitignore` exc
 `*.env` and `llm.env`. For live testing the key file lives outside the repository
 (`~/.config/puzzlesolver/env`, mode 600) and is sourced for a single command, so it
 reaches neither the project directory, shell history, nor a session transcript. The
-`redact` helper additionally guarantees a key can never reach a log line even inside an
-upstream error body.
+`redactRecord` helper guarantees that a *configured* key cannot reach a log line or the
+attempts table, including inside an upstream error body: every secret this process resolves is
+registered by value, and the documented key shapes are matched by pattern as a second layer.
+The residual gap is stated in §8.
 
 ### M4 results (corpus growth and accuracy)
 

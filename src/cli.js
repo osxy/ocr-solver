@@ -423,6 +423,7 @@ if (argv[0] === 'accuracy') {
     if (
       err?.name === 'MissingTokenError' ||
       err?.name === 'MissingHttpTokenError' ||
+      err?.name === 'WeakHttpTokenError' ||
       err?.name === 'SetupCancelledError' ||
       err?.name === 'SetupFailedError'
     ) {
