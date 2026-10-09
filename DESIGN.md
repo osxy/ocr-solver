@@ -582,9 +582,24 @@ The write is atomic (temp file in the same directory, then rename) and the previ
 to `config.toml.bak` first, so a bad edit is recoverable without a hand-kept copy. Only values
 that differ from `DEFAULTS` are written (`configToOverrides`), because the file is documented as an
 override of the defaults: copying every key would pin today's defaults in the file, so a later
-release could not change one. Unknown keys and comments are not preserved — the file is rewritten,
-which is the honest trade for a settings editor and is why the backup is mandatory rather than
-nice-to-have.
+release could not change one.
+
+**The editor edits the file in place (issue #69).** Re-serialising the parsed config discarded
+every comment, blank line, key order and spacing choice the user made — and the file is documented
+as hand-editable, so the first GUI save destroyed the user's annotations. `writeConfigAtomically`
+now locates the changed key in the raw bytes with a TOML-aware scanner and replaces only that
+value; every other byte is preserved. The scanner (`locateConfigStatements` / `editConfigInPlace`)
+tracks the current `[section]`, skips comment lines and the inside of strings, and jumps whole
+multi-line values, so a commented-out key (`# port = 8765`) is not the real one and a `key =`
+inside a value string is not an assignment. A key absent from the file is inserted at the end of
+its section (the header is created when needed), and a missing file is still written with
+`stringify` because there is nothing to preserve. When the scanner meets a construct it cannot
+locate safely — a value that spans more than one line, an array of tables (`[[...]]`), a duplicate
+key — it throws `ConfigEditError` and the writer leaves the file untouched. It never falls back to
+re-serialising, because a silent rewrite is exactly the bug. The single-difference test in
+`tests/settings.test.js` ("changing one setting leaves every other line byte-identical") compares
+the two files line by line and requires exactly one changed line; its mutation (re-serialising in
+the writer) is confirmed red.
 
 **Restart semantics are labelled, not guessed.** The descriptors carry `restart`, and the editor,
 the dialog and `config set` all name which changes apply. A setting is `restart: false` only when

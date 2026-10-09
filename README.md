@@ -230,8 +230,13 @@ refuses to start with. Everything else is checked with the same `validateConfig`
 loader uses, then written **atomically** — a temp file renamed over the old one, with the
 previous file kept as `config.toml.bak`. Only values that differ from the built-in
 defaults are written, so the file stays an override rather than pinning every default. A
-rejected value names the setting and writes nothing at all, so the editor cannot leave a
-config that stops the app from starting.
+save **edits the file in place**: it changes only the line for the setting you changed and
+leaves every comment, blank line, key order and spacing exactly as it was, so a
+hand-annotated `config.toml` is safe to keep editing by hand. A value the editor cannot
+locate safely — a value spanning more than one line, an array of tables — is refused with
+the reason and the file is left untouched, never silently rewritten. A rejected value
+names the setting and writes nothing at all, so the editor cannot leave a config that
+stops the app from starting.
 
 The editor covers the HTTP ingress too — `http.enabled`, `http.bind`, `http.port`,
 `http.rate_limit_per_min`, `http.timeout_ms`, `http.max_body_bytes`, `http.max_queue`,

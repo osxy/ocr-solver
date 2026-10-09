@@ -19,11 +19,13 @@ import { join } from 'node:path';
 import { ConfigError, loadConfig, validateConfig } from '../src/config.js';
 import { verifyWebUiPassword } from '../src/ui/access.js';
 import {
+  ConfigEditError,
   SETTINGS,
   SettingValueError,
   applyLiveSettings,
   configToOverrides,
   createSettingsEditor,
+  editConfigInPlace,
   getSetting,
   parseSettingValue,
   writeConfigAtomically,
@@ -554,4 +556,202 @@ test('parseSettingValue accepts the human spellings and rejects the rest', () =>
 test('the multiline acknowledgement keeps its interior newlines', () => {
   const setting = getSetting('reply.unresolved_text');
   assert.equal(parseSettingValue(setting, '  line one\nline two  '), 'line one\nline two');
+});
+
+// ---------------------------------------------------------------------------
+// Editing the config in place (#69): comments, blank lines and order survive
+// ---------------------------------------------------------------------------
+
+/** A file with comments, blank lines, unusual spacing, non-alphabetical order, a
+ * commented-out key and a value containing `key =` inside a string. */
+const FIDELITY_CONFIG = [
+  '# my note about the file',
+  '',
+  '[solver]',
+  '# keep the voting sample count',
+  'self_consistency_n = 3   # inline note on the changed line',
+  'llm_text_model    = "gpt-4o-mini"    # unusual spacing',
+  '',
+  '[reply]',
+  'enabled = true',
+  '# port = 8765',
+  'note = "see port = 8765 above"',
+  '',
+  '[http]',
+  'enabled = false',
+  'port = 8765  # the real port',
+  '',
+].join('\n');
+
+/** Assert the two texts differ on exactly one line, and return that line. */
+function assertSingleLineDiff(before, after) {
+  const a = before.split('\n');
+  const b = after.split('\n');
+  assert.equal(a.length, b.length, 'the edit must not add or remove a line');
+  const differing = [];
+  for (let i = 0; i < a.length; i += 1) if (a[i] !== b[i]) differing.push(i);
+  assert.equal(
+    differing.length,
+    1,
+    `expected exactly one differing line, got ${differing.length}: ${JSON.stringify(differing.map((i) => [a[i], b[i]]))}`
+  );
+  return { index: differing[0], before: a[differing[0]], after: b[differing[0]] };
+}
+
+/** Assert every line of `before` still appears, in order, in `after`. */
+function assertLinesPreserved(before, after) {
+  const a = before.split('\n');
+  const b = after.split('\n');
+  let cursor = 0;
+  for (const line of a) {
+    while (cursor < b.length && b[cursor] !== line) cursor += 1;
+    assert.ok(cursor < b.length, `original line ${JSON.stringify(line)} is missing from the edited file`);
+    cursor += 1;
+  }
+}
+
+/** An editor over a written config file, so the writer can read it back. */
+function editorOverConfig(t, text, overrides = {}) {
+  const dir = tempDir(t);
+  const path = join(dir, 'config.toml');
+  writeFileSync(path, text);
+  const editor = createSettingsEditor({
+    config: validateConfig({}).config,
+    configPath: path,
+    saveSecrets: async () => ({ saved: [] }),
+    ...overrides,
+  });
+  return { editor, path, dir };
+}
+
+test('#69: changing one setting leaves every other line byte-identical', async (t) => {
+  const { editor, path } = editorOverConfig(t, FIDELITY_CONFIG);
+  editor.set('solver.self_consistency_n', '5');
+  const result = await editor.save();
+  assert.equal(result.saved, true);
+
+  const after = readFileSync(path, 'utf8');
+  const diff = assertSingleLineDiff(FIDELITY_CONFIG, after);
+  assert.equal(diff.before, 'self_consistency_n = 3   # inline note on the changed line');
+  assert.equal(diff.after, 'self_consistency_n = 5   # inline note on the changed line');
+  // And the specific content the issue calls out is still there, not merely "a comment".
+  assert.match(after, /^# my note about the file$/m);
+  assert.match(after, /^# keep the voting sample count$/m);
+  assert.match(after, /^# port = 8765$/m);
+  assert.match(after, /^note = "see port = 8765 above"$/m);
+  assert.match(after, /^llm_text_model    = "gpt-4o-mini"    # unusual spacing$/m);
+  assert.match(after, /^port = 8765  # the real port$/m);
+});
+
+test('#69: an inline comment on the changed line survives', async (t) => {
+  const { editor, path } = editorOverConfig(t, FIDELITY_CONFIG);
+  editor.set('http.port', '9999');
+  await editor.save();
+  const after = readFileSync(path, 'utf8');
+  assert.match(after, /^port = 9999  # the real port$/m);
+});
+
+test('#69: a commented-out key is not mistaken for the real one', async (t) => {
+  const text = '[http]\n# port = 8765\nenabled = false\n';
+  const { editor, path } = editorOverConfig(t, text);
+  editor.set('http.port', '9999');
+  await editor.save();
+  const after = readFileSync(path, 'utf8');
+  assert.match(after, /^# port = 8765$/m, 'the comment must stay a comment');
+  assert.match(after, /^port = 9999$/m, 'the real key must be inserted');
+  assertLinesPreserved(text, after);
+  // The commented-out line was not turned into the setting.
+  assert.equal(after.includes('# port = 9999'), false);
+});
+
+test('#69: a same-named key in another section is untouched', async (t) => {
+  const text = '[reply]\nenabled = true\n\n[http]\nenabled = false\n';
+  const { editor, path } = editorOverConfig(t, text);
+  editor.set('http.enabled', 'true');
+  await editor.save();
+  const after = readFileSync(path, 'utf8');
+  const diff = assertSingleLineDiff(text, after);
+  assert.equal(diff.after, 'enabled = true');
+  assert.match(after, /\[reply\]\nenabled = true/, 'the reply section keeps its own enabled');
+});
+
+test('#69: a new setting is inserted at the end of its section', async (t) => {
+  const text = '[ui]\ntray = true\n\n[reply]\ntitle = "Antwoord"\n';
+  const { editor, path } = editorOverConfig(t, text);
+  editor.set('ui.notify_on_unresolved', 'false');
+  await editor.save();
+  const after = readFileSync(path, 'utf8');
+  assert.match(after, /\[ui\]\ntray = true\nnotify_on_unresolved = false\n/);
+  assertLinesPreserved(text, after);
+});
+
+test('#69: a multi-line array value refuses instead of being collapsed', async (t) => {
+  const text = '[ocr]\nlanguages = [\n  "nld",\n  "eng",\n]\n';
+  const { editor, path } = editorOverConfig(t, text);
+  editor.set('ocr.languages', 'nld, eng');
+  await assert.rejects(() => editor.save(), ConfigEditError);
+  assert.equal(readFileSync(path, 'utf8'), text, 'a refused edit writes nothing');
+  assert.equal(existsSync(`${path}.bak`), false, 'a refused edit takes no backup');
+});
+
+test('#69: an array-of-tables refuses instead of being rewritten', async (t) => {
+  const text = '[[extra]]\nname = "one"\n\n[ui]\ntray = true\n';
+  const { editor, path } = editorOverConfig(t, text);
+  editor.set('ui.notify_on_unresolved', 'false');
+  await assert.rejects(() => editor.save(), /array of tables/);
+  assert.equal(readFileSync(path, 'utf8'), text, 'a refused edit writes nothing');
+  assert.equal(existsSync(`${path}.bak`), false);
+});
+
+test('#69: a multi-line string value refuses instead of being rewritten', async (t) => {
+  const text = '[reply]\nunresolved_text = """\nline one\nline two\n"""\n';
+  const { editor, path } = editorOverConfig(t, text);
+  editor.set('reply.unresolved_text', 'line one\nline two');
+  await assert.rejects(() => editor.save(), /spans more than one line/);
+  assert.equal(readFileSync(path, 'utf8'), text);
+});
+
+test('#69: the locator ignores a commented key and a key = inside a string', () => {
+  const text = '[http]\n# port = 8765\nnote = "see port = 8765 above"\nport = 8765  # real\n';
+  const out = editConfigInPlace(text, [{ path: ['http', 'port'], value: 9999 }], { http: { port: 9999 } });
+  assert.match(out, /^# port = 8765$/m);
+  assert.match(out, /^note = "see port = 8765 above"$/m);
+  assert.match(out, /^port = 9999  # real$/m);
+});
+
+test('#69: a nested [section.sub] header does not shadow the target section', () => {
+  const text = '[solver]\ntier0 = true\n\n[solver.sub]\ntier0 = false\n';
+  const out = editConfigInPlace(text, [{ path: ['solver', 'tier0'], value: false }], { solver: { tier0: false } });
+  assert.match(out, /\[solver\]\ntier0 = false\n/);
+  assert.match(out, /\[solver\.sub\]\ntier0 = false\n/, 'the nested table is untouched');
+});
+
+test('#69: a brand-new section is created without touching existing content', async (t) => {
+  const text = '[solver]\ntier0 = false\n';
+  const { editor, path } = editorOverConfig(t, text);
+  editor.set('ui.notify_on_unresolved', 'false');
+  await editor.save();
+  const after = readFileSync(path, 'utf8');
+  assertLinesPreserved(text, after);
+  assert.match(after, /\[ui\]\nnotify_on_unresolved = false\n/);
+  assert.equal(after.startsWith('[solver]\ntier0 = false\n'), true, 'the existing section is first, unchanged');
+});
+
+test('#69: a reset-to-default key absent from the file is not inserted', async (t) => {
+  const text = '[reply]\nenabled = true\n';
+  const { editor, path } = editorOverConfig(t, text);
+  // `reply.min_interval_sec` defaults to 3; setting it back to 3 is not an override, so
+  // the file must stay exactly as it was.
+  editor.set('reply.min_interval_sec', '3');
+  await editor.save();
+  assert.equal(readFileSync(path, 'utf8'), text);
+});
+
+test('#69: CRLF line endings are preserved outside the changed line', async (t) => {
+  const text = '# note\r\n[http]\r\nport = 8765  # inline\r\nenabled = true\r\n';
+  const { editor, path } = editorOverConfig(t, text);
+  editor.set('http.port', '9999');
+  await editor.save();
+  const after = readFileSync(path, 'utf8');
+  assert.equal(after, '# note\r\n[http]\r\nport = 9999  # inline\r\nenabled = true\r\n');
 });
