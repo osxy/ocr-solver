@@ -1,87 +1,266 @@
 # PuzzleSolver
 
-A Windows background app that watches Pushbullet for puzzle images, reads them,
-solves them, and replies with the answer.
+A Windows background app that watches Pushbullet for incoming puzzle images, reads
+them, solves the Dutch-language puzzle, and replies with the answer as a Pushbullet
+note.
 
 The puzzles are Dutch natural-language captchas: low-resolution coloured text on
 coloured noise, asking things like *"Hoeveel kleuren in lijst wit kiwi hoofd paars
-olifant aap?"* (answer `2`) or *"Wat is acht min een?"* (answer `7`).
+olifant aap?"* (answer `2`) or *"Wat is acht min een?"* (answer `7`). Most are solved
+locally and offline; a language model is consulted only when the offline lexicon and
+arithmetic cannot answer.
 
-See **[DESIGN.md](./DESIGN.md)** for the full design.
+It does **not** type the answer into a form, does not solve image-grid ("select all
+bicycles") captchas, and never sends an answer it could not validate. A puzzle it
+cannot answer with confidence sends **nothing** (see
+[What happens to a puzzle](#what-happens-to-a-puzzle)).
 
 ## Status
 
-**M0 complete (offline solver) and M1 complete (model reasoner tiers), verified live.**
-126 tests: 120 pass offline with no network or key, 6 more pass against a real provider.
+**0.1.0 — a pre-release.** The offline solver, model tiers, Pushbullet listener and
+reply path are implemented and tested. The Windows install/tray/autostart path ships
+but has never run on a real Windows machine (see [Known limitations](#known-limitations)).
+Work is tracked in the [issue tracker](https://github.com/osxy/ocr-solver/issues); the
+design and its reasoning live in [DESIGN.md](./DESIGN.md).
 
-All three sample puzzles are solved correctly with no network access, no Pushbullet
-token and no API key — the lexicon supplies the semantics:
+## Install
 
-| Puzzle | Class | Answer |
-|---|---|---|
-| `Hoeveel kleuren in lijst wit kiwi hoofd paars olifant aap?` | count | `2` |
-| `In de lijst lijst hoofd buik citroen borst olifant paard wat is de/het eerste lichaamsdeel?` | ordinal-pick | `hoofd` |
-| `Wat is acht min een?` | arithmetic | `7` |
+Install from a **release**, not from source. From the
+[v0.1.0 pre-release](https://github.com/osxy/ocr-solver/releases/tag/v0.1.0) download
+`PuzzleSolver-0.1.0-win-x64.zip` (~81 MiB) and its `.sha256` checksum. The ZIP carries
+its own pinned `node.exe`, so Node does not have to be installed.
 
-A puzzle outside the lexicon falls through to the model tiers — see "Model tiers" below.
+The binary is **unsigned**, so **Windows SmartScreen will warn on first run** and the
+SHA256 checksum is the only integrity signal. Verify it before extracting:
 
-Measured against a real provider on the real corpus images (`scripts/live-eval.js`):
+```powershell
+Get-FileHash .\PuzzleSolver-0.1.0-win-x64.zip -Algorithm SHA256
+Get-Content .\PuzzleSolver-0.1.0-win-x64.zip.sha256
+```
 
-| Tier | Result |
+The two hashes must match. (On Linux or macOS:
+`sha256sum -c PuzzleSolver-0.1.0-win-x64.zip.sha256`.) If Windows flags the download,
+`Unblock-File .\PuzzleSolver-0.1.0-win-x64.zip` first.
+
+Then extract the ZIP and, from the extracted folder, run the installer:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+It installs per-user — no administrator prompt, nothing in `Program Files` or `HKLM`:
+it copies the app to `%LOCALAPPDATA%\Programs\PuzzleSolver`, writes
+`PuzzleSolver.vbs` (a launcher with no console window), and registers a Task Scheduler
+task named `PuzzleSolver` that starts the app at logon (20 s delay, restart on failure).
+
+> The install, tray and task registration have **never executed on a real Windows
+> machine**. See [Known limitations](#known-limitations).
+
+## Configure
+
+**A missing config file is normal.** Every setting has a working default, so the app
+starts with no config at all. When you want to change something, the file is
+`%APPDATA%\PuzzleSolver\config.toml` on Windows or
+`${XDG_CONFIG_HOME:-~/.config}/PuzzleSolver/config.toml` elsewhere; `--config <path>`
+(or `$PUZZLESOLVER_CONFIG`) overrides it. An unknown key warns and is ignored; a *bad*
+value (wrong type, unknown enum, negative interval) fails loudly and names the key.
+
+The options that matter, with their defaults:
+
+```toml
+[pushbullet]
+poll_interval_sec = 60          # the stream is primary; this is the fallback poll
+history_mode = "ignore"         # "ignore" pre-existing pushes, or "watermark"
+[solver]
+tier0 = true                    # offline lexicon + arithmetic
+offline_only = false            # true = never call a model; no image leaves the machine
+escalate_to_vision = true
+llm_text_model = "gpt-4o-mini"
+llm_vision_model = "gpt-4o"
+llm_base_url = "https://api.openai.com/v1"
+self_consistency_n = 3          # samples for the voting classes (ordinal-pick, unknown)
+breaker_threshold = 3           # consecutive model failures before a tier is skipped
+breaker_cooldown_sec = 600
+[reply]
+enabled = true
+require_confidence = true       # only send answers every tier agreed on
+title = "Antwoord"
+min_interval_sec = 3
+max_per_hour = 20
+[storage]
+retain_days = 7
+log_images = false              # opt-in reference to an UNRESOLVED image only
+```
+
+`DEFAULTS` in [`src/config.js`](./src/config.js) is the full schema; `DESIGN.md` §4.13
+explains the defaults.
+
+### Secrets go in the environment or the credential store
+
+The Pushbullet token and the model key are **not** config keys. A config key whose name
+looks like a secret (`*token*`, `*key*`, `*secret*`, `*password*`) is rejected at load,
+because a config file ends up in backups and support threads. Set them in the
+environment:
+
+```powershell
+$env:PUSHBULLET_TOKEN = "o.xxxxxxxx"
+$env:LLM_API_KEY       = "sk-xxxxxxxx"
+```
+
+…or write the credential-store file at `%APPDATA%\PuzzleSolver\credentials.json` on
+Windows or `${XDG_CONFIG_HOME:-~/.config}/puzzlesolver/credentials.json` elsewhere:
+
+```json
+{ "pushbullet_token": "o.xxxxxxxx", "llm_api_key": "sk-xxxxxxxx" }
+```
+
+The Pushbullet token is required; without it the service refuses to start. The model
+key is optional: with none, the app runs offline-only (Tier 0). On Windows the
+Credential Manager is tried before the file, but its provider is **unverified** (see
+[Known limitations](#known-limitations)); the file store is the tested fallback.
+
+## Run
+
+### Tray / service mode (the Windows default)
+
+The logon task starts the app at logon. To start it now, run the launcher
+`%LOCALAPPDATA%\Programs\PuzzleSolver\PuzzleSolver.vbs`. The tray menu:
+
+| Item | What it does |
 |---|---|
-| Offline (lexicon + arithmetic) | **3/3**, zero model calls |
-| Text model, on transcripts carrying real OCR errors | **3/3** |
-| Vision model, OCR suppressed — reads the raw noisy 44px puzzle | **3/3** |
+| **Status** | Logs the current connection / listener / accuracy state |
+| **Accuracy** | Shows the corpus and recorded-traffic summary |
+| **Pause** / **Resume** | Stops / starts the *listener*, not the process |
+| **Solve last image** | Re-runs the pipeline on the newest image in the inbox — tuning without a live push |
+| **Open log** / **Open config** | Opens `app.log` / `config.toml` |
+| **Quit** | Shuts down cleanly |
 
-M2 (Pushbullet listener, reply path, state, config/secrets) is complete. M3 adds the
-tray app with `--headless` mode, the quiet-listener watchdog, first-run secret setup,
-autostart and the Windows install/uninstall scripts under [`packaging/`](./packaging).
-The M3 logic is tested offline; the native Windows execution (`wscript`, `schtasks`,
-the Credential Manager, the tray widget) is unverified on Linux.
+The icon is **normal (coloured)** while the listener is in contact with Pushbullet, and
+turns **grey after 10 minutes with no contact** — no socket event and no completed poll.
+Grey means "the listener may be dead", so a silently dropped socket is visible instead
+of invisible. It does **not** mean "no puzzle arrived": a quiet week with a healthy
+socket stays normal, and a paused listener never greys, because an explicitly paused
+listener is not a silently dead one.
+
+### Headless mode
+
+For an unattended machine, or when the tray cannot start:
+
+```powershell
+%LOCALAPPDATA%\Programs\PuzzleSolver\node.exe %LOCALAPPDATA%\Programs\PuzzleSolver\app\src\cli.js listen --headless
+```
+
+`--headless` skips the tray and every notification. `ui.tray = false` in the config does
+the same for the launcher.
+
+### Solve a local image (no Pushbullet needed)
+
+This is the easiest way to check an install: it needs no token and no network. From a
+source checkout:
 
 ```bash
-# run the service with the tray (Windows default)
-puzzlesolver listen
-
-# run unattended: no tray, no notifications
-puzzlesolver listen --headless
+node src/cli.js corpus                       # solve the sample puzzles
+node src/cli.js "path/to/puzzle.png"         # one image
+node src/cli.js corpus/needs-model --fake-answer Amsterdam   # model path, no key
 ```
 
-## Quick start
+Each solved image prints its OCR transcript and the winning tier; e.g.
+`001-count-kleuren.png` ends with `=>   answer "2" via tier0:count (1/1 agree)`.
 
-```bash
-npm install
-npm test                                                    # all 363 tests (offline, no key)
-node src/cli.js corpus                                      # solve the sample puzzles
-node src/cli.js corpus --json                               # machine-readable output
-node src/cli.js "corpus/001-count-kleuren.png" --dump-masks /tmp/masks
+With the packaged app, replace `node src/cli.js` with
+`%LOCALAPPDATA%\Programs\PuzzleSolver\node.exe %LOCALAPPDATA%\Programs\PuzzleSolver\app\src\cli.js`.
 
-# accuracy: offline corpus + whatever real traffic the store has recorded
-npm run accuracy
-node src/cli.js accuracy --no-images                        # text fixtures only (fast)
+### Check accuracy, and read the caveat
 
-# model tiers, without needing a provider key
-node src/cli.js corpus/needs-model --fake-answer Amsterdam
+`node src/cli.js accuracy` runs the committed corpus through real OCR plus whatever
+real traffic the store has recorded (`--no-images --no-store` is the fast, text-only
+form). The report is grouped by provenance and **never blended**, because the numbers
+mean different things. Of the 287 corpus items, 281 are **synthetic** images and text
+from our own generator — which refuses to write an image the pipeline cannot read — so
+the synthetic figure is a **regression guard, not real-world accuracy**. The only real
+evidence is 3/3 on the three real images. The CLI prints this caveat; the tray blends
+corpus and recorded traffic into one line (a known follow-up).
 
-# real model tiers
-LLM_API_KEY=sk-... node src/cli.js corpus --use-model
+## What happens to a puzzle
 
-# record every attempt, then read them back
-node src/cli.js corpus/needs-model --fake-answer Amsterdam --store run.db
-node src/cli.js --attempts run.db
+A file push arrives over the Pushbullet stream (a 60 s poll is the fallback). The image
+is downloaded, cleaned (adaptive threshold → denoise → upscale), read by offline
+Tesseract in Dutch, repaired, and parsed into a puzzle class. **Tier 0** answers offline
+for the classes the lexicon and arithmetic cover; anything else escalates to a **text
+model**, then a **vision model** over the image itself if OCR failed. Every answer,
+offline or model, must pass the validator for its class, and model answers are
+*opinions* needing a strict majority. The validated answer is posted back as a note
+push, subject to rate and idempotency guards.
+
+### Why no reply can arrive
+
+A missing reply is usually deliberate, not a bug:
+
+- **Unresolved sends nothing.** If no tier produces a valid, corroborated answer, the
+  puzzle is reported unresolved locally and Pushbullet stays silent.
+- **`reply.require_confidence = true` (the default)** also suppresses an answer that
+  passed validation but was never corroborated — for example an offline count whose
+  word list contained an unreadable entry. Setting it to `false` trades accuracy for
+  coverage.
+- **`reply.enabled = false`** means the app still solves locally but never replies.
+- **`history_mode = "ignore"` (the default)** ignores pushes that existed before the
+  app started. Set `"watermark"` to answer from a stored mark.
+
+## Troubleshooting
+
+**The tray does not start.** Run `listen --headless` (the fallback that needs no display
+and no `systray2`), or set `ui.tray = false`. The error itself names `--headless` when
+`systray2` cannot be loaded.
+
+**No replies at all.** Check, in order: (1) a Pushbullet token is present
+(`PUSHBULLET_TOKEN`, `--token`, or `credentials.json`) — without it the service refuses
+to start; (2) `reply.enabled` is `true` and `reply.require_confidence` is not
+suppressing a merely validated answer; (3) the log and the listener state — a **grey
+tray icon** means the listener has been quiet for 10 minutes, and the stream reconnects
+with backoff while the 60 s poll is the second path; (4) the puzzle is not simply
+**unresolved** — a model tier needs a key, and `offline_only = true` disables the model
+tiers entirely.
+
+**Where things live.**
+
+| What | Windows | Linux/macOS |
+|---|---|---|
+| Install | `%LOCALAPPDATA%\Programs\PuzzleSolver` | — |
+| Config | `%APPDATA%\PuzzleSolver\config.toml` | `${XDG_CONFIG_HOME:-~/.config}/PuzzleSolver/config.toml` |
+| Credentials | `%APPDATA%\PuzzleSolver\credentials.json` | `${XDG_CONFIG_HOME:-~/.config}/puzzlesolver/credentials.json` |
+| Log | `%LOCALAPPDATA%\PuzzleSolver\logs\app.log` | `${XDG_STATE_HOME:-~/.local/state}/puzzlesolver/logs/app.log` |
+| State DB | `%LOCALAPPDATA%\PuzzleSolver\state.db` | `${XDG_DATA_HOME:-~/.local/share}/puzzlesolver/state.db` |
+| Inbox | `%LOCALAPPDATA%\PuzzleSolver\inbox` | `${XDG_DATA_HOME:-~/.local/share}/puzzlesolver/inbox` |
+
+The log rotates at 5 MB × 3. `storage.retain_days` (default 7) prunes the inbox and old
+attempt rows on startup.
+
+**Uninstall.**
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\Programs\PuzzleSolver\uninstall.ps1"
 ```
 
-Example output:
+It removes the scheduled task first, then the install folder and the two per-user data
+folders. Manually: `schtasks /Delete /TN PuzzleSolver /F`, then delete
+`%LOCALAPPDATA%\Programs\PuzzleSolver`, `%LOCALAPPDATA%\PuzzleSolver` and
+`%APPDATA%\PuzzleSolver`.
 
-```
-001-count-kleuren.png
-  ocr  adaptive_25_020      psm6   83%  Hoeveel kleuren in lijst wit kiwi hoofd paars olifant aap?
-  cand count         tier0=2 valid=true
-  =>   answer "2" via tier0:count
-```
+## Known limitations
 
-`--dump-masks` writes the cleaned black-and-white bitmaps so you can see exactly
-what OCR was given.
+- **Pre-release.** 0.1.0 is a pre-release: expect rough edges and no stability promise.
+- **The Windows-specific paths have never executed on a real Windows machine.** The
+  tray widget, the `schtasks` registration and restart behaviour, the Credential
+  Manager, the install/uninstall PowerShell and the packaged `node.exe` are written and
+  tested at their seams, but this project is developed on Linux. Treat the first Windows
+  install as unverified; `--headless` is the supported fallback.
+- **The first-run setup dialog is not wired.** The credential dialog's logic exists and
+  is tested, but the tray does not present it yet. Configure secrets through the
+  environment or the credential-store file (above).
+- **Synthetic accuracy is not real accuracy.** See
+  [Check accuracy](#check-accuracy-and-read-the-caveat).
+- **No form typing, no image grids.** It reads an image and replies; it does not act in
+  a browser.
 
 ## How it works
 
@@ -90,216 +269,36 @@ image ──▶ adaptive threshold ──▶ connected-component filter ──�
       ──▶ Tesseract (nld, offline) ──▶ OCR repair ──▶ parse ──▶ solve ──▶ validate
 ```
 
-Three things make it work, each established by measurement rather than assumption
-(details and numbers in DESIGN.md):
+Three measurements drive the design: local adaptive thresholding beats a global cut
+(the noise darkens toward one side), denoising happens before upscaling (upscaling first
+turns single-pixel noise into blobs), and a per-class validation gate is what stops a
+confidently wrong answer. The offline lexicon is what lets the common puzzles be solved
+with no model call at all.
 
-1. **Local adaptive thresholding, not a global one.** The noise gets darker toward
-   one side of the image, so no single global cut point separates ink everywhere.
-2. **Connectivity-based denoising last, upscaling before OCR.** Noise is isolated
-   pixels; glyph strokes are connected components with many neighbours.
-3. **A validation gate per puzzle class.** An answer is only accepted if it has the
-   shape its question demands (`hoeveel` → a bare integer; `eerste <categorie>` → a
-   word that actually appears in the puzzle's own list). This also defends against
-   Tesseract reporting 95% confidence for a *blank* transcript.
+The full architecture diagram, the tier and escalation rules, the auto-router decisions
+and the numbers behind them are in **[DESIGN.md](./DESIGN.md)** (§2–§5, §4.7–4.8). That
+reasoning lives in one place rather than being duplicated here.
 
-The lexicon is what makes `count` and `ordinal-pick` solvable entirely offline: it
-knows that `wit` and `paars` are colours and `hoofd`, `buik` and `borst` are body
-parts. A language model is only needed for puzzle shapes the lexicon does not cover.
+## Development
 
-## Model tiers
-
-When the offline tiers cannot answer, the puzzle escalates to a text model (reasoning
-over the transcript) and then a vision model (reasoning over the image itself).
-
-A model answer is **not** trusted to be self-consistent; it is trusted to produce the
-shape its puzzle demands. So every model answer passes the same validator as an offline
-one, plus three extra rules:
-
-- **Strict class holding** — if the offline parser already identified the puzzle shape,
-  the model is held to it, and `unknown` is never a fallback. Otherwise a model answering
-  `"twee"` to a `hoeveel` question would slip through as loose free text.
-- **Structural check** — an `ordinal-pick` answer must appear in the puzzle's own word list.
-- **Deterministic cross-check** — if the model calls a puzzle arithmetic, the offline
-  calculator recomputes it and overrules the model on disagreement.
-
-Tier 0, text and vision are then treated as **opinions needing a strict majority**. A
-non-confident offline answer (one whose word list contains an unreadable entry) must be
-corroborated rather than posted on its own, and a two-way split sends nothing at all.
-
-Sampling: one sample for `count`/`arithmetic` (at `temperature: 0`), three for
-`ordinal-pick`/`unknown` (at `0.3`, so the vote means something). Prompts live in
-`config/prompts/` and are re-read when their mtime changes, so they can be tuned without
-a restart.
-
-## Layout
-
-```
-src/
-  cli.js                    command line entry point
-  imaging/preprocess.js     adaptive threshold + connectivity denoise + upscale
-  ocr/recognize.js          offline Tesseract wrapper, result ranking
-  model/client.js           OpenAI-compatible chat over the built-in fetch
-  model/fake.js             scripted client, so the model path tests offline
-  solver/lexicon.js         Dutch domain words and categories
-  solver/transcript.js      OCR repair (conservative, dictionary-guided)
-  solver/numbers.js         Dutch number words, arithmetic
-  solver/puzzle.js          classification, parsing, offline solving
-  solver/validate.js        the acceptance gate
-  solver/prompts.js         prompt loading with mtime caching
-  solver/reason.js          text/vision tiers, self-consistency, arbitration
-  solver/pipeline.js        end-to-end orchestration
-  state/db.js               node:sqlite attempts log
-config/prompts/             editable prompts (no rebuild needed)
-corpus/                     real puzzles + expected answers
-corpus/needs-model/         a puzzle outside the lexicon (exercises the model path)
-corpus/synthetic/           generated images with known answers (M4)
-corpus/manifest.json        every item labelled real | synthetic | derived (M4)
-corpus/recorded/            solved/unresolved puzzles promoted to regressions (M4)
-scripts/tune-preprocessing.js  parameter sweep for the preprocessing constants
-```
-
-## Testing against a real provider
-
-Most tests need no key. The model tiers are covered by a scripted client, but that
-cannot tell you whether a real model actually reads these puzzles. For that there is
-an opt-in live test.
-
-Put the key **outside** the repository, so it never lands in the project directory, in
-shell history, or in a session transcript:
+Requires **Node.js ≥ 22.13.0** (`node:sqlite` is unflagged from 22.13.0). No build step;
+plain ESM.
 
 ```bash
-mkdir -p ~/.config/puzzlesolver
-cp config/llm.env.example ~/.config/puzzlesolver/env
-chmod 600 ~/.config/puzzlesolver/env
-$EDITOR ~/.config/puzzlesolver/env      # paste key, set base URL + models
+npm install
+npm test              # 363 tests, offline: no network, no token, no key
+npm run test:unit     # fast subset
+npm run test:corpus   # real images through real OCR, ~4s
+npm run test:live     # opt-in; skips unless LLM_API_KEY is set
 ```
 
-Then source it for a single command:
+The Windows package is built by CI (`.github/workflows/package.yml`, on
+`windows-latest`): it assembles `dist\payload`, zips it, checks the checksum and
+smoke-tests the extracted artifact. See `packaging/` and `DESIGN.md` §11.
 
-```bash
-set -a; . ~/.config/puzzlesolver/env; set +a
-npm run test:live
-timeout 300 node src/cli.js corpus/needs-model --use-model   # same thing by hand
-```
+[`AGENTS.md`](./AGENTS.md) holds the repo rules and the test/verification workflow;
+[`DESIGN.md`](./DESIGN.md) is the architecture reference.
 
-The live test skips cleanly when no key is set, so it never breaks a normal run. It
-checks that a real text model answers the out-of-lexicon fixture, that the reply
-honours the JSON contract, that the vision tier reads the preprocessed image when OCR
-yields nothing, that a confident offline answer still costs zero model calls, and that
-the key never appears in recorded call data.
+## License
 
-Sample counts are pinned to 1 in the live test, so a full run is a handful of requests.
-`scripts/live-eval.js` measures accuracy on the real corpus instead of the clean synthetic
-fixture, with `--verbose` to print every raw reply.
-
-### Two things live testing caught that offline tests could not
-
-**The completion budget was sized for the answer, not the narration.** `max_tokens: 300`
-looked ample for a ~20-token answer, but a routed reasoning model spent all of it narrating
-as plain content and was cut off before emitting any JSON — while reasoning correctly the
-whole time. Raising the budget to 1500 took text-on-damaged from **1/3 to 3/3** and vision
-from **2/3 to 3/3**. Truncation now also retries once at 3× the budget, and `finishReason`
-is recorded so a cut-off reply is distinguishable from a bad one.
-
-**A model declining to answer was postable.** Replying `onbekend` ("unknown") passed the
-loose `unknown` validator, which only checked length. Refusals are now rejected for every
-puzzle class.
-
-### Auto router: routed text tier, chosen vision model
-
-OpenRouter's auto router (`openrouter/auto`) picks a model per request, classified by
-task type against what the market actually spends on. It is wired up for the **text
-tier only**:
-
-```bash
-LLM_BASE_URL=https://openrouter.ai/api/v1
-LLM_TEXT_MODEL=openrouter/auto                    # routed
-LLM_VISION_MODEL=~google/gemini-flash-latest      # chosen
-LLM_COST_TIER=medium
-```
-
-Or from the CLI:
-
-```bash
-node src/cli.js corpus/needs-model \
-  --auto --cost-tier medium \
-  --vision-model '~google/gemini-flash-latest,~anthropic/claude-sonnet-latest'
-```
-
-**Why the text tier is routed.** Reading a transcript, reasoning in Dutch and emitting
-JSON is easy work, so letting the router pick per request is sensible and cheap.
-
-**Why the vision tier is chosen.** It runs *only* when OCR failed, so it is the single
-tier where model choice matters most — and an unset cost band defaults to the
-**cheapest** one, the opposite of what this tier needs. `--auto` therefore refuses to
-guess: it requires `LLM_VISION_MODEL` (or `--vision-model`) and prints verified options
-if it is missing.
-
-### Pinning a model without pinning it to a version
-
-A dated model name eventually gets retired. Two mechanisms avoid that:
-
-**Rolling aliases (`~`).** A `~`-prefixed slug carries an `alias_target` and always
-redirects to the newest model in its family, so `~google/gemini-flash-latest` stays
-current without going stale. The three below accept images and support structured
-outputs (verified against the live catalogue):
-
-| Alias | Resolution at time of writing |
-|---|---|
-| `~google/gemini-flash-latest` | `google/gemini-3.8-flash` |
-| `~anthropic/claude-sonnet-latest` | `anthropic/claude-sonnet-5.5` |
-| `~openai/gpt-mini-latest` | `openai/gpt-5.4-mini` |
-
-**Fallback chains.** Any model variable accepts a comma-separated list, which becomes
-OpenRouter's ordered fallback chain: the first entry is the deliberate choice, the rest
-run only on error, rate limit or downtime (max 3 — longer lists are rejected with a 400,
-so the client refuses them before sending).
-
-```bash
-LLM_VISION_MODEL=~google/gemini-flash-latest,~anthropic/claude-sonnet-latest
-```
-
-When a chain is present the request sends `models` and omits `model`, since the docs
-warn the two spellings cannot be combined.
-
-Three behaviours worth knowing before you rely on it:
-
-- **`allowed_models` can produce a `404`.** If the restrictions match no eligible
-  model the request fails with *"No models match your request and model restrictions"*.
-  That is treated as non-retryable, so it surfaces immediately rather than burning
-  retries, and the puzzle is reported unresolved.
-- **Self-consistency samples may land on different models.** For the 3-sample vote this
-  is arguably a feature — three *different* models agreeing is stronger evidence than
-  three samples of one. It does mean `temperature: 0` no longer implies repeatability,
-  so the attempts log records the model that actually answered each sample (plus the
-  provider and OpenRouter's routing report), which is the only way to tell what
-  disagreed afterwards.
-- **Cost is not predictable from the model list.** An auto slug reports a variable
-  price, since it depends on what gets chosen. Cap it with OpenRouter's
-  `provider.max_price` if that matters. A pinned vision model does have a known price.
-- **`allowed_models` applies to routed slugs only.** A pinned vision model ignores it,
-  which is intended — but worth knowing if you set it expecting it to constrain both.
-
-A trap the client guards against: `openrouter/auto` and `openrouter/auto-beta` each
-read their settings **only** under their own plugin id (`auto-router` and
-`auto-beta-router`). Settings under the other slug's id are *accepted but silently
-ignored*, so the wrong id looks like it worked and does nothing. The slug-to-plugin
-mapping lives in one place in `src/model/client.js` and is unit tested.
-
-**Checking the plumbing without spending anything.** Point the client at the real
-endpoint with a deliberately invalid key. It proves the wiring, the error path and the
-redaction are correct, and costs nothing:
-
-```bash
-LLM_API_KEY=sk-invalid-key-for-plumbing-check node src/cli.js corpus/needs-model --use-model
-```
-
-Secrets handling: `config/llm.env.example` contains no secrets and is the only env file
-tracked; `.gitignore` excludes `*.env` and `llm.env`. The app reads keys from the
-environment only and never writes them to disk.
-
-## Requirements
-
-Node.js >= 22 (developed against 26). Uses the built-in `fetch`, `WebSocket` and
-`node:sqlite`, so the only dependencies are `sharp`, `tesseract.js` and the bundled
-Dutch traineddata. OCR runs fully offline.
+[Apache License 2.0](./LICENSE).

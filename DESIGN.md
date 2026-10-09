@@ -249,6 +249,10 @@ verified options rather than guessing.
   request sends `models` and omits `model`, because the docs warn the two spellings cannot
   be combined.
 
+**Cost is not predictable from a model list.** An auto slug reports a variable price, since
+it depends on what gets chosen; cap it with OpenRouter's `provider.max_price` if that
+matters. A pinned vision model has a known price.
+
 Three consequences are designed for rather than discovered later:
 
 1. **Slug/plugin-id pairing.** Each auto slug reads settings *only* under its own plugin id
