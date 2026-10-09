@@ -19,11 +19,15 @@ import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
 
 import {
+  createAuthThrottle,
   createHttpServer,
   createRateLimiter,
   decodeBase64Image,
   assertHttpUrl,
+  DEFAULT_AUTH_FAILURE_LIMIT,
+  httpTokenProblem,
   imageErrorStatus,
+  isLoopbackHost,
   tokenMatches,
   HttpError,
   SolveTimeoutError,
@@ -32,7 +36,7 @@ import { validateImageBuffer } from '../src/pushbullet/files.js';
 import { createResponder } from '../src/pushbullet/respond.js';
 import { memoryStore } from '../src/state/db.js';
 import { createSolveCore } from '../src/solver/core.js';
-import { createApp, MissingHttpTokenError } from '../src/app.js';
+import { createApp, MissingHttpTokenError, WeakHttpTokenError } from '../src/app.js';
 import { validateConfig } from '../src/config.js';
 import { createOcrWorker } from '../src/ocr/recognize.js';
 
@@ -288,6 +292,18 @@ test('a wrong bearer token is refused with 401', async (t) => {
   const { url } = await startServer(t);
   const res = await post(url, { token: 'not-the-token', body: await smallPng(), contentType: 'image/png' });
   assert.equal(res.status, 401);
+});
+
+test('repeated wrong tokens are throttled instead of answered 401 forever (#47)', async (t) => {
+  const { url } = await startServer(t);
+  const statuses = [];
+  for (let i = 0; i < DEFAULT_AUTH_FAILURE_LIMIT + 2; i++) {
+    const res = await post(url, { token: `wrong-${i}`, body: await smallPng(), contentType: 'image/png' });
+    statuses.push(res.status);
+  }
+  assert.equal(statuses[0], 401, 'the first failure is still a plain 401');
+  assert.ok(statuses.includes(429), `expected a 429 after ${DEFAULT_AUTH_FAILURE_LIMIT} failures, saw ${statuses.join(',')}`);
+  assert.equal(statuses.at(-1), 429, 'once blocked, further attempts stay blocked');
 });
 
 test('the correct bearer token is accepted', async (t) => {
@@ -638,6 +654,27 @@ test('a non-loopback bind logs a loud warning', async () => {
   await server.stop();
 });
 
+test('a hostname that only starts with 127. is not loopback and warns (#47)', async () => {
+  // The old prefix test classified `127.evil.example` as loopback, suppressing the very
+  // warning the function exists to produce. The warning is the control, so assert it fires.
+  assert.equal(isLoopbackHost('127.evil.example'), false);
+  const logger = collectingLogger();
+  const server = createHttpServer({
+    core: scriptedCore({ answer: '2' }),
+    token: TOKEN,
+    config: validateConfig({ http: { enabled: true, bind: '127.evil.example', port: 44444 } }).config,
+    inboxDir: join(tmpdir(), 'puzzlesolver-http-bind'),
+    logger,
+    createServerImpl: fakeServerFactory(),
+  });
+  await server.start();
+  assert.ok(
+    logger.logs.some((l) => l.level === 'warn' && /exposes the solver beyond this machine/.test(l.args.join(' '))),
+    'a 127.-prefixed hostname must warn'
+  );
+  await server.stop();
+});
+
 // ---------------------------------------------------------------------------
 // Unit-level pieces
 // ---------------------------------------------------------------------------
@@ -661,6 +698,54 @@ test('tokenMatches is strict about the scheme and the value', () => {
   assert.equal(tokenMatches('abc', 'Bearer abcd'), false);
   assert.equal(tokenMatches('', 'Bearer '), false);
   assert.equal(tokenMatches('abc', undefined), false);
+});
+
+test('isLoopbackHost validates the whole address, not a prefix (#47)', () => {
+  for (const host of ['127.0.0.1', '127.0.0.2', '::1', 'localhost', '[::1]', '::ffff:127.0.0.1']) {
+    assert.equal(isLoopbackHost(host), true, `${host} is loopback`);
+  }
+  for (const host of ['127.evil.example', 'localhost.evil.example', '0.0.0.0', '192.168.1.5', '::2', '127.0.0.1.evil', '']) {
+    assert.equal(isLoopbackHost(host), false, `${host} must not be treated as loopback`);
+  }
+});
+
+test('httpTokenProblem rejects short, weak and monotonous tokens (#47)', () => {
+  assert.match(httpTokenProblem('a'), /at least/);
+  assert.match(httpTokenProblem('short-token-12'), /at least/);
+  assert.match(httpTokenProblem('changeme'), /weak value/);
+  assert.match(httpTokenProblem('aaaaaaaaaaaaaaaaaa'), /variation/);
+  assert.equal(httpTokenProblem('a-long-random-enough-token'), null);
+  assert.equal(httpTokenProblem('test-token-do-not-log'), null);
+});
+
+test('a weak token refuses to build the server', () => {
+  assert.throws(
+    () =>
+      createHttpServer({
+        core: scriptedCore({ answer: '2' }),
+        token: 'a',
+        config: validateConfig({ http: { enabled: true, bind: '127.0.0.1', port: 0 } }).config,
+        inboxDir: join(tmpdir(), 'puzzlesolver-http-weak'),
+      }),
+    /not usable/
+  );
+});
+
+test('createAuthThrottle blocks after the limit and backs off', () => {
+  let clock = 0;
+  const throttle = createAuthThrottle({ limit: 2, windowMs: 60_000, now: () => clock });
+  assert.deepEqual(throttle.fail('c'), { allowed: true, retryAfterSec: 0 });
+  assert.deepEqual(throttle.fail('c'), { allowed: false, retryAfterSec: 1 }, 'the trip applies the first backoff');
+  assert.equal(throttle.check('c').allowed, false);
+  assert.equal(throttle.check('c').retryAfterSec, 1);
+  clock += 1000;
+  assert.equal(throttle.check('c').allowed, true, 'the first backoff expires');
+  assert.deepEqual(throttle.fail('c'), { allowed: true, retryAfterSec: 0 }, 'a fresh failure count starts after the block');
+  assert.deepEqual(throttle.fail('c'), { allowed: false, retryAfterSec: 2 }, 'the next trip doubles the backoff');
+  // A different client has its own budget, and a success clears the record.
+  assert.equal(throttle.check('other').allowed, true);
+  throttle.succeed('c');
+  assert.equal(throttle.check('c').allowed, true, 'a correct token clears the failure record');
 });
 
 test('decodeBase64Image strips a data URL and rejects garbage', () => {
@@ -810,6 +895,32 @@ test('http.enabled without a token refuses to start', async (t) => {
     (err) => {
       assert.equal(err.name, 'MissingHttpTokenError');
       assert.match(err.message, /HTTP_AUTH_TOKEN/);
+      return true;
+    }
+  );
+});
+
+test('http.enabled with a weak token refuses to start with an actionable error (#47)', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'puzzlesolver-http-app-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  await assert.rejects(
+    () =>
+      createApp({
+        config: validateConfig({ http: { enabled: true } }).config,
+        env: { HTTP_AUTH_TOKEN: 'shorty' },
+        providers: [],
+        client: { createNote: async () => ({}) },
+        reasoner: null,
+        solveImage: async () => ({ answer: '1' }),
+        createWorker: async () => ({ terminate: async () => {} }),
+        inboxDir: join(dir, 'inbox'),
+        statePath: join(dir, 'state.db'),
+        logger: collectingLogger(),
+      }),
+    (err) => {
+      assert.equal(err.name, 'WeakHttpTokenError');
+      assert.match(err.message, /at least 16/);
+      assert.match(err.message, /openssl rand/);
       return true;
     }
   );

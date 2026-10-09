@@ -32,7 +32,8 @@ import { createReasoner } from './solver/reason.js';
 import { createOcrWorker } from './ocr/recognize.js';
 import { solveImage } from './solver/pipeline.js';
 import { createSolveCore } from './solver/core.js';
-import { createHttpServer } from './http/server.js';
+import { createHttpServer, httpTokenProblem } from './http/server.js';
+import { registerSecrets } from './redact.js';
 import { createNotifier } from './ui/notifications.js';
 import { resolveTrayMode } from './ui/mode.js';
 import { createSetup } from './ui/setup.js';
@@ -73,6 +74,14 @@ export class MissingHttpTokenError extends Error {
   constructor(message) {
     super(message);
     this.name = 'MissingHttpTokenError';
+  }
+}
+
+/** `http.enabled` is on but the resolved bearer token is too weak to guard the endpoint (#47). */
+export class WeakHttpTokenError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'WeakHttpTokenError';
   }
 }
 
@@ -221,6 +230,9 @@ export async function createApp({
   let llmApiKey = secrets.llm.value;
   let httpToken = secrets.http?.value ?? null;
   const httpEnabled = config.http?.enabled === true;
+  // Register the configured secrets so the shared redactor hides their exact value
+  // at every sink, independent of whether the provider's key shape is documented (#45).
+  registerSecrets([pushbulletToken, llmApiKey, httpToken]);
   logger.debug?.(`secrets: pushbullet=${JSON.stringify(describeSecret(secrets.pushbullet))} llm=${JSON.stringify(describeSecret(secrets.llm))}`);
 
   // Open the store before pruning: the prune is housekeeping and the store is what
@@ -277,6 +289,7 @@ export async function createApp({
       pushbulletToken = secrets.pushbullet.value;
       llmApiKey = secrets.llm.value;
       httpToken = secrets.http?.value ?? null;
+      registerSecrets([pushbulletToken, llmApiKey, httpToken]);
       logger.debug?.(`secrets after setup: pushbullet=${JSON.stringify(describeSecret(secrets.pushbullet))} llm=${JSON.stringify(describeSecret(secrets.llm))}`);
       if (!pushbulletToken) {
         if (ownsStore) store.close();
@@ -301,6 +314,19 @@ export async function createApp({
       'http.enabled = true but no HTTP bearer token was found. Set HTTP_AUTH_TOKEN, or add ' +
         `"http_auth_token" to ${credentialPath}; secrets are never read from config.toml.`
     );
+  }
+
+  // A short or obvious token is an oracle with a guessable key; refuse it at startup
+  // rather than listen with a lock that opens to a dictionary (#47).
+  if (httpEnabled) {
+    const problem = httpTokenProblem(httpToken);
+    if (problem) {
+      if (ownsStore) store.close();
+      throw new WeakHttpTokenError(
+        `http.enabled = true but ${problem}. Generate one with \`openssl rand -hex 24\` ` +
+          'and set HTTP_AUTH_TOKEN (or the http_auth_token credential).'
+      );
+    }
   }
 
   // A Pushbullet client only exists when there is a token (or a test injected one).

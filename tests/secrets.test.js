@@ -5,7 +5,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -123,6 +123,91 @@ test('a missing or corrupt credentials file yields null rather than throwing', a
   const corrupt = join(dir, 'corrupt.json');
   writeFileSync(corrupt, '{ not json');
   assert.equal(await createFileCredentialProvider({ path: corrupt }).get('llm'), null);
+});
+
+// ---------------------------------------------------------------------------
+// A corrupt store is loud and is never silently overwritten (#46)
+// ---------------------------------------------------------------------------
+test('a corrupt file reports why instead of reading as an empty store', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'puzzlesolver-creds-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, 'corrupt.json');
+  writeFileSync(path, '{"llm_api_key":"sk-keep","http_auth_token":"tok",}');
+  chmodSync(path, 0o600); // isolate the parse warning from the permissions warning
+
+  const provider = createFileCredentialProvider({ path });
+  const warnings = [];
+  const logger = { warn: (message) => warnings.push(message) };
+  const loaded = await loadSecrets({ env: {}, providers: [provider], logger });
+
+  assert.equal(loaded.llm.value, null, 'a corrupt store reads as no secret');
+  assert.equal(warnings.length, 1, 'and that must be news, not silence');
+  assert.match(warnings[0], /could not be read as JSON/);
+  assert.ok(warnings[0].includes(path));
+  assert.equal(warnings[0].includes('sk-keep'), false, 'the warning must not quote a value');
+});
+
+test('setting a secret on a corrupt file refuses and preserves every other secret', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'puzzlesolver-creds-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, 'corrupt.json');
+  const original = '{"llm_api_key":"sk-keep-me","http_auth_token":"keep-me-too",}';
+  writeFileSync(path, original);
+
+  const provider = createFileCredentialProvider({ path });
+  assert.throws(() => provider.set('pushbullet', 'o.new-token'), /refusing to overwrite unreadable credentials file/);
+
+  // The file is untouched (so a hand-repair can still recover `sk-keep-me`), and a
+  // backup was taken rather than a silent `{}` rewrite losing both existing secrets.
+  assert.equal(readFileSync(path, 'utf8'), original, 'the corrupt file must not be rewritten');
+  assert.ok(existsSync(`${path}.bak`), 'a backup was quarantined');
+  assert.equal(readFileSync(`${path}.bak`, 'utf8'), original);
+});
+
+test('writing a secret tightens an existing lax file to mode 0600', async (t) => {
+  if (process.platform === 'win32') return t.skip('POSIX mode bits do not apply');
+  const dir = mkdtempSync(join(tmpdir(), 'puzzlesolver-creds-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, 'lax.json');
+  writeFileSync(path, JSON.stringify({ [FILE_SECRET_KEYS.llm]: 'sk-old' }));
+  chmodSync(path, 0o644);
+  assert.equal(statSync(path).mode & 0o777, 0o644);
+
+  const provider = createFileCredentialProvider({ path });
+  provider.set('pushbullet', 'o.new-token');
+
+  assert.equal(statSync(path).mode & 0o777, 0o600, 'an existing file must be tightened, not left lax');
+});
+
+test('the write is atomic and leaves no temp file behind', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'puzzlesolver-creds-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, 'credentials.json');
+  const provider = createFileCredentialProvider({ path });
+  await provider.set('pushbullet', 'o.token');
+  await provider.set('llm', 'sk-key');
+  assert.deepEqual(readdirSync(dir), ['credentials.json'], 'no .tmp file survives a successful write');
+  const raw = JSON.parse(readFileSync(path, 'utf8'));
+  assert.equal(raw.pushbullet_token, 'o.token');
+  assert.equal(raw.llm_api_key, 'sk-key');
+});
+
+test('a failed rename does not delete the previous store', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'puzzlesolver-creds-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, 'credentials.json');
+  const original = JSON.stringify({ [FILE_SECRET_KEYS.llm]: 'sk-old' });
+  writeFileSync(path, original);
+
+  const provider = createFileCredentialProvider({
+    path,
+    rename() {
+      throw new Error('rename failed');
+    },
+  });
+  assert.throws(() => provider.set('pushbullet', 'o.token'), /rename failed/);
+  assert.equal(readFileSync(path, 'utf8'), original, 'the previous store is untouched');
+  assert.deepEqual(readdirSync(dir), ['credentials.json'], 'the temp file is cleaned up');
 });
 
 test('a group-readable credentials file warns but still works', async (t) => {
