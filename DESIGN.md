@@ -765,6 +765,46 @@ Explorer opening a log, and the actual tray widget. Every one of those has a tes
 (content, arguments or an injected loader) which is asserted; the native execution is not, and is
 labelled as such in each module.
 
+**CI packaging and release (issue #19).** `.github/workflows/package.yml` builds and publishes the
+Windows package; `ci.yml` gained `workflow_call` and is the gate, so the Node matrix still has one
+home. Decided here, additively:
+
+- **The packaging job runs on `windows-latest`.** `sharp` is native; a `node_modules` installed on
+  Ubuntu contains Linux binaries and cannot load on Windows. Cross-installing with
+  `--os=win32 --cpu=x64` is fragile, so the payload is built on the platform it ships to — exactly
+  the constraint issue #19 names.
+- **The bundled runtime is pinned to Node 22.13.0**, the floor the test matrix and `engines`
+  already exercise. `packaging/build-payload.mjs` downloads the bare `win-x64/node.exe` from
+  nodejs.org rather than using the runner's Node.
+- **The payload is assembled, zipped, then smoke-tested after extraction.**
+  `packaging/run-smoke.ps1` unzips into a temp directory and runs the artifact's own `node.exe`
+  against the offline corpus from outside the repository; `packaging/smoke-test.mjs` asserts the
+  three known answers (`2`, `hoofd`, `7`). A failure stops the job before the release job runs, so
+  a broken tree publishes nothing. This is the check that a build inside the repo habitually skips:
+  native binaries that did not travel, a bundled Node not running the bundled code, traineddata
+  missing from the zip, and cwd assumptions that only hold in the repo.
+- **A tag must agree with `package.json`.** `packaging/check-version.mjs` refuses a `v*` tag whose
+  version differs, before any Windows-only work; a non-tag ref has no version and is skipped.
+- **The checksum is verified, not merely written.** `packaging/checksum.mjs` emits a
+  sha256sum-compatible sidecar and re-hashes the file after writing; `--verify` fails if the
+  artifact and sidecar drift.
+- **No third-party release action.** The Release is created with the runner's preinstalled `gh` and
+  the default token, so there is nothing extra to pin; `contents: write` is set on the release job
+  only, and the rest of the workflow is `contents: read`.
+- **Pre-1.0 tags (`v0.*`) are published as GitHub pre-releases**, so the first build is not offered
+  as the project's "latest".
+- **`main`/PR runs upload a workflow artifact but never publish.** Only a `v*` tag creates a
+  Release; workflow artifacts expire after 14 days, release assets do not.
+- **No credentials can travel.** The payload is copied from an explicit allowlist (`src/`,
+  `package.json`, the three packaging scripts) plus `npm ci --omit=dev`; `config/`, `.env` and
+  credential files are not on the list and `build-payload.mjs` asserts they are absent.
+
+**Unverifiable on the Linux development host:** `Compress-Archive`/`Expand-Archive`, running the
+bundled `node.exe`, and the release job's `gh` call. The decisions with a judgement in them (the
+version guard, the checksum round-trip, the payload manifest) are asserted by
+`tests/packaging.test.js`; the PowerShell and the publish path are exercised only by an actual
+workflow run.
+
 ## 12. Extension points (v2+)
 
 Deferred deliberately. Each is tracked as an issue under the
