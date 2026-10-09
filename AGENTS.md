@@ -136,7 +136,7 @@ the old code. Behaviour that took live testing to find must not be able to come 
 ## 5. Tests
 
 ```bash
-npm test              # 454 tests (448 pass, 6 skip), fully offline: no network, no token, no key
+npm test              # 475 tests (469 pass, 6 skip), fully offline: no network, no token, no key
 npm run test:unit     # fast subset
 npm run test:corpus   # real images through real OCR, ~4s
 npm run test:live     # opt-in; skips itself unless LLM_API_KEY is set
@@ -217,3 +217,49 @@ Corollaries:
 - Keep `src/model/client.js` free of provider-specific reasoning logic so tests can inject a fake.
 - No new dependency without a reason in `DESIGN.md` §6 — several were deliberately avoided.
 - Never let logging break solving: the attempts store swallows its own errors by design.
+
+---
+
+## 9. Verifying CI
+
+The API and the method both have traps. The method half is the larger share, so fix the
+habit before reaching for a command.
+
+**Verify by SHA via check-runs.** Ask `scripts/ci-status.mjs <sha>` — it reads
+`GET /commits/{sha}/check-runs` and prints a per-job table plus one verdict. Do **not**
+scan "the latest run on the branch": one push triggers both `CI` and `Package (Windows)`,
+so no single run means green, and `workflow_runs[0]` can be the wrong or an older run.
+Its exit-code contract is the verdict: `0` green, `1` failed, `2` unknown/timeout, `3`
+usage. `--wait` polls with bounded backoff and a hard `--timeout-sec` cap; **a timeout
+exits `2`, never `0`** — "not finished" is not "green".
+
+**Do not poll for something a leg already waited on.** Every leg reports its run ids and
+conclusions, so by the time it reports, its CI has finished. Verification reads the
+recorded SHA afterwards instead of waiting live. Most of the polling this session
+did was re-deriving a result a leg had already reported — the largest improvement is
+polling *less*, not polling better.
+
+**The two API traps** (measured in issue #38):
+
+- `GET /actions/runs?head_sha=<sha>` needs the **full 40-character** SHA. A short one
+  returns an empty list, not an error, which is indistinguishable from "CI has not
+  started"; a poller built on it waits forever. Do not use this endpoint to answer
+  "is this commit green?".
+- `GET /commits/{sha}/status` answers `200` with **zero** statuses here, because this
+  repository's CI is entirely GitHub Actions and Actions reports *check runs*, not commit
+  statuses. Use check-runs.
+
+**A read that contradicts a write just performed is a stale read, not a failed write.**
+Closing an issue and immediately listing it can still show it open; a new issue can be
+missing from its milestone for a moment. Both look like the write failed. Re-read once
+before concluding it did.
+
+**Bound every wait and every mutation test.** Run waits — and any test where a behaviour
+is reverted to prove the test catches it — under a short command-level `timeout`, because
+a mutation can turn a bounded test into an unbounded one. An unbounded wait is
+indistinguishable from a hang (issue #37).
+
+```bash
+# capped at the shell and by the script; a timeout is exit 2, never success
+timeout 30 node scripts/ci-status.mjs "$sha" --wait --timeout-sec 300
+```
