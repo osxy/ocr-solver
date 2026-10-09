@@ -286,7 +286,19 @@ port = 8765
 $env:HTTP_AUTH_TOKEN = "a-long-random-string"
 ```
 
-Start the service (`listen --headless` is the usual unattended form) and post an image:
+Start the service (`listen --headless` is the usual unattended form) and post an image.
+The simplest form needs only the auth header:
+
+```bash
+curl -sS -X POST http://127.0.0.1:8765/v1/solve \
+  -H "Authorization: Bearer $HTTP_AUTH_TOKEN" \
+  --data-binary @puzzle.png
+```
+
+The content type is **conventional, not required**: the server recognises the image
+from its magic bytes, so a missing `Content-Type` (curl's default
+`application/x-www-form-urlencoded`), `application/octet-stream`, and `image/png` are all
+accepted. Declaring it is still the clearest, so this form works too:
 
 ```bash
 curl -sS -X POST http://127.0.0.1:8765/v1/solve \
@@ -307,8 +319,10 @@ curl -sS -X POST http://127.0.0.1:8765/v1/solve \
 }
 ```
 
-Accepted bodies: `image/*` (raw bytes, as above), `multipart/form-data` with a file
-field, or JSON with `image_base64` (a data URL is fine). JSON may also carry `image_url`,
+Accepted bodies: the raw image bytes (as above, whatever the declared `Content-Type`),
+`multipart/form-data` with a file field, or JSON with `image_base64` (a data URL is
+fine). A raw body that is not a real image is still refused with `415`
+(`"error": "invalid_image"`, `"reason": "magic"`). JSON may also carry `image_url`,
 but **fetching a URL is off by default** - see below.
 
 ```bash
@@ -321,7 +335,7 @@ curl -sS -X POST http://127.0.0.1:8765/v1/solve \
 supplies is an SSRF surface: the server can reach services the caller cannot, including
 link-local metadata endpoints. Since uploading the image is the normal path, the default is
 to refuse it - `403` with `"error": "image_url_disabled"` and a reason pointing at
-`image_base64` / multipart / `image/*`. To enable it, name the hosts you trust (default deny):
+`image_base64` / multipart / the raw body. To enable it, name the hosts you trust (default deny):
 
 ```toml
 [http]
