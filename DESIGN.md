@@ -821,7 +821,7 @@ compressible white PNG, the cheapest file per pixel:
 
 | decoded input | pixels | `buildVariants` | peak RSS |
 |---|---|---|---|
-| 1024x1024 | 1.05 Mpx | 2.2 s | 174 MB |
+| 1000x1000 (at the cap) | 1.00 Mpx | 2.1 s | 155 MB |
 | 1500x1500 | 2.25 Mpx | 4.7 s | 192 MB |
 | 2000x2000 | 4.0 Mpx | 9.6 s | 236 MB |
 | 3000x3000 | 9.0 Mpx | 17.7 s | 361 MB |
