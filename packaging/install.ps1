@@ -19,7 +19,7 @@ $Source = [IO.Path]::GetFullPath($PSScriptRoot)
 $Here = [IO.Path]::GetFullPath($InstallDir)
 if ($Source -ne $Here) {
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-    Copy-Item -Recurse -Force (Join-Path $PSScriptRoot '*') $InstallDir
+    Copy-Item -Force (Join-Path $PSScriptRoot 'node.exe') $InstallDir
 }
 
 $Node = Join-Path $InstallDir 'node.exe'
