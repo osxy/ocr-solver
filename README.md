@@ -23,8 +23,10 @@ guess (see [What happens to a puzzle](#what-happens-to-a-puzzle)).
 ## Status
 
 **0.2.0 — a pre-release.** The offline solver, model tiers, Pushbullet listener and
-reply path are implemented and tested. The Windows install/tray/autostart path ships
-but has never run on a real Windows machine (see [Known limitations](#known-limitations)).
+reply path are implemented and tested. The packaged Windows app, the installer, the
+scheduled task and the launcher are executed on `windows-latest` in CI; the native tray
+widget and the notification toast still need an interactive desktop and remain
+unverified (see [Known limitations](#known-limitations)).
 Work is tracked in the [issue tracker](https://github.com/osxy/ocr-solver/issues); the
 design and its reasoning live in [DESIGN.md](./DESIGN.md).
 
@@ -58,8 +60,10 @@ it copies the app to `%LOCALAPPDATA%\Programs\PuzzleSolver`, writes
 `PuzzleSolver.vbs` (a launcher with no console window), and registers a Task Scheduler
 task named `PuzzleSolver` that starts the app at logon (20 s delay, restart on failure).
 
-> The install, tray and task registration have **never executed on a real Windows
-> machine**. See [Known limitations](#known-limitations).
+> The installer, the scheduled task, the launcher and the uninstaller are executed end
+> to end on `windows-latest` in CI. The native tray widget and the notification toast
+> still need an interactive desktop and remain unverified. See
+> [Known limitations](#known-limitations).
 
 ## Configure
 
@@ -563,13 +567,19 @@ folders. Manually: `schtasks /Delete /TN PuzzleSolver /F`, then delete
 ## Known limitations
 
 - **Pre-release.** 0.2.0 is a pre-release: expect rough edges and no stability promise.
-- **The Windows-specific paths have never executed on a real Windows machine.** The
-  tray widget, the `schtasks` registration and restart behaviour, the Credential Manager
-  provider (which is not shipped at all - see
-  [Secrets](#secrets-go-in-the-environment-or-the-credential-store)), the
-  install/uninstall PowerShell and the packaged `node.exe` are written and tested at
-  their seams, but this project is developed on Linux. Treat the first Windows install as
-  unverified; `--headless` is the supported fallback.
+- **The native tray widget, the notification toast and the browser hand-off remain
+  unverified on Windows.** The packaged `node.exe`, the app, `sharp`'s win32-x64 binary
+  and the traineddata are smoke-tested on `windows-latest` by the package job, and the
+  deploy job executes `install.ps1`, the `schtasks` registration (inspecting the logon
+  trigger and the restart-on-failure properties), the packaged app's `--headless`
+  start-and-refuse, `PuzzleSolver.vbs` launching a process, and `uninstall.ps1`. What a
+  runner cannot provide is an interactive desktop: `systray2` needs a window station, so
+  the **native tray widget** and the **notification toast** are still unverified, as is
+  the `explorer.exe` browser hand-off for the settings UI (issue #56). The
+  restart-on-failure *properties* are inspected; a crash loop has not been seen
+  restarting the task. The Credential Manager provider is not shipped at all (see
+  [Secrets](#secrets-go-in-the-environment-or-the-credential-store)). `--headless`
+  remains the supported fallback for an unattended machine.
 - **The web UI is plain HTTP and its non-loopback credential is transport-unprotected.**
   A remote-access password is verified as a `scrypt` verifier and failed logins are
   throttled, but the HTTP connection itself is not encrypted and the session token cannot
