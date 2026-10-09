@@ -128,10 +128,23 @@ test('config edit reports a rejection and keeps the prior value', (t) => {
   assert.equal(existsSync(result.configPath), false, 'only the rejected change was queued');
 });
 
+/**
+ * Drop Node's own runtime warnings before asserting the command printed no error.
+ * Node 22 emits `ExperimentalWarning: SQLite ...` on import of `node:sqlite`; it is the
+ * runtime talking, not the command, and it is not what this test is about.
+ */
+function withoutNodeWarnings(stderr) {
+  return stderr
+    .split('\n')
+    .filter((line) => !/^\(node:\d+\) ExperimentalWarning:/.test(line) && !/^\(Use `node --trace-warnings/.test(line))
+    .join('\n')
+    .trim();
+}
+
 test('config --help is a usage page, not an error', (t) => {
   const result = runConfig(t, ['--help']);
   assert.equal(result.status, 0);
   assert.match(result.stdout, /config list/);
   assert.match(result.stdout, /config edit/);
-  assert.equal(result.stderr, '');
+  assert.equal(withoutNodeWarnings(result.stderr), '', '--help itself must not write to stderr');
 });
