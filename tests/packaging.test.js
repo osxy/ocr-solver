@@ -190,3 +190,64 @@ test('run-deploy.ps1 asserts every deployment surface and throws on the first mi
   const assertions = (script.match(/Assert \(/g) ?? []).length;
   assert.ok(assertions >= 12, `expected the deployment script to assert at least 12 things, found ${assertions}`);
 });
+
+// ---------------------------------------------------------------------------
+// README install instructions vs. the version CI builds (#97)
+// ---------------------------------------------------------------------------
+
+/**
+ * The README's install commands are the first thing a user runs and nothing checked
+ * them, so a version bump could leave a checksum command naming a file that does not
+ * exist - which is worse than no command (it was found by hand at v0.3.0, where six
+ * references still said `v0.2.0`).
+ *
+ * The asset name is derived from the workflow rather than hardcoded: `package.yml`
+ * reads the version from `package.json` and passes it to `build-zip.ps1`, which
+ * builds `PuzzleSolver-$Version-win-x64.zip`. Reading the name from the script is
+ * what keeps this test from freezing today's version into a green-but-vacuous check.
+ *
+ * Honest limit: this cannot assert that the release EXISTS. At the moment of a version
+ * bump the README deliberately names a tag that has not been pushed yet, and that is
+ * correct. What it catches is a README left naming the PREVIOUS release after
+ * `package.json` has moved on.
+ */
+test('the README install instructions name the version and the asset CI builds (#97)', () => {
+  const { version } = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'));
+  const readme = readFileSync(join(repoRoot, 'README.md'), 'utf8');
+
+  // Derive the asset name from the script the workflow actually runs.
+  const buildZip = readFileSync(join(repoRoot, 'packaging', 'build-zip.ps1'), 'utf8');
+  const template = /\$zip\s*=\s*Join-Path\s+\$OutDir\s+"([^"]*\$Version[^"]*)"/.exec(buildZip);
+  assert.ok(template, 'build-zip.ps1 no longer builds a $Version-named zip; update this guard');
+  const asset = template[1].replaceAll('$Version', version);
+  assert.match(asset, /-win-x64\.zip$/, 'the asset is expected to be the win-x64 zip');
+
+  // The workflow must take that version from package.json and pass it through.
+  const workflow = readFileSync(join(repoRoot, '.github', 'workflows', 'package.yml'), 'utf8');
+  assert.match(
+    workflow,
+    /\(Get-Content package\.json -Raw \| ConvertFrom-Json\)\.version/,
+    'package.yml must read the version from package.json'
+  );
+  assert.match(workflow, /build-zip\.ps1[^\n]*-Version \$version/, 'package.yml must pass that version to build-zip.ps1');
+
+  // The download link names the current tag.
+  const escaped = version.replaceAll('.', '\\.');
+  assert.match(readme, new RegExp(`releases/tag/v${escaped}`), `README must link to the v${version} release`);
+
+  // Every asset filename in the README names the current version - not just one of
+  // them. A stale `Get-FileHash PuzzleSolver-0.2.0-...` beside a correct link is the
+  // exact drift this guards against.
+  const namedVersions = [...readme.matchAll(/PuzzleSolver-([0-9]+\.[0-9]+\.[0-9]+)-win-x64\.zip/g)].map((m) => m[1]);
+  assert.ok(namedVersions.length >= 3, `expected the install commands to name the asset, found ${namedVersions.length}`);
+  for (const named of new Set(namedVersions)) {
+    assert.equal(named, version, `README names PuzzleSolver-${named}-win-x64.zip but package.json says ${version}`);
+  }
+  assert.ok(readme.includes(asset), `README must name the asset CI builds, ${asset}`);
+
+  // Any other release-tag link must also be current (the README links the tag once).
+  const tagVersions = [...readme.matchAll(/releases\/tag\/v([0-9]+\.[0-9]+\.[0-9]+)/g)].map((m) => m[1]);
+  for (const named of new Set(tagVersions)) {
+    assert.equal(named, version, `README links releases/tag/v${named} but package.json says ${version}`);
+  }
+});

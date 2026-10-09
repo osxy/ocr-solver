@@ -1,5 +1,7 @@
 # PuzzleSolver
 
+[![CI](https://github.com/osxy/ocr-solver/actions/workflows/ci.yml/badge.svg)](https://github.com/osxy/ocr-solver/actions/workflows/ci.yml)
+
 A Windows background app that watches Pushbullet for incoming puzzle images, reads
 them, solves the Dutch-language puzzle, and replies with the answer as a Pushbullet
 note.
@@ -19,6 +21,11 @@ It does **not** type the answer into a form, does not solve image-grid ("select 
 bicycles") captchas, and never sends an answer it could not validate. A puzzle it
 cannot answer is acknowledged with a configurable "could not solve" reply, never with a
 guess (see [What happens to a puzzle](#what-happens-to-a-puzzle)).
+
+The web UI — settings, solving an uploaded image, and statistics — is shown in the
+sections below and in [`docs/screenshots/`](./docs/screenshots/README.md), which records
+how the images are regenerated (`npm run screenshots`, needs Firefox) and what to do when
+the UI changes. They cost roughly 400 KiB in the repository.
 
 ## Status
 
@@ -347,6 +354,8 @@ node src/cli.js config edit                  # the guided editor over stdin
 node src/cli.js config edit --gui            # the same editor as a loopback web UI
 ```
 
+![The PuzzleSolver settings page: a table of every editable setting with its current value, a live or restart tag, and a Test connection button for each secret.](./docs/screenshots/settings.png)
+
 Secrets go to the credential store, never to `config.toml`. That covers all three of
 them: `config set pushbullet.token o.xxxxxxxx`, `config set llm.api_key sk-xxxxxxxx` and
 `config set http.token a-long-random-enough-token` each write the credential store (the DPAPI
@@ -386,6 +395,8 @@ shows the **answer**, the **method** (`tier0`, `model:text` or `model:vision`),
 because it is the same serialiser. An unresolved puzzle shows the configured
 acknowledgement text; a guess is never displayed.
 
+![The solve page after uploading a committed corpus sample: a Solved banner and the answer 2, method tier0:count, confident true and the time taken.](./docs/screenshots/solve.png)
+
 ### The statistics page
 
 The same web UI has a read-only **Statistics** page (no form and no POST target, so a
@@ -399,6 +410,8 @@ puzzles** — re-solving the same image counts once there, while the recent-solv
 above shows each solve separately. Recorded traffic (real, with no ground truth) and the
 offline corpus (our own fixtures) are two separate, labelled figures and are never
 blended; the corpus is called a regression guard, not real-world accuracy.
+
+![The statistics page: recent solves with answer, method, sent or withheld verdict and took, then recorded-traffic totals by tier and puzzle class, then a separate offline-corpus section.](./docs/screenshots/statistics.png)
 
 ### Exposing the web UI beyond loopback (read this before doing it)
 
@@ -441,6 +454,8 @@ DPAPI blob on Windows — never the password,
 never `config.toml`); a non-loopback client must sign in, and failed logins are
 throttled. With a non-loopback range and no credential the service **refuses to start**,
 naming `web_ui.password`, rather than listen unauthenticated.
+
+![The sign-in page shown to a non-loopback web UI client: a single password field.](./docs/screenshots/login.png)
 
 **This is plain HTTP.** A password sent over a non-loopback connection travels in
 cleartext, and the session token cannot be marked `Secure`. The credential raises the bar
@@ -788,7 +803,7 @@ plain ESM.
 
 ```bash
 npm install
-npm test              # 705 tests (699 pass, 6 skip), offline: no network, no token, no key
+npm test              # 706 tests (700 pass, 6 skip), offline: no network, no token, no key
 npm run test:unit     # fast subset
 npm run test:corpus   # real images through real OCR, ~4s
 npm run test:live     # opt-in; skips unless LLM_API_KEY is set
