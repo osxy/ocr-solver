@@ -64,6 +64,8 @@ import { createImageStore } from '../src/state/images.js';
 import { createSettingsEditor } from '../src/ui/settings.js';
 import { createWebSettingsServer } from '../src/ui/web-config.js';
 
+import { buildHistory, FIXTURE_NOW } from './screenshot-fixture.mjs';
+
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const outDir = join(repoRoot, 'docs', 'screenshots');
 const fixtureDir = join(tmpdir(), 'puzzlesolver-screenshots');
@@ -109,44 +111,19 @@ port = 8765
 `;
 
 /**
- * Seed a synthetic solve history. The subjects are `demo/...` names, not Pushbullet
- * idents, and every answer/timing is invented - the only thing taken from the real
- * project is the shape of a row. One row is unresolved and one was solved by a model
- * so the page shows all three delivery verdicts.
+ * Seed the synthetic solve history that `buildHistory` plans. The subjects are
+ * `demo/...` names, not Pushbullet idents, and every answer/timing is invented - the only
+ * thing taken from the real project is the shape of a row. The plan's timestamps come
+ * from the fixed clock (see `screenshot-fixture.mjs`), so a re-run records the same rows.
  */
 function seedHistory(store, setClock) {
-  const base = Math.floor(Date.now() / 1000) - 6 * 3600;
-  const rows = [
-    { subject: 'demo/001-count-kleuren.png', answer: '2', method: 'tier0:count', klass: 'count', confident: true, ms: 1180, at: base, respond: { sent: true } },
-    { subject: 'demo/003-arithmetic-acht-min-een.png', answer: '7', method: 'tier0:arithmetic', klass: 'arithmetic', confident: true, ms: 940, at: base + 1800, respond: { sent: true } },
-    { subject: 'demo/002-ordinal-lichaamsdeel.png', answer: 'derde', method: 'model:text', klass: 'ordinal', confident: true, ms: 6120, at: base + 3600, respond: { sent: true } },
-    { subject: 'demo/needs-model-001.png', answer: null, method: null, klass: 'unknown', confident: false, ms: 8420, at: base + 5400, respond: { sent: false, reason: 'no tier produced a valid answer' } },
-    { subject: 'demo/needs-model-004.png', answer: 'Amsterdam', method: 'model:vision', klass: 'unknown', confident: true, ms: 15340, at: base + 7200, respond: { sent: true } },
-    { subject: 'demo/005-count-vruchten.png', answer: '4', method: 'tier0:count', klass: 'count', confident: true, ms: 1020, at: base + 9000, respond: null },
-    // #104: a withheld candidate, so the screenshot shows all three outcomes
-    // (solved, withheld, unresolved) and the mistake is visible if one regresses.
-    { subject: 'demo/007-ordinal-kleur.png', answer: 'rood', method: 'model:text', klass: 'ordinal', confident: false, ms: 4800, at: base + 10800, respond: { sent: false, reason: 'unconfirmed' } },
-  ];
-  for (const row of rows) {
-    setClock(row.at);
-    store.record({
-      subject: row.subject,
-      stage: 'validate',
-      payload: { answer: row.answer, method: row.method, class: row.klass, confident: row.confident, disputed: false },
-      ok: row.answer != null,
-      ms: row.ms,
-    });
-    if (row.respond) {
-      setClock(row.at + 1);
-      store.record({ subject: row.subject, stage: 'respond', payload: row.respond });
-    }
+  for (const { at, entry } of buildHistory(FIXTURE_NOW)) {
+    setClock(at);
+    store.record(entry);
   }
-  // Two model stages so the page's "model calls made" figure is not zero.
-  setClock(base + 3600);
-  store.record({ subject: 'demo/002-ordinal-lichaamsdeel.png', stage: 'model-text', variant: 'openrouter/auto', payload: { ok: true } });
-  setClock(base + 7200);
-  store.record({ subject: 'demo/needs-model-004.png', stage: 'model-vision', variant: '~google/gemini-flash-latest', payload: { ok: true } });
-  setClock(Math.floor(Date.now() / 1000));
+  // Leave the clock at the fixed instant so anything recorded after seeding (the stored
+  // review copies) carries a reproducible timestamp too.
+  setClock(FIXTURE_NOW);
 }
 
 /** An ephemeral loopback port, for Firefox's WebDriver BiDi endpoint. */
@@ -244,7 +221,7 @@ async function main() {
   writeFileSync(fixtureConfigPath, FIXTURE_CONFIG);
   const { config } = loadConfig({ explicitPath: fixtureConfigPath });
 
-  let clock = Math.floor(Date.now() / 1000);
+  let clock = FIXTURE_NOW;
   const store = openStore({ path: join(fixtureDir, 'state.db'), now: () => clock });
   seedHistory(store, (value) => {
     clock = value;
@@ -254,7 +231,29 @@ async function main() {
   let server = null;
   let firefox = null;
   let bidi = null;
+  let ws = null;
+  let sessionEnded = false;
   let replayServer = null;
+
+  /**
+   * End the BiDi session exactly once, and never wait on it without a bound. A second
+   * `session.end` after the browser has already closed the session is never answered, and
+   * awaiting it hung this command for ever (#114) - the hang was here, in `finally`, not in
+   * the event loop. The bound also covers the error path where `session.new` failed and the
+   * browser may answer nothing at all, so cleanup can always reach its end.
+   */
+  const endSession = async () => {
+    if (sessionEnded || !bidi) return;
+    sessionEnded = true;
+    await new Promise((resolve) => {
+      const timer = setTimeout(resolve, 2000);
+      const done = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+      bidi('session.end').then(done, done);
+    });
+  };
   try {
     worker = await createOcrWorker();
     // #100: the fixture's stored review copies come from the committed corpus sample,
@@ -350,7 +349,7 @@ async function main() {
     firefox.once('error', (error) => {
       firefoxState.error = error;
     });
-    const ws = await connectBidi(bidiPort, firefoxState);
+    ws = await connectBidi(bidiPort, firefoxState);
     bidi = bidiClient(ws);
     await bidi('session.new', { capabilities: {} });
     const { context } = await bidi('browsingContext.create', { type: 'tab' });
@@ -421,17 +420,32 @@ async function main() {
     await shoot('login', `${base}/login?theme=light`, 'login.png');
 
     await bidi('browsingContext.close', { context });
-    await bidi('session.end');
+    await endSession();
 
     for (const entry of written) {
       console.log(`wrote docs/screenshots/${entry.file} (${entry.width}x${entry.height}, ${Math.round(entry.bytes / 1024)} KiB)`);
     }
   } finally {
     await replayServer?.close();
-    try {
-      await bidi?.('session.end');
-    } catch {
-      // The session may already be closed; the process is killed below either way.
+    await endSession();
+    // Close the BiDi WebSocket, bounded, while Firefox is still alive so the close
+    // handshake is answered promptly. An open `WebSocket` is itself a live handle;
+    // leaving it to chance made a hang indistinguishable from a successful run. The
+    // bound keeps a stuck close from turning cleanup into an unbounded wait.
+    if (ws && ws.readyState === 1 /* OPEN */) {
+      await new Promise((resolve) => {
+        const timer = setTimeout(resolve, 2000);
+        const done = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+        ws.addEventListener('close', done, { once: true });
+        try {
+          ws.close();
+        } catch {
+          done();
+        }
+      });
     }
     firefox?.kill('SIGKILL');
     await server?.stop();

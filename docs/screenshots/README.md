@@ -33,7 +33,8 @@ image has loaded.
 The script:
 
 1. writes a throwaway fixture to `$TMPDIR/puzzlesolver-screenshots` — a fake
-   `config.toml` and a seeded SQLite `state.db` with a synthetic solve history;
+   `config.toml` and a seeded SQLite `state.db` with a synthetic solve history whose
+   timestamps come from a **fixed clock**, not the wall clock (see below);
 2. starts the real web UI on a loopback ephemeral port (`createWebSettingsServer`);
 3. opens the launch URL, then captures the real pages **from their live HTTP URLs** at a
    fixed width with Firefox and trims the blank canvas. The light pages carry
@@ -44,7 +45,9 @@ The script:
    (`2`, `tier0:count`) is a genuine offline solve rather than a synthesised string;
 4. writes the six PNGs here;
 5. stops the server, kills Firefox, terminates the OCR worker, closes the store and
-   deletes the temp directory — on success and on failure.
+   deletes the temp directory — on success and on failure — then **exits 0**. A second
+   `session.end` used to hang the process for ever; a non-zero exit now means the command
+   refused to write a misleading image (for example a CSP that blocks the thumbnails).
 
 The pages are captured from their **live loopback URLs**, so the server's
 `Content-Security-Policy` header applies and the browser is the same one a user gets.
@@ -80,6 +83,31 @@ Everything in the images is a fixture, not a real profile:
   all, so every secret row renders as `not set`; no token or key can appear.
 - **The solve image is the committed corpus sample**, which is already public in this
   repository. The script refuses to write a solve screenshot unless that sample solves.
+
+## Re-running is almost a no-op, and the exception is named
+
+The command is reproducible by design. The fixture timestamps are ours, so they are
+recorded from a **fixed clock** (`FIXTURE_NOW` in `scripts/screenshot-fixture.mjs`), never
+from the wall clock. The fixture builder is a pure function of the instant it is handed,
+asserted offline by `tests/screenshots-fixture.test.js` — which freezes `Date.now` far in
+the future to prove the builder does not read it. The old version seeded the history
+relative to `Date.now()`, so every run rewrote the statistics images and a real UI change
+was indistinguishable from clock noise.
+
+Exactly **one** committed image is expected to differ on every re-run:
+
+| File | Why it differs |
+|---|---|
+| `solve.png` | it shows a **genuine offline solve with that run's real duration** (`took NNN ms`). The duration is a property of the run, not of the fixture; pinning it would mean fabricating a timing, which is the opposite of what this page exists to show. |
+
+The other five — `settings.png`, `settings-dark.png`, `statistics.png`,
+`statistics-dark.png`, `login.png` — must be **byte-identical** on a re-run on the same
+machine with the same Firefox build. (That is what “reproducible” is measured to mean here:
+same run twice. A different Firefox version may render type differently, so a diff across
+machines is not automatically a real UI change.) If `git status` shows one of them dirty
+after `npm run screenshots`, that is a real change in the page (or a new source of clock
+noise to find), not something to wave through. So the diff you review is `solve.png` plus
+any file that genuinely changed.
 
 ## They go stale silently — this is the reason this file exists
 
