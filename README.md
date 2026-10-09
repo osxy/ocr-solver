@@ -25,7 +25,9 @@ guess (see [What happens to a puzzle](#what-happens-to-a-puzzle)).
 The web UI — settings, solving an uploaded image, and statistics — is shown in the
 sections below and in [`docs/screenshots/`](./docs/screenshots/README.md), which records
 how the images are regenerated (`npm run screenshots`, needs Firefox) and what to do when
-the UI changes. They cost roughly 400 KiB in the repository.
+the UI changes. They cost roughly 700 KiB in the repository. The UI follows the OS
+light/dark preference and carries a **Light / Dark / Auto** toggle that persists in a
+cookie, with no JavaScript.
 
 ## Status
 
@@ -343,7 +345,10 @@ the tray runs with the window hidden and has no console for a terminal prompt. T
 binds `127.0.0.1` on an ephemeral port (`web_ui.port`, default `0`; set it for remote
 access — see below), requires a single-use link token, validates the
 `Host` header, serves every response with `Cache-Control: no-store`, never renders a secret
-value, and closes its listener when you save or cancel. `--headless` has the same editor
+value, and closes its listener when you save or cancel. It is themed by a cookie and a
+server-side render, so an OS-dark visitor is dark on the first load and the
+**Light / Dark / Auto** toggle works with JavaScript disabled; every page shares the same
+frame. `--headless` has the same editor
 behind a command, so an unattended machine is not a second-class mode:
 
 ```bash
@@ -355,6 +360,8 @@ node src/cli.js config edit --gui            # the same editor as a loopback web
 ```
 
 ![The PuzzleSolver settings page: a table of every editable setting with its current value, a live or restart tag, and a Test connection button for each secret.](./docs/screenshots/settings.png)
+
+![The same settings page in the explicit dark theme, with a Light / Dark / Auto toggle in the header.](./docs/screenshots/settings-dark.png)
 
 Secrets go to the credential store, never to `config.toml`. That covers all three of
 them: `config set pushbullet.token o.xxxxxxxx`, `config set llm.api_key sk-xxxxxxxx` and
@@ -803,7 +810,7 @@ plain ESM.
 
 ```bash
 npm install
-npm test              # 706 tests (700 pass, 6 skip), offline: no network, no token, no key
+npm test              # 718 tests (712 pass, 6 skip), offline: no network, no token, no key
 npm run test:unit     # fast subset
 npm run test:corpus   # real images through real OCR, ~4s
 npm run test:live     # opt-in; skips unless LLM_API_KEY is set
