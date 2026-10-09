@@ -39,6 +39,31 @@ function trackedFiles() {
   }
 }
 
+/** True when git's ignore rules cover `path` (relative to the repo root). */
+function gitIgnored(path) {
+  try {
+    execFileSync('git', ['check-ignore', '-q', '--', path], { cwd: root, stdio: 'ignore' });
+    return true;
+  } catch {
+    // exit 1 means "not ignored"; any other failure is also not a reason to flag
+    return false;
+  }
+}
+
+/** Tracked file paths under `path`, relative to the repo root. */
+function trackedUnder(path) {
+  try {
+    const output = execFileSync('git', ['ls-files', '-z', '--', path], {
+      cwd: root,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    return output.split('\0').filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
 /** Every regular file under a directory, recursively. */
 function filesUnder(dir) {
   const out = [];
@@ -55,6 +80,34 @@ function filesUnder(dir) {
   }
   return out;
 }
+
+test('no stray top-level directory is left in the repository root', (t) => {
+  // The companion gap to the tracked-file check: git does not track directories and
+  // `git status` hides an *empty* one, so a test writing to a fake absolute path can
+  // leave a directory like `C:\Users\Andre\AppData\Local` in the repo root without
+  // any tracked-file guard noticing (issue #50). An empty directory is exactly the
+  // case a file-based check cannot see, so this walks the root one level deep.
+  if (trackedFiles() == null) {
+    t.skip('git is not available; the stray-directory check cannot run');
+    return;
+  }
+
+  const stray = [];
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name === '.git') continue;
+    if (gitIgnored(entry.name)) continue;
+    // A real source directory has at least one tracked file under it. An empty one -
+    // or one only a test happened to create - has none.
+    if (trackedUnder(entry.name).length === 0) stray.push(entry.name);
+  }
+
+  assert.deepEqual(
+    stray,
+    [],
+    `these top-level directories are neither ignored nor tracked by git, so they are ` +
+      `stray test/build output and should not be in the repository root:\n  ${stray.join('\n  ')}`
+  );
+});
 
 test('every src/ and tests/ file on disk is tracked by git', (t) => {
   const tracked = trackedFiles();

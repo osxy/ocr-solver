@@ -41,6 +41,7 @@ import {
   DEFAULT_TITLE,
   DEFAULT_UNRESOLVED_TITLE,
   DEFAULT_UNRESOLVED_TEXT,
+  DEFAULT_UNRESOLVED_MAX_PER_HOUR,
   UNRESOLVED_MARKER,
 } from '../src/pushbullet/respond.js';
 
@@ -1141,6 +1142,92 @@ test('the hourly cap stops sending at max_per_hour', async (t) => {
   assert.equal(refused.sent, false);
   assert.equal(refused.reason, 'rate-limited');
   assert.equal(calls.length, 20);
+});
+
+// ---------------------------------------------------------------------------
+// Separate answer and acknowledgement budgets (issue #48)
+// ---------------------------------------------------------------------------
+
+test('#48: acknowledgements do not consume the answer budget', async (t) => {
+  const clock = Date.parse('2026-01-01T00:00:00Z') / 1000;
+  const now = () => clock;
+  // The store's own clock must match the responder's, or `sent_at` and the queried
+  // window are in different time bases. That is why the injected clock is threaded
+  // through both.
+  const store = memoryStore({ now });
+  t.after(() => store.close());
+  const calls = [];
+  const client = { createNote: async (note) => (calls.push(note), { iden: `n-${calls.length}` }) };
+  const responder = createResponder({ client, store, now, minIntervalMs: 0, maxPerHour: 3 });
+
+  // Three junk images: each gets its acknowledgement. Before #48 these three rows
+  // exhausted the answer budget, so the real answer below came back `rate-limited`.
+  for (let i = 0; i < 3; i++) {
+    const ack = await responder.respond({ iden: `junk-${i}` }, { answer: null });
+    assert.equal(ack.sent, true, `acknowledgement ${i + 1} should be sent`);
+    assert.equal(ack.unresolved, true);
+  }
+  assert.equal(
+    store.countSentSince(now() - 3_600, { onlyHash: UNRESOLVED_MARKER }),
+    3,
+    'the acknowledgements land in the acknowledgement counter'
+  );
+  assert.equal(
+    store.countSentSince(now() - 3_600, { excludeHash: UNRESOLVED_MARKER }),
+    0,
+    'acknowledgements must not count against the answer budget'
+  );
+
+  const answer = await responder.respond({ iden: 'real' }, { answer: '2', confident: true });
+  assert.equal(answer.sent, true, 'a genuine answer is still sent after a burst of junk');
+  assert.equal(answer.unresolved, false);
+  assert.equal(calls.at(-1).body, '2');
+});
+
+test('#48: the acknowledgement budget is separate and still bounded', async (t) => {
+  const now = () => Date.parse('2026-01-01T00:00:00Z') / 1000;
+  const store = memoryStore({ now });
+  t.after(() => store.close());
+  const calls = [];
+  const client = { createNote: async (note) => (calls.push(note), { iden: `n-${calls.length}` }) };
+  const responder = createResponder({
+    client,
+    store,
+    now,
+    minIntervalMs: 0,
+    maxPerHour: 20,
+    unresolvedMaxPerHour: 2,
+  });
+
+  assert.equal((await responder.respond({ iden: 'j1' }, { answer: null })).sent, true);
+  assert.equal((await responder.respond({ iden: 'j2' }, { answer: null })).sent, true);
+  const thirdAck = await responder.respond({ iden: 'j3' }, { answer: null });
+  assert.equal(thirdAck.sent, false, 'the acknowledgement budget refuses the third ack');
+  assert.equal(thirdAck.reason, 'rate-limited');
+
+  // The answer budget is untouched by the two acks, so an answer still goes out.
+  const answer = await responder.respond({ iden: 'real' }, { answer: '7', confident: true });
+  assert.equal(answer.sent, true);
+  assert.equal(calls.length, 3);
+});
+
+test('#48: answers and acknowledgements have independent hourly windows', async (t) => {
+  let clock = Date.parse('2026-01-01T00:00:00Z') / 1000;
+  const now = () => clock;
+  const store = memoryStore({ now });
+  t.after(() => store.close());
+  const calls = [];
+  const client = { createNote: async (note) => (calls.push(note), { iden: `n-${calls.length}` }) };
+  const responder = createResponder({ client, store, now, minIntervalMs: 0, maxPerHour: 1 });
+
+  assert.equal((await responder.respond({ iden: 'a1' }, { answer: '1', confident: true })).sent, true);
+  assert.equal((await responder.respond({ iden: 'a2' }, { answer: '2', confident: true })).reason, 'rate-limited');
+  // An acknowledgement is not blocked by the exhausted answer budget.
+  assert.equal((await responder.respond({ iden: 'j1' }, { answer: null })).sent, true);
+
+  // An hour later the answer budget has rolled over.
+  clock += 3_601;
+  assert.equal((await responder.respond({ iden: 'a3' }, { answer: '3', confident: true })).sent, true);
 });
 
 test('the responder formats the note with the configured prefix and boldness', async (t) => {

@@ -37,6 +37,12 @@ export const DEFAULT_UNRESOLVED_TEXT =
 export const UNRESOLVED_MARKER = 'unresolved';
 export const DEFAULT_MIN_INTERVAL_MS = 3_000;
 export const DEFAULT_MAX_PER_HOUR = 20;
+// Acknowledgements get their own, looser budget (#48). They are cheap and expected,
+// and the sender of a junk image deserves a reply, but they must never compete with a
+// real answer for the same allowance. 60/hour is one a minute on average - looser than
+// the 20 answers/hour budget, and still bounded so a junk-image flood cannot turn the
+// account into a note-spammer. The 3 s minimum interval still bounds the burst.
+export const DEFAULT_UNRESOLVED_MAX_PER_HOUR = 60;
 
 export function answerHash(answer) {
   return createHash('sha256').update(String(answer)).digest('hex').slice(0, 32);
@@ -95,6 +101,7 @@ export function createResponder({
   requireConfidence = true,
   minIntervalMs = DEFAULT_MIN_INTERVAL_MS,
   maxPerHour = DEFAULT_MAX_PER_HOUR,
+  unresolvedMaxPerHour = DEFAULT_UNRESOLVED_MAX_PER_HOUR,
   strategy = 'note-push',
   strategies = {},
   now = () => Date.now() / 1000,
@@ -168,8 +175,22 @@ export function createResponder({
 
     // Rate limits are checked before the claim so a refused send can still happen
     // later; a claimed-but-refused note would be lost forever.
-    if (store && store.countSentSince(now() - 3_600) >= maxPerHour) {
-      return finish({ sent: false, reason: 'rate-limited', unresolved: outgoing.unresolved });
+    //
+    // Answers and acknowledgements are counted separately (#48). Counting them
+    // together let a burst of junk images exhaust the hourly cap and drop a real
+    // answer as `rate-limited` - the app went silent exactly when it had something
+    // worth sending. The answer budget excludes the acknowledgement marker; the
+    // acknowledgement budget counts only it. The responder's literal lives here, not
+    // in the store, which only knows one `answer_hash` to include or exclude.
+    if (store) {
+      const windowStart = now() - 3_600;
+      if (outgoing.unresolved) {
+        if (store.countSentSince(windowStart, { onlyHash: UNRESOLVED_MARKER }) >= unresolvedMaxPerHour) {
+          return finish({ sent: false, reason: 'rate-limited', unresolved: true });
+        }
+      } else if (store.countSentSince(windowStart, { excludeHash: UNRESOLVED_MARKER }) >= maxPerHour) {
+        return finish({ sent: false, reason: 'rate-limited', unresolved: false });
+      }
     }
     if (store && minIntervalMs > 0) {
       const last = store.lastSentAt();
@@ -233,5 +254,6 @@ export function createResponder({
     requireConfidence,
     minIntervalMs,
     maxPerHour,
+    unresolvedMaxPerHour,
   };
 }

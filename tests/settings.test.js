@@ -60,6 +60,28 @@ function makeEditor(t, { configPath = null, secrets = null, saveSecrets = null, 
 
 test('every setting the issue names is editable', () => {
   const ids = SETTINGS.map((s) => s.id);
+  // #35: the settings added after #27's list - the HTTP ingress (including its
+  // secret token), Tier 0, the OCR reading controls, the breaker knobs and [image].
+  for (const expected of [
+    'http.enabled',
+    'http.token',
+    'http.bind',
+    'http.port',
+    'http.rate_limit_per_min',
+    'http.timeout_ms',
+    'http.max_body_bytes',
+    'http.max_queue',
+    'solver.tier0',
+    'solver.breaker_threshold',
+    'solver.breaker_cooldown_sec',
+    'ocr.languages',
+    'ocr.min_confidence',
+    'image.max_width',
+    'image.max_pixels',
+    'reply.unresolved_max_per_hour',
+  ]) {
+    assert.ok(ids.includes(expected), `${expected} must be editable`);
+  }
   for (const expected of [
     'pushbullet.token',
     'llm.api_key',
@@ -271,6 +293,109 @@ test('the config file never contains the token, even in a mixed save', async (t)
   assert.match(text, /offline_only = true/);
 });
 
+test('#35: the HTTP token goes to the credential store, never config.toml, in a mixed save', async (t) => {
+  const dir = tempDir(t);
+  const path = join(dir, 'config.toml');
+  const { editor, secretsWrites } = makeEditor(t, { secrets: { http: { value: null, source: null } }, configPath: path });
+  const token = 'a-long-random-enough-token';
+  editor.set('http.token', token);
+  editor.set('http.enabled', 'true');
+  const result = await editor.save();
+
+  assert.deepEqual(secretsWrites, [{ http: token }], 'the token reaches the credential-store seam');
+  assert.deepEqual(result.secretsSaved, ['http']);
+  const text = readFileSync(path, 'utf8');
+  assert.equal(text.includes(token), false, 'the token must never appear in config.toml');
+  assert.equal(/token|secret|password/i.test(text), false, 'no secret-shaped key is written');
+  assert.match(text, /enabled = true/, 'the non-secret http setting is written');
+
+  // And it round-trips as a non-secret setting via the loader (the token is not in it).
+  const reloaded = loadConfig({ explicitPath: path, env: {} });
+  assert.equal(reloaded.config.http.enabled, true);
+});
+
+test('#35: a weak HTTP token is rejected before anything is written', (t) => {
+  const dir = tempDir(t);
+  const path = join(dir, 'config.toml');
+  const original = '[http]\nenabled = false\n';
+  writeFileSync(path, original);
+  const { editor, secretsWrites } = makeEditor(t, { configPath: path });
+  // The same rule the server enforces at startup (#47): too short, a well-known
+  // value, and too little variation.
+  assert.throws(() => editor.set('http.token', 'short'), /http\.token is not usable/);
+  assert.throws(() => editor.set('http.token', 'changeme'), /weak value/);
+  assert.throws(() => editor.set('http.token', 'aaaaaaaaaaaaaaaaaa'), /variation/);
+  assert.equal(editor.pending.size, 0);
+  assert.deepEqual(secretsWrites, []);
+  assert.equal(readFileSync(path, 'utf8'), original, 'a rejected token leaves the file byte-identical');
+});
+
+test('#35: every new non-secret setting round-trips through the real loader', async (t) => {
+  const dir = tempDir(t);
+  const path = join(dir, 'config.toml');
+  const { editor } = makeEditor(t, { configPath: path });
+  const changes = [
+    ['solver.tier0', 'false'],
+    ['solver.breaker_threshold', '5'],
+    ['solver.breaker_cooldown_sec', '120'],
+    ['ocr.languages', 'nld, eng'],
+    ['ocr.min_confidence', '42'],
+    ['image.max_width', '1234'],
+    ['image.max_pixels', '7654321'],
+    ['http.enabled', 'true'],
+    ['http.bind', '0.0.0.0'],
+    ['http.port', '9999'],
+    ['http.rate_limit_per_min', '7'],
+    ['http.timeout_ms', '12345'],
+    ['http.max_body_bytes', '1048576'],
+    ['http.max_queue', '3'],
+    ['reply.unresolved_max_per_hour', '90'],
+  ];
+  for (const [id, value] of changes) editor.set(id, value);
+  const result = await editor.save();
+  assert.equal(result.saved, true);
+
+  const config = loadConfig({ explicitPath: path, env: {} }).config;
+  assert.equal(config.solver.tier0, false);
+  assert.equal(config.solver.breaker_threshold, 5);
+  assert.equal(config.solver.breaker_cooldown_sec, 120);
+  assert.deepEqual(config.ocr.languages, ['nld', 'eng']);
+  assert.equal(config.ocr.min_confidence, 42);
+  assert.equal(config.image.max_width, 1234);
+  assert.equal(config.image.max_pixels, 7654321);
+  assert.equal(config.http.enabled, true);
+  assert.equal(config.http.bind, '0.0.0.0');
+  assert.equal(config.http.port, 9999);
+  assert.equal(config.http.rate_limit_per_min, 7);
+  assert.equal(config.http.timeout_ms, 12345);
+  assert.equal(config.http.max_body_bytes, 1048576);
+  assert.equal(config.http.max_queue, 3);
+  assert.equal(config.reply.unresolved_max_per_hour, 90);
+});
+
+test('#35: out-of-range new values are rejected and write nothing', async (t) => {
+  const dir = tempDir(t);
+  const path = join(dir, 'config.toml');
+  const original = '[solver]\noffline_only = false\n';
+  writeFileSync(path, original);
+  const { editor } = makeEditor(t, { configPath: path });
+  assert.throws(() => editor.set('http.port', '70000'), /http\.port must be <= 65535/);
+  assert.throws(() => editor.set('ocr.min_confidence', '101'), /ocr\.min_confidence must be <= 100/);
+  assert.throws(() => editor.set('solver.breaker_threshold', '0'), /solver\.breaker_threshold must be >= 1/);
+  assert.throws(() => editor.set('image.max_pixels', '0'), /image\.max_pixels must be >= 1/);
+  assert.throws(() => editor.set('reply.unresolved_max_per_hour', 'soon'), /must be an integer/);
+  assert.equal(editor.pending.size, 0);
+  assert.equal(readFileSync(path, 'utf8'), original);
+});
+
+test('#35: the HTTP token has no connection to test', async (t) => {
+  const { editor } = makeEditor(t);
+  const item = editor.list().find((i) => i.id === 'http.token');
+  assert.equal(item.secret, true);
+  assert.equal(item.testable, false, 'the editor must not offer a probe the token cannot answer');
+  await assert.rejects(() => editor.test('http.token'), /no connection to test/);
+});
+
 test('the editor refuses an empty or whitespace-bearing secret', (t) => {
   const { editor } = makeEditor(t);
   assert.throws(() => editor.set('pushbullet.token', '   '), SettingValueError);
@@ -310,7 +435,27 @@ test('the editor Test connection reuses the setup probe seam', async (t) => {
 
 test('only settings the running process re-reads are marked live', () => {
   const live = SETTINGS.filter((s) => s.restart === false).map((s) => s.id).sort();
-  assert.deepEqual(live, ['storage.log_images', 'ui.notify_on_unresolved']);
+  // Each of these is read from the shared config object per solve/push/request:
+  // `core.solve` re-reads tier0, variants, min_confidence and max_pixels;
+  // `handlePush` and the HTTP request path re-read the image caps; `core.solve` and
+  // `handlePush` re-read log_images and notify_on_unresolved. Everything captured at
+  // listener/reasoner/responder/HTTP-server construction is `[restart]`.
+  assert.deepEqual(live, [
+    'image.max_pixels',
+    'image.max_width',
+    'ocr.min_confidence',
+    'ocr.variants',
+    'solver.tier0',
+    'storage.log_images',
+    'ui.notify_on_unresolved',
+  ]);
+  // `ocr.languages` is restart-bound even though it sits next to ocr.min_confidence:
+  // the Tesseract worker is created once at startup, and the bundled traineddata is
+  // `nld` only. The HTTP ingress and the breaker knobs are captured at construction.
+  assert.equal(getSetting('ocr.languages').restart, true);
+  assert.equal(getSetting('http.bind').restart, true);
+  assert.equal(getSetting('http.port').restart, true);
+  assert.equal(getSetting('solver.breaker_threshold').restart, true);
   assert.equal(getSetting('pushbullet.poll_interval_sec').restart, true);
   assert.equal(getSetting('pushbullet.token').restart, true);
 });

@@ -413,6 +413,23 @@ test('the HTTP gate honours a configured pixel cap', async (t) => {
   assert.equal(res.json.reason, 'pixels');
 });
 
+test('#35: the HTTP gate re-reads the image caps live, not at server construction', async (t) => {
+  const config = validateConfig({ http: { enabled: true, bind: '127.0.0.1', port: 0 } }).config;
+  const { url } = await startServer(t, { config });
+  // 1000x500 = 500,000 px, under the default 1,000,000 cap.
+  const bytes = await sharp({ create: { width: 1000, height: 500, channels: 3, background: '#ffffff' } })
+    .png()
+    .toBuffer();
+  assert.equal((await post(url, { body: bytes, contentType: 'image/png' })).status, 200);
+
+  // Mutate the shared config in place, exactly as `applyLiveSettings` does for a
+  // `[live]` setting. A captured copy would still accept the image.
+  config.image.max_pixels = 1000;
+  const res = await post(url, { body: bytes, contentType: 'image/png' });
+  assert.equal(res.status, 413, 'the lowered cap must apply without a restart');
+  assert.equal(res.json.reason, 'pixels');
+});
+
 // ---------------------------------------------------------------------------
 // Rate limit
 // ---------------------------------------------------------------------------

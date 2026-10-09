@@ -90,6 +90,10 @@ export const DEFAULTS = {
     require_confidence: true,
     min_interval_sec: 3,
     max_per_hour: 20,
+    // Acknowledgements have their own, looser budget so a junk-image flood cannot
+    // starve real answers (#48). 60/hour is one a minute on average; the 3 s minimum
+    // interval still bounds a burst.
+    unresolved_max_per_hour: 60,
   },
   storage: {
     retain_days: 7,
@@ -318,6 +322,7 @@ export function validateConfig(raw = {}) {
   requireBoolean(config, 'reply', 'require_confidence');
   requireNumber(config, 'reply', 'min_interval_sec', { min: 0 });
   requireNumber(config, 'reply', 'max_per_hour', { min: 0, integer: true });
+  requireNumber(config, 'reply', 'unresolved_max_per_hour', { min: 0, integer: true });
 
   requireNumber(config, 'storage', 'retain_days', { min: 0 });
   requireBoolean(config, 'storage', 'log_images');

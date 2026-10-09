@@ -367,6 +367,7 @@ export async function createApp({
       requireConfidence: config.reply.require_confidence,
       minIntervalMs: config.reply.min_interval_sec * 1000,
       maxPerHour: config.reply.max_per_hour,
+      unresolvedMaxPerHour: config.reply.unresolved_max_per_hour,
       strategy: config.reply.strategy,
       logger,
     });
