@@ -25,9 +25,13 @@ guess (see [What happens to a puzzle](#what-happens-to-a-puzzle)).
 The web UI — settings, solving an uploaded image, and statistics — is shown in the
 sections below and in [`docs/screenshots/`](./docs/screenshots/README.md), which records
 how the images are regenerated (`npm run screenshots`, needs Firefox) and what to do when
-the UI changes. They cost roughly 700 KiB in the repository. The UI follows the OS
+the UI changes. They cost about **1.2 MiB** in the repository. The UI follows the OS
 light/dark preference and carries a **Light / Dark / Auto** toggle that persists in a
-cookie, with no JavaScript.
+cookie, with no JavaScript. It is drawn from a single CSS custom-property token layer
+(colour roles, spacing, radii, borders, a type ramp), so both themes and all four pages
+share one source of truth; the settings table is grouped by topic with jump links, a
+solve result names solved / withheld / unresolved in words and shape, and empty states
+are designed rather than left blank.
 
 ## Status
 
@@ -361,9 +365,16 @@ node src/cli.js config edit                  # the guided editor over stdin
 node src/cli.js config edit --gui            # the same editor as a loopback web UI
 ```
 
-![The PuzzleSolver settings page: a table of every editable setting with its current value, a live or restart tag, and a Test connection button for each secret.](./docs/screenshots/settings.png)
+![The PuzzleSolver settings page: every editable setting, grouped by topic (Pushbullet, Solver and models, Replies, …) with a Jump to list of anchors, a current value, a live or restart tag and a Test connection button for each secret.](./docs/screenshots/settings.png)
 
 ![The same settings page in the explicit dark theme, with a Light / Dark / Auto toggle in the header.](./docs/screenshots/settings-dark.png)
+
+The ~50 rows are grouped by **topic** (the setting's `id` prefix) with a **Jump to** list
+of section anchors, because that is how someone actually finds one — a lifecycle split
+would make you hunt through two lists for "the reply text". Nothing is hidden behind a
+disclosure: every row is still on the page. Each row keeps its `[live]` / `[restart]`
+tag and the `[security]` marker, and each group's header counts how many of its rows
+need a restart, so the lifecycle information is not lost to the grouping.
 
 Secrets go to the credential store, never to `config.toml`. That covers all three of
 them: `config set pushbullet.token o.xxxxxxxx`, `config set llm.api_key sk-xxxxxxxx` and
@@ -404,7 +415,7 @@ shows the **answer**, the **method** (`tier0`, `model:text` or `model:vision`),
 because it is the same serialiser. An unresolved puzzle shows the configured
 acknowledgement text; a guess is never displayed.
 
-![The solve page after uploading a committed corpus sample: a Solved banner and the answer 2, method tier0:count, confident true and the time taken.](./docs/screenshots/solve.png)
+![The solve page after uploading a committed corpus sample: a bordered outcome card with a check icon reading "Solved.", the answer 2, method tier0:count, confident true and the time taken.](./docs/screenshots/solve.png)
 
 ### The statistics page
 
@@ -420,7 +431,7 @@ above shows each solve separately. Recorded traffic (real, with no ground truth)
 offline corpus (our own fixtures) are two separate, labelled figures and are never
 blended; the corpus is called a regression guard, not real-world accuracy.
 
-![The statistics page: recent solves with answer, method, sent or withheld verdict and took, then recorded-traffic totals by tier and puzzle class, then a separate offline-corpus section.](./docs/screenshots/statistics.png)
+![The statistics page: recent solves each carrying a shaped solved / withheld / unresolved verdict with answer, method, sent-or-withheld reason and took, then recorded-traffic totals by tier and puzzle class, then a separate offline-corpus section whose empty state says no report is cached.](./docs/screenshots/statistics.png)
 
 ### Exposing the web UI beyond loopback (read this before doing it)
 
@@ -825,7 +836,7 @@ plain ESM.
 
 ```bash
 npm install
-npm test              # 737 tests (731 pass, 6 skip), offline: no network, no token, no key
+npm test              # 746 tests (740 pass, 6 skip), offline: no network, no token, no key
 npm run test:unit     # fast subset
 npm run test:corpus   # real images through real OCR, ~4s
 npm run test:live     # opt-in; skips unless LLM_API_KEY is set

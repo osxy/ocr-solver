@@ -694,6 +694,25 @@ the two known values reach the attribute — so a theme cookie cannot inject mar
 themes' foreground/background pairs were measured against WCAG AA rather than judged by
 eye; the ratios are in the issue's PR body.
 
+**The UI is drawn from one token layer, and the settings page is grouped by topic (issue #104).**
+The appearance used to be a collection of locally sensible values; the defect was that no two
+rules agreed on a spacing or a radius. `src/ui/web-config.js` now declares the colour roles, the
+spacing scale, the radii, the border widths and the type ramp once, as JavaScript objects that
+generate the `:root` and dark-variable blocks, and every rule consumes `var(--token)`. Because the
+palette is data rather than text, `tests/web-tokens.test.js` asserts that both themes define the
+same roles, that every recorded pair meets WCAG AA, that every reference resolves, and that no
+page function emits a literal colour, radius or spacing. The ~50 settings rows are grouped by the
+`id` prefix (topic, not lifecycle) with a jump list of anchors; the lifecycle tags stay on every
+row and are counted per group, because grouping is a finding aid, not a replacement for the
+metadata. A solve result renders as one of three shaped cards - solved (check), withheld (pause),
+unresolved (question) - plus the word, so the outcome is readable without colour. Empty states
+(no solves, no traffic, no corpus) and refusals are designed components rather than bare
+paragraphs. There is no client-side loading state to design: every page is server-rendered and
+there is no script; the only asynchronous paint is a lazy thumbnail, which uses a sized
+panel-coloured placeholder so it does not reflow. `prefers-reduced-motion` collapses the
+transitions to nothing. The token layer could not be a build step: there is no bundler, and the
+CSP (`default-src 'none'`) still forbids scripts and external assets.
+
 **The upgrade review registry (issue #67).** A new release can add a setting an existing install
 silently never sees. The enabling change is a `since` field on each descriptor in
 `src/ui/settings.js` — the release that introduced the setting — and `securityRelevant` for a

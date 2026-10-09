@@ -110,6 +110,9 @@ function seedHistory(store, setClock) {
     { subject: 'demo/needs-model-001.png', answer: null, method: null, klass: 'unknown', confident: false, ms: 8420, at: base + 5400, respond: { sent: false, reason: 'no tier produced a valid answer' } },
     { subject: 'demo/needs-model-004.png', answer: 'Amsterdam', method: 'model:vision', klass: 'unknown', confident: true, ms: 15340, at: base + 7200, respond: { sent: true } },
     { subject: 'demo/005-count-vruchten.png', answer: '4', method: 'tier0:count', klass: 'count', confident: true, ms: 1020, at: base + 9000, respond: null },
+    // #104: a withheld candidate, so the screenshot shows all three outcomes
+    // (solved, withheld, unresolved) and the mistake is visible if one regresses.
+    { subject: 'demo/007-ordinal-kleur.png', answer: 'rood', method: 'model:text', klass: 'ordinal', confident: false, ms: 4800, at: base + 10800, respond: { sent: false, reason: 'unconfirmed' } },
   ];
   for (const row of rows) {
     setClock(row.at);
