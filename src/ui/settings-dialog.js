@@ -22,6 +22,7 @@ export async function defaultSettingsDialog({
   editor,
   configPath = null,
   credentialPath = null,
+  credentialStore = null,
   logger = null,
   input = process.stdin,
   output = process.stdout,
@@ -64,7 +65,7 @@ export async function defaultSettingsDialog({
   try {
     say('PuzzleSolver settings');
     if (configPath) say(`Config file: ${configPath}`);
-    if (credentialPath) say(`Secrets: ${credentialPath}`);
+    if (credentialStore ?? credentialPath) say(`Secrets: ${credentialStore ?? credentialPath}`);
     const newCount = editor.list().filter((item) => item.isNew).length;
     if (newCount > 0) say(`${newCount} setting(s) are new since your last review (marked [new]).`);
     printList();

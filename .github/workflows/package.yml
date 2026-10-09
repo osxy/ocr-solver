@@ -115,6 +115,16 @@ jobs:
           $zip = (Get-ChildItem dist/*.zip).FullName
           ./packaging/run-deploy.ps1 -Zip $zip
 
+      # The artifact has to exist before DPAPI can be exercised, and a real
+      # windows-latest runner is what makes this a demonstration rather than a
+      # code-reading exercise. It uses the extracted artifact's own node.exe and
+      # app/src/secrets.js (#60).
+      - name: Prove the DPAPI credential round trip
+        shell: pwsh
+        run: |
+          $zip = (Get-ChildItem dist/*.zip).FullName
+          ./packaging/run-dpapi.ps1 -Zip $zip
+
   release:
     needs: [package, deploy]
     if: startsWith(github.ref, 'refs/tags/v')

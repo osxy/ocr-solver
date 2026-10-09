@@ -134,8 +134,11 @@ $env:PUSHBULLET_TOKEN = "o.xxxxxxxx"
 $env:LLM_API_KEY       = "sk-xxxxxxxx"
 ```
 
-…or write the credential-store file at `%APPDATA%\PuzzleSolver\credentials.json` on
-Windows or `${XDG_CONFIG_HOME:-~/.config}/puzzlesolver/credentials.json` elsewhere:
+…or put them in the credential store. On Linux/macOS that is the file at
+`${XDG_CONFIG_HOME:-~/.config}/puzzlesolver/credentials.json`; on Windows it is the
+DPAPI-protected blob at `%APPDATA%\PuzzleSolver\credentials.dpapi`. A hand-written plaintext
+`%APPDATA%\PuzzleSolver\credentials.json` still works: it is migrated to DPAPI and removed
+on the next start.
 
 ```json
 { "pushbullet_token": "o.xxxxxxxx", "llm_api_key": "sk-xxxxxxxx" }
@@ -149,16 +152,26 @@ stores what you enter in the credential store; cancel it and nothing starts.
 `PUSHBULLET_TOKEN` and the credential-store file. The model key is optional: with none,
 the app runs offline-only (Tier 0).
 
-**On Windows the file store is also what runs.** A Credential Manager provider exists in
-`src/secrets.js` behind an injectable loader, but the `keytar` binding it needs is **not a
-dependency** of this project, so `import('keytar')` fails and resolution falls through to
-the file (`%APPDATA%\PuzzleSolver\credentials.json`, mode 600). The provider is
-unverified code, not a shipped capability; do not expect a Windows Credential Manager
-entry to appear.
+**On Windows the secrets are DPAPI-protected.** `src/secrets.js` writes them through
+`[System.Security.Cryptography.ProtectedData]::Protect(..., 'CurrentUser')`, reached via the
+PowerShell that ships with Windows, so there is no npm dependency and no separate key to
+manage. A pre-existing plaintext `credentials.json` is read once, migrated and removed. If the
+protected call cannot be made, the app still starts on the file store and **says which store it
+used** — `config list` reports the source (`windows-dpapi` vs `file`) and the startup log names
+the chain. The round trip is executed on a real `windows-latest` runner by the deploy job
+(`packaging/run-dpapi.ps1`), not merely asserted from the code calling DPAPI.
+
+**What DPAPI does and does not protect.** At `CurrentUser` scope the blob is readable only by
+this account on this machine, and a copy taken elsewhere (a backup, a profile copy, another
+machine) cannot be decrypted. It does **not** protect against malware running as the same user:
+any process running as you can ask the OS to unprotect it. It raises the bar from "a readable
+plaintext file in your profile" to "the OS keyed to your account"; it is not a defence against a
+compromised account.
 
 When `[http] enabled = true`, a second secret is required: the bearer token for the
 HTTP endpoint. Set `HTTP_AUTH_TOKEN` in the environment, or add `http_auth_token` to the
-same `credentials.json`:
+same credential store (a hand-written `credentials.json` is migrated to DPAPI on the next
+start on Windows):
 
 ```json
 { "pushbullet_token": "o.xxxxxxxx", "llm_api_key": "sk-xxxxxxxx", "http_auth_token": "a-long-random-string" }
@@ -227,7 +240,8 @@ node src/cli.js config edit --gui            # the same editor as a loopback web
 
 Secrets go to the credential store, never to `config.toml`. That covers all three of
 them: `config set pushbullet.token o.xxxxxxxx`, `config set llm.api_key sk-xxxxxxxx` and
-`config set http.token a-long-random-enough-token` each write `credentials.json` and leave
+`config set http.token a-long-random-enough-token` each write the credential store (the DPAPI
+blob on Windows, `credentials.json` elsewhere) and leave
 the TOML file alone (or uncreated). The HTTP token is checked against the same strength
 rule the server enforces at startup, so the editor cannot store a token the app then
 refuses to start with. Everything else is checked with the same `validateConfig` the
@@ -285,7 +299,8 @@ node src/cli.js config set web_ui.password 'a long passphrase'
 node src/cli.js config edit --gui        # or set it in the Settings page
 ```
 
-That stores a **salt + `scrypt` verifier** in `credentials.json` (never the password,
+That stores a **salt + `scrypt` verifier** in the credential store (`credentials.json`, or the
+DPAPI blob on Windows — never the password,
 never `config.toml`); a non-loopback client must sign in, and failed logins are
 throttled. With a non-loopback range and no credential the service **refuses to start**,
 naming `web_ui.password`, rather than listen unauthenticated.
@@ -520,7 +535,7 @@ carries the configured `unresolvedReply` wording when replies are enabled; an un
 one carries `"reason": "unconfirmed"` instead (issue #42).
 
 **No replies at all.** Check, in order: (1) a Pushbullet token is present
-(`PUSHBULLET_TOKEN`, `--token`, or `credentials.json`) — without it the service refuses
+(`PUSHBULLET_TOKEN`, `--token`, or the credential store) — without it the service refuses
 to start; (2) `reply.enabled` is `true` and `reply.require_confidence` is not
 suppressing a merely validated answer; (3) the log and the listener state — a **grey
 tray icon** means the listener has been quiet for 10 minutes, and the stream reconnects
@@ -545,7 +560,7 @@ way out.
 |---|---|---|
 | Install | `%LOCALAPPDATA%\Programs\PuzzleSolver` | — |
 | Config | `%APPDATA%\PuzzleSolver\config.toml` | `${XDG_CONFIG_HOME:-~/.config}/PuzzleSolver/config.toml` |
-| Credentials | `%APPDATA%\PuzzleSolver\credentials.json` | `${XDG_CONFIG_HOME:-~/.config}/puzzlesolver/credentials.json` |
+| Credentials | `%APPDATA%\PuzzleSolver\credentials.dpapi` (DPAPI; a legacy `credentials.json` is migrated) | `${XDG_CONFIG_HOME:-~/.config}/puzzlesolver/credentials.json` |
 | Log | `%LOCALAPPDATA%\PuzzleSolver\logs\app.log` | `${XDG_STATE_HOME:-~/.local/state}/puzzlesolver/logs/app.log` |
 | State DB | `%LOCALAPPDATA%\PuzzleSolver\state.db` | `${XDG_DATA_HOME:-~/.local/share}/puzzlesolver/state.db` |
 | Inbox | `%LOCALAPPDATA%\PuzzleSolver\inbox` | `${XDG_DATA_HOME:-~/.local/share}/puzzlesolver/inbox` |
@@ -577,7 +592,10 @@ folders. Manually: `schtasks /Delete /TN PuzzleSolver /F`, then delete
   the **native tray widget** and the **notification toast** are still unverified, as is
   the `explorer.exe` browser hand-off for the settings UI (issue #56). The
   restart-on-failure *properties* are inspected; a crash loop has not been seen
-  restarting the task. The Credential Manager provider is not shipped at all (see
+  restarting the task. The **DPAPI credential round trip is executed** on the runner by
+  the deploy job (`packaging/run-dpapi.ps1`): a plaintext file is migrated, removed and read
+  back through the shipped `app/src/secrets.js`. What DPAPI cannot protect is a process
+  running as the same user (see
   [Secrets](#secrets-go-in-the-environment-or-the-credential-store)). `--headless`
   remains the supported fallback for an unattended machine.
 - **The web UI is plain HTTP and its non-loopback credential is transport-unprotected.**
@@ -624,7 +642,7 @@ plain ESM.
 
 ```bash
 npm install
-npm test              # 534 tests (528 pass, 6 skip), offline: no network, no token, no key
+npm test              # 672 tests (666 pass, 6 skip), offline: no network, no token, no key
 npm run test:unit     # fast subset
 npm run test:corpus   # real images through real OCR, ~4s
 npm run test:live     # opt-in; skips unless LLM_API_KEY is set
