@@ -112,6 +112,40 @@ test('setting the token as a command writes the credential store and never confi
   assert.equal(credentials.pushbullet_token, 'o.COMMAND-ROTATED');
 });
 
+test('#35: config set solver.tier0 applies live and persists', (t) => {
+  const result = runConfig(t, ['set', 'solver.tier0', 'false']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Applied live: solver\.tier0/);
+  assert.equal(loadConfig({ explicitPath: result.configPath, env: {} }).config.solver.tier0, false);
+});
+
+test('#35: config set http.enabled persists the ingress switch and asks for a restart', (t) => {
+  const result = runConfig(t, ['set', 'http.enabled', 'true']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Restart the service for: http\.enabled/);
+  assert.equal(loadConfig({ explicitPath: result.configPath, env: {} }).config.http.enabled, true);
+});
+
+test('#35: the HTTP token reaches the credential store, never config.toml, through config edit', (t) => {
+  const token = 'a-long-random-enough-token';
+  const result = runConfig(t, ['edit'], { input: `http.token\n${token}\nhttp.enabled\ntrue\n\ny\n` });
+  assert.equal(result.status, 0, result.stderr);
+  const credentials = JSON.parse(readFileSync(result.credentialsPath, 'utf8'));
+  assert.equal(credentials.http_auth_token, token);
+  const text = readFileSync(result.configPath, 'utf8');
+  assert.equal(text.includes(token), false, 'the token must not appear in config.toml');
+  assert.match(text, /enabled = true/);
+  assert.equal(loadConfig({ explicitPath: result.configPath, env: {} }).config.http.enabled, true);
+});
+
+test('#35: a weak HTTP token through config set exits non-zero and writes nothing', (t) => {
+  const result = runConfig(t, ['set', 'http.token', 'short']);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /http\.token is not usable/);
+  assert.equal(existsSync(result.configPath), false);
+  assert.equal(existsSync(result.credentialsPath), false, 'a rejected token must not create the store');
+});
+
 test('config edit runs the guided editor over stdin and saves the change', (t) => {
   // change> id, value, blank change> (finish), confirm.
   const result = runConfig(t, ['edit'], { input: 'solver.self_consistency_n\n7\n\ny\n' });

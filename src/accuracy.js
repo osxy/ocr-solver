@@ -7,13 +7,23 @@
  * Vocabulary, chosen to keep the honesty of the number visible:
  *   - `seen`      every puzzle in the set;
  *   - `valid`     the pipeline produced an answer that passed its class validator;
+ *   - `sentable`  valid **and** corroborated: what the default responder
+ *                 (`require_confidence = true`) would actually send. `withheld` is
+ *                 the valid-but-uncorroborated difference. These are separate from
+ *                 `valid` because a validator-accepted answer can be withheld, and
+ *                 counting it as sent overstates the traffic number (issue #49);
  *   - `correct`   the answer matched known ground truth (only counted when the
  *                 fixture carries an `expected` answer);
  *   - `validRate` = valid / seen. This is the literal "% valid answers / puzzles
- *                 seen" from issue #5 and it works without ground truth, which is
- *                 why the recorded-traffic report uses it as the headline.
+ *                 seen" from issue #5 and it works without ground truth.
+ *   - `sentableRate` = sentable / seen. This is the recorded-traffic headline,
+ *                 because it is what would have been sent rather than what passed a
+ *                 validator.
  *   - `accuracy`  = correct / gradeable. Ground-truth accuracy; null on real
  *                 traffic, because the store does not know the right answer.
+ *   - `failures`  = graded items (`expected != null`) that were wrong. Ungraded
+ *                 missing answers are reported as `unresolved` instead, so a solved
+ *                 traffic puzzle is never listed as a failure (issue #49).
  *
  * **Provenance is never blended.** Every report groups by `provenance`
  * (`real` | `synthetic` | `derived`) and by `kind` (`image` | `text`). A synthetic
@@ -44,6 +54,13 @@ export function summarize(outcomes) {
   const valid = outcomes.filter((o) => o.valid).length;
   const correct = outcomes.filter((o) => o.correct).length;
   const confident = outcomes.filter((o) => o.confident).length;
+  // `valid` is the validator's verdict; `sentable` is what the default responder
+  // (`require_confidence = true`) would actually send: validator-accepted AND
+  // corroborated. `withheld` is the difference. The traffic report used to fold the
+  // withheld rows into `valid`, so its headline counted answers that were never sent
+  // (issue #49). The two are now separate figures, each meaning its own label.
+  const sentable = outcomes.filter((o) => o.valid && o.confident).length;
+  const withheld = valid - sentable;
   const gradeable = outcomes.filter((o) => o.expected != null).length;
   const pending = outcomes.filter((o) => o.expected == null).length;
   return {
@@ -51,11 +68,14 @@ export function summarize(outcomes) {
     valid,
     correct,
     confident,
+    sentable,
+    withheld,
     gradeable,
     pending,
     validRate: rate(valid, seen),
     accuracy: rate(correct, gradeable),
     confidentRate: rate(confident, seen),
+    sentableRate: rate(sentable, seen),
   };
 }
 
@@ -79,8 +99,11 @@ export function buildReport(outcomes, { source = 'corpus', label = null } = {}) 
     byProvenance: groupBy(outcomes, 'provenance'),
     byClass: groupBy(outcomes, 'class'),
     byKind: groupBy(outcomes, 'kind'),
+    // `failures` means one thing only: a graded item (ground truth known) whose
+    // answer was wrong or absent. Recorded traffic has no ground truth, so `correct`
+    // is always false there and every row used to be listed as a failure (#49).
     failures: outcomes
-      .filter((o) => !o.correct)
+      .filter((o) => o.expected != null && !o.correct)
       .map((o) => ({
         id: o.id,
         provenance: o.provenance,
@@ -89,6 +112,18 @@ export function buildReport(outcomes, { source = 'corpus', label = null } = {}) 
         expected: o.expected,
         answer: o.answer,
         valid: o.valid,
+        error: o.error ?? null,
+      })),
+    // The ungraded counterpart: a recorded puzzle that produced no validator-accepted
+    // answer. It is not a "failure" (nothing was known to be wrong); it is unresolved.
+    unresolved: outcomes
+      .filter((o) => o.expected == null && !o.valid)
+      .map((o) => ({
+        id: o.id,
+        provenance: o.provenance,
+        kind: o.kind,
+        class: o.class,
+        answer: o.answer,
         error: o.error ?? null,
       })),
   };
@@ -298,11 +333,12 @@ export function percent(value, digits = 1) {
   return value == null ? 'n/a' : `${(value * 100).toFixed(digits)}%`;
 }
 
-/** One compact line per summary, used by the tray tooltip and the CLI header. */
+/** One compact line per summary, used by the accuracy CLI and `formatReport`. */
 export function formatSummary(summary) {
   return (
     `${summary.correct}/${summary.gradeable} correct (${percent(summary.accuracy)}), ` +
-    `${summary.valid}/${summary.seen} valid (${percent(summary.validRate)})`
+    `${summary.valid}/${summary.seen} valid (${percent(summary.validRate)}), ` +
+    `${summary.sentable}/${summary.seen} sent-able (${percent(summary.sentableRate)})`
   );
 }
 
@@ -322,7 +358,7 @@ export function formatReport(report) {
   section('by kind', report.byKind);
   section('by class', report.byClass);
   if (report.failures.length) {
-    lines.push(`  failures (${report.failures.length})`);
+    lines.push(`  failures, graded (${report.failures.length})`);
     for (const f of report.failures.slice(0, 20)) {
       lines.push(
         `    ${String(f.id).padEnd(34)} class=${String(f.class).padEnd(13)} ` +
@@ -330,6 +366,17 @@ export function formatReport(report) {
       );
     }
     if (report.failures.length > 20) lines.push(`    ... and ${report.failures.length - 20} more`);
+  }
+  // Ungraded unresolved traffic: no ground truth, so it is reported separately from
+  // the graded failures rather than silently inflating them.
+  if (report.unresolved?.length) {
+    lines.push(`  unresolved (${report.unresolved.length})`);
+    for (const u of report.unresolved.slice(0, 20)) {
+      lines.push(
+        `    ${String(u.id).padEnd(34)} class=${String(u.class).padEnd(13)} got=${u.answer ?? '-'}${u.error ? `  error=${u.error}` : ''}`
+      );
+    }
+    if (report.unresolved.length > 20) lines.push(`    ... and ${report.unresolved.length - 20} more`);
   }
   return lines.join('\n');
 }
@@ -339,6 +386,16 @@ export function formatTray(bundle) {
   if (!bundle) return null;
   const parts = [];
   if (bundle.corpus?.overall) parts.push(`corpus ${percent(bundle.corpus.overall.accuracy)}`);
-  if (bundle.store?.overall) parts.push(`traffic ${percent(bundle.store.overall.validRate)}`);
+  if (bundle.store?.overall) {
+    const store = bundle.store.overall;
+    // The traffic headline is what would actually be sent, not every validator-accepted
+    // answer: a confident:false answer under `require_confidence` was withheld (#49).
+    // Fall back to validRate for a cache written before the split.
+    parts.push(
+      store.sentableRate != null
+        ? `traffic ${percent(store.sentableRate)} sent-able`
+        : `traffic ${percent(store.validRate)} valid`
+    );
+  }
   return parts.length ? parts.join(' · ') : null;
 }

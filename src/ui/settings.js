@@ -28,8 +28,10 @@ import { copyFileSync, existsSync, mkdirSync, renameSync, unlinkSync, writeFileS
 import { dirname, join } from 'node:path';
 import { stringify } from 'smol-toml';
 import { DEFAULTS, validateConfig } from '../config.js';
+import { httpTokenProblem } from '../http/defaults.js';
 import { VARIANTS } from '../imaging/preprocess.js';
 import { HISTORY_MODES } from '../pushbullet/listener.js';
+import { STRATEGIES } from '../pushbullet/respond.js';
 import { describeSecret } from '../secrets.js';
 import { createSetup, defaultTestModel, defaultTestPushbullet, hasInternalWhitespace } from './setup.js';
 
@@ -48,28 +50,37 @@ const VARIANT_NAMES = Object.freeze(Object.keys(VARIANTS));
  * validated config object; `secret` names the credential-store entry instead.
  *
  * `restart: false` is a promise that the running process re-reads the value from this
- * exact config object per solve. That is true of `core.solve` (`storage.log_images`)
- * and `handlePush` (`ui.notify_on_unresolved`); everything else is captured when the
- * listener, reasoner or responder is constructed, so the editor says "restart" rather
- * than pretending a live save took effect.
+ * exact config object per solve. `core.solve` re-reads `storage.log_images`,
+ * `solver.tier0`, `ocr.variants`, `ocr.min_confidence` and `image.max_pixels`;
+ * `handlePush` and the HTTP request path re-read `image.max_width`/`max_pixels` and
+ * `ui.notify_on_unresolved`. Everything else is captured when the listener, reasoner,
+ * responder or HTTP server is constructed, so the editor says "restart" rather than
+ * pretending a live save took effect. Each descriptor's `restart` is checked against
+ * the actual re-read site rather than defaulted.
  */
 export const SETTINGS = Object.freeze([
   Object.freeze({ id: 'pushbullet.token', label: 'Pushbullet token', secret: 'pushbullet', type: 'secret', restart: true }),
   Object.freeze({ id: 'llm.api_key', label: 'Model API key', secret: 'llm', type: 'secret', restart: true }),
 
   Object.freeze({ id: 'solver.offline_only', label: 'Offline only (never call a model)', path: ['solver', 'offline_only'], type: 'boolean', restart: true }),
+  Object.freeze({ id: 'solver.tier0', label: 'Use the offline tier (Tier 0)', path: ['solver', 'tier0'], type: 'boolean', restart: false }),
   Object.freeze({ id: 'solver.escalate_to_vision', label: 'Escalate to the vision model', path: ['solver', 'escalate_to_vision'], type: 'boolean', restart: true }),
   Object.freeze({ id: 'solver.self_consistency_n', label: 'Self-consistency samples (voting classes)', path: ['solver', 'self_consistency_n'], type: 'integer', min: 1, restart: true }),
+  Object.freeze({ id: 'solver.breaker_threshold', label: 'Circuit-breaker failure threshold', path: ['solver', 'breaker_threshold'], type: 'integer', min: 1, restart: true }),
+  Object.freeze({ id: 'solver.breaker_cooldown_sec', label: 'Circuit-breaker cooldown (seconds)', path: ['solver', 'breaker_cooldown_sec'], type: 'number', min: 0, restart: true }),
   Object.freeze({ id: 'solver.llm_text_model', label: 'Text model', path: ['solver', 'llm_text_model'], type: 'string', restart: true }),
   Object.freeze({ id: 'solver.llm_vision_model', label: 'Vision model', path: ['solver', 'llm_vision_model'], type: 'string', restart: true }),
   Object.freeze({ id: 'solver.llm_base_url', label: 'Model base URL', path: ['solver', 'llm_base_url'], type: 'string', restart: true }),
 
   Object.freeze({ id: 'reply.enabled', label: 'Reply at all', path: ['reply', 'enabled'], type: 'boolean', restart: true }),
+  Object.freeze({ id: 'reply.strategy', label: 'Reply strategy', path: ['reply', 'strategy'], type: 'enum', choices: Object.keys(STRATEGIES), restart: true }),
+  Object.freeze({ id: 'reply.min_interval_sec', label: 'Minimum interval between sends (seconds)', path: ['reply', 'min_interval_sec'], type: 'number', min: 0, restart: true }),
   Object.freeze({ id: 'reply.require_confidence', label: 'Reply only to corroborated answers', path: ['reply', 'require_confidence'], type: 'boolean', restart: true }),
   Object.freeze({ id: 'reply.title', label: 'Reply title', path: ['reply', 'title'], type: 'string', restart: true }),
   Object.freeze({ id: 'reply.prefix', label: 'Reply prefix', path: ['reply', 'prefix'], type: 'string', allowEmpty: true, restart: true }),
   Object.freeze({ id: 'reply.unresolved_title', label: 'Unresolved acknowledgement title', path: ['reply', 'unresolved_title'], type: 'string', restart: true }),
   Object.freeze({ id: 'reply.unresolved_text', label: 'Unresolved acknowledgement text', path: ['reply', 'unresolved_text'], type: 'string', multiline: true, restart: true }),
+  Object.freeze({ id: 'reply.unresolved_max_per_hour', label: 'Acknowledgement budget (per hour)', path: ['reply', 'unresolved_max_per_hour'], type: 'integer', min: 0, restart: true }),
 
   Object.freeze({ id: 'pushbullet.poll_interval_sec', label: 'Fallback poll interval (seconds)', path: ['pushbullet', 'poll_interval_sec'], type: 'number', min: 0, restart: true }),
   Object.freeze({ id: 'pushbullet.history_mode', label: 'History mode', path: ['pushbullet', 'history_mode'], type: 'enum', choices: HISTORY_MODES, restart: true }),
@@ -77,7 +88,21 @@ export const SETTINGS = Object.freeze([
   Object.freeze({ id: 'storage.retain_days', label: 'Retain inbox/attempts (days)', path: ['storage', 'retain_days'], type: 'number', min: 0, restart: true }),
   Object.freeze({ id: 'storage.log_images', label: 'Keep a file reference for unresolved images', path: ['storage', 'log_images'], type: 'boolean', restart: false }),
 
-  Object.freeze({ id: 'ocr.variants', label: 'OCR preprocessing variants', path: ['ocr', 'variants'], type: 'string-array', choices: VARIANT_NAMES, restart: true }),
+  Object.freeze({ id: 'ocr.languages', label: 'OCR languages', path: ['ocr', 'languages'], type: 'string-array', restart: true }),
+  Object.freeze({ id: 'ocr.min_confidence', label: 'Minimum OCR confidence', path: ['ocr', 'min_confidence'], type: 'number', min: 0, max: 100, restart: false }),
+  Object.freeze({ id: 'ocr.variants', label: 'OCR preprocessing variants', path: ['ocr', 'variants'], type: 'string-array', choices: VARIANT_NAMES, restart: false }),
+
+  Object.freeze({ id: 'image.max_width', label: 'Maximum image width (pixels)', path: ['image', 'max_width'], type: 'integer', min: 1, restart: false }),
+  Object.freeze({ id: 'image.max_pixels', label: 'Maximum decoded pixels', path: ['image', 'max_pixels'], type: 'integer', min: 1, restart: false }),
+
+  Object.freeze({ id: 'http.enabled', label: 'HTTP ingress', path: ['http', 'enabled'], type: 'boolean', restart: true }),
+  Object.freeze({ id: 'http.token', label: 'HTTP bearer token', secret: 'http', type: 'secret', restart: true, testable: false, check: httpTokenProblem }),
+  Object.freeze({ id: 'http.bind', label: 'HTTP bind address', path: ['http', 'bind'], type: 'string', restart: true }),
+  Object.freeze({ id: 'http.port', label: 'HTTP port', path: ['http', 'port'], type: 'integer', min: 0, max: 65_535, restart: true }),
+  Object.freeze({ id: 'http.rate_limit_per_min', label: 'HTTP rate limit (per minute)', path: ['http', 'rate_limit_per_min'], type: 'integer', min: 0, restart: true }),
+  Object.freeze({ id: 'http.timeout_ms', label: 'HTTP solve timeout (ms)', path: ['http', 'timeout_ms'], type: 'integer', min: 0, restart: true }),
+  Object.freeze({ id: 'http.max_body_bytes', label: 'HTTP max body bytes', path: ['http', 'max_body_bytes'], type: 'integer', min: 1, restart: true }),
+  Object.freeze({ id: 'http.max_queue', label: 'HTTP max queue', path: ['http', 'max_queue'], type: 'integer', min: 1, restart: true }),
 
   Object.freeze({ id: 'ui.tray', label: 'Show the tray', path: ['ui', 'tray'], type: 'boolean', restart: true }),
   Object.freeze({ id: 'ui.notify_on_unresolved', label: 'Notify on an unresolved puzzle', path: ['ui', 'notify_on_unresolved'], type: 'boolean', restart: false }),
@@ -166,6 +191,14 @@ export function parseSettingValue(setting, text) {
       const value = String(text ?? '').trim();
       if (value === '') throw new SettingValueError(`${setting.id} must not be empty`);
       if (hasInternalWhitespace(value)) throw new SettingValueError(`${setting.id} contains whitespace`);
+      // A descriptor may carry a setting-specific check (the HTTP bearer token must
+      // pass the same strength rule the server enforces at startup, #47). Rejecting
+      // it here is what keeps the editor from storing a token the app then refuses to
+      // start with.
+      if (typeof setting.check === 'function') {
+        const problem = setting.check(value);
+        if (problem) throw new SettingValueError(`${setting.id} is not usable: ${problem}`);
+      }
       return value;
     }
     case 'string': {
@@ -306,6 +339,9 @@ export function createSettingsEditor({
         type: setting.type,
         pending: pending.has(setting.id),
       };
+      // A secret with nothing to probe (the HTTP bearer token has no endpoint to
+      // connect to) carries `testable: false`; the editor and the dialog honour it.
+      if (setting.secret) entry.testable = setting.testable !== false;
       if (setting.choices) entry.choices = [...setting.choices];
       if (setting.secret) {
         // A secret never leaves this function as a value: only presence and source.
@@ -341,6 +377,9 @@ export function createSettingsEditor({
   async function test(id) {
     const setting = getSetting(id);
     if (!setting || !setting.secret) throw new SettingValueError(`${id} is not a secret; there is nothing to connect to`);
+    if (setting.testable === false) {
+      throw new SettingValueError(`${id} has no connection to test; it is only checked when the app starts`);
+    }
     const value = pending.get(id) ?? secrets?.[setting.secret]?.value ?? '';
     if (!String(value).trim()) return { ok: false, detail: `${setting.id} is not set` };
     const kwargs = setting.secret === 'pushbullet' ? { pushbulletToken: value } : { llmApiKey: value };

@@ -832,7 +832,14 @@ test('createApp wires the platform default log path when no logger is injected',
     await fake.close();
     rmSync(dir, { recursive: true, force: true });
   });
-  const env = { LOCALAPPDATA: 'C:\\Users\\Andre\\AppData\\Local' };
+  // The default logger really writes to `%LOCALAPPDATA%`, so a fake Windows path
+  // here created a literal `C:\Users\Andre\AppData\Local` directory in the repo root
+  // (issue #50). Point the fake Windows environment at a temp directory instead: the
+  // path the app builds is still `%LOCALAPPDATA%\PuzzleSolver\logs\app.log`, but the
+  // write lands under tmp and is cleaned up.
+  const localAppData = mkdtempSync(join(tmpdir(), 'puzzlesolver-localappdata-'));
+  t.after(() => rmSync(localAppData, { recursive: true, force: true }));
+  const env = { LOCALAPPDATA: localAppData };
   const app = await createApp({
     config: validateConfig({}).config,
     platform: 'win32',
@@ -849,5 +856,6 @@ test('createApp wires the platform default log path when no logger is injected',
   t.after(() => app.stop());
   const expected = defaultLogPath({ platform: 'win32', env, homedir: () => 'C:\\Users\\Andre' });
   assert.equal(app.logger.path, expected, 'the real default path must be wired, not a test path');
-  assert.equal(app.logger.path, join('C:\\Users\\Andre\\AppData\\Local', 'PuzzleSolver', 'logs', 'app.log'));
+  assert.equal(app.logger.path, join(localAppData, 'PuzzleSolver', 'logs', 'app.log'));
+  assert.ok(app.logger.path.startsWith(localAppData), 'the log path must stay under the temp LOCALAPPDATA');
 });

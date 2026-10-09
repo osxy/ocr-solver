@@ -47,6 +47,17 @@ test('summarize separates valid from correct and keeps pending in the denominato
   assert.equal(summary.pending, 1);
   assert.equal(summary.accuracy, 1 / 3);
   assert.equal(summary.validRate, 3 / 4, 'a pending puzzle still counts as seen');
+  assert.equal(summary.sentable, 3, 'all three valid rows here are also confident');
+  assert.equal(summary.withheld, 0);
+  assert.equal(summary.sentableRate, 3 / 4);
+
+  // A validator-accepted but uncorroborated answer is visible as valid, and is
+  // separated out of `sentable` rather than counted as something that was sent (#49).
+  const withheld = summarize([row({ valid: true, confident: false })]);
+  assert.equal(withheld.valid, 1);
+  assert.equal(withheld.sentable, 0);
+  assert.equal(withheld.withheld, 1);
+  assert.equal(withheld.sentableRate, 0);
 });
 
 test('accuracy is null, not zero, when there is nothing to grade', () => {
@@ -105,6 +116,36 @@ test('storeReport counts real traffic and has no ground-truth accuracy', () => {
   store.close();
 });
 
+test('#49: a solved recorded puzzle is not a failure, and a withheld answer is not sent-able', () => {
+  const store = memoryStore();
+  store.record({ subject: 'solved', stage: 'validate', ok: true, payload: { answer: '2', class: 'count', confident: true } });
+  // Validator-accepted but require_confidence would withhold it: valid, not sent-able.
+  store.record({ subject: 'withheld', stage: 'validate', ok: true, payload: { answer: '3', class: 'count', confident: false } });
+  store.record({ subject: 'unresolved', stage: 'validate', ok: false, payload: { answer: null, class: 'unknown', confident: false } });
+
+  const report = storeReport(store);
+  assert.equal(report.overall.seen, 3);
+  assert.equal(report.overall.valid, 2, 'both validator-accepted answers are valid');
+  assert.equal(report.overall.sentable, 1, 'only the corroborated one would be sent');
+  assert.equal(report.overall.withheld, 1);
+  assert.equal(report.overall.sentableRate, 1 / 3);
+
+  // No ground truth exists, so nothing is a graded failure; the unanswered puzzle is
+  // reported as unresolved instead of inflating `failures` (#49).
+  assert.deepEqual(report.failures, []);
+  assert.deepEqual(report.unresolved.map((r) => r.id), ['unresolved']);
+  store.close();
+});
+
+test('#49: a graded corpus item that is wrong is still a failure, and pending is not', () => {
+  const report = buildReport([
+    row({ id: 'wrong', correct: false, answer: '9' }),
+    row({ id: 'pending', expected: null, correct: false, valid: false, answer: null }),
+  ]);
+  assert.deepEqual(report.failures.map((f) => f.id), ['wrong']);
+  assert.deepEqual(report.unresolved.map((u) => u.id), ['pending']);
+});
+
 test('a malformed manifest is refused rather than silently defaulted', () => {
   assert.throws(() => validateManifest({ items: [{ id: 'a', provenance: 'real' }] }), /unknown kind/);
   assert.throws(() => validateManifest({ items: [{ id: 'a', provenance: 'made-up', kind: 'text' }] }), /unknown provenance/);
@@ -135,10 +176,17 @@ test('loadCorpusItems merges recorded entries without touching the committed man
 test('formatSummary and formatTray are stable, human-readable strings', () => {
   const summary = summarize([row({}), row({ id: 'w', correct: false })]);
   assert.match(formatSummary(summary), /1\/2 correct/);
+  assert.match(formatSummary(summary), /sent-able/);
   assert.equal(formatTray(null), null);
   assert.equal(
     formatTray({ corpus: { overall: { accuracy: 1 } }, store: { overall: { validRate: 0.5 } } }),
-    'corpus 100.0% · traffic 50.0%'
+    'corpus 100.0% · traffic 50.0% valid',
+    'an older cache without sentableRate falls back to the labelled valid figure'
+  );
+  assert.equal(
+    formatTray({ corpus: { overall: { accuracy: 1 } }, store: { overall: { validRate: 0.5, sentableRate: 0.25 } } }),
+    'corpus 100.0% · traffic 25.0% sent-able',
+    'the traffic headline is what would actually be sent (#49)'
   );
 });
 

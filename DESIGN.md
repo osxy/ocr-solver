@@ -371,9 +371,21 @@ Rules:
   operator or recipient who cannot read Dutch. Both lines are replaceable with
   `reply.unresolved_text`, so a non-Dutch deployment is a config change, not a fork.
 - **No coalescing.** A burst of unsolvable puzzles produces one acknowledgement each, under
-  the same 3 s minimum interval and 20/hour cap as answers, so the cap can drop some. That
-  is acceptable: the fallback is exactly the old behaviour (silence), and merging replies
-  would either skip the first puzzle of a burst or address one conversation from another.
+  the same 3 s minimum interval as answers, but a **separate hourly budget**
+  (`reply.unresolved_max_per_hour`, default 60). Counting them under the answer budget
+  let a burst of junk images exhaust `max_per_hour` and drop a real answer as
+  `rate-limited` - the app went silent exactly when it had something worth sending (#48).
+  The acknowledgement budget is looser because an acknowledgement is cheap and expected,
+  and bounded so a junk-image flood cannot turn the account into a note-spammer. Merging
+  replies was rejected for the original reason: it would either skip the first puzzle of a
+  burst or address one conversation from another.
+- **A rate-limited answer is still not auto-retried.** #48 separates the budgets and removes
+  the false-starvation cause, but a genuine hit on `reply.max_per_hour` leaves that one
+  answer unsent: the Pushbullet listener claims a push once and the poll does not replay it,
+  so a retry would need a durable retry queue that does not exist. The refusal is recorded
+  (`respond`, `reason: rate-limited`) and the outbox claim is deliberately not taken, so a
+  future retry path has the row to work from; building that path is a feature, not part of
+  this fix.
 - **No templating.** `unresolved_text` is sent literally. A placeholder for the failure
   reason or the OCR transcript would leak internals into a conversation and add a
   substitution surface; an operator who wants that detail reads the log or the attempts
@@ -452,7 +464,8 @@ Deze puzzel kon niet automatisch worden opgelost, dus er is geen antwoord gegeve
 This puzzle could not be solved automatically, so no answer is given."""
 require_confidence = true        # only send answers every tier agreed on
 min_interval_sec = 3
-max_per_hour = 20
+max_per_hour = 20                # answers per hour
+unresolved_max_per_hour = 60     # acknowledgements, counted separately (#48)
 
 [storage]
 retain_days = 7
@@ -467,9 +480,12 @@ tray = true
 notify_on_unresolved = true
 ```
 
-**Secrets are never written to `config.toml`.** The Pushbullet token and key go to the
-Windows Credential Manager through a napi binding, with an ACL-restricted file as fallback,
-and environment variables (`PUSHBULLET_TOKEN`, `LLM_API_KEY`) for development on Linux. The
+**Secrets are never written to `config.toml`.** The Pushbullet token, the model key and the
+HTTP bearer token go to an ACL-restricted JSON file (or environment variables —
+`PUSHBULLET_TOKEN`, `LLM_API_KEY`, `HTTP_AUTH_TOKEN` — for development on Linux). A Windows
+Credential Manager provider is written behind an injectable loader but **ships no binding**:
+`keytar` is not a dependency, so on a real Windows install `import('keytar')` fails and the
+file store is what runs (issue #50). The
 logger redacts the configured secrets by value and the documented shapes (`sk-`, `gsk_`,
 `AIza`, `ghp_`/`github_pat_`, `sk_live_`/`pk_live_`, `xox…`, `AKIA`, `o.`, `Bearer`), plus
 values following a credential key name (`api_key=`, `Authorization:`, `token:`).
@@ -571,14 +587,34 @@ which is the honest trade for a settings editor and is why the backup is mandato
 nice-to-have.
 
 **Restart semantics are labelled, not guessed.** The descriptors carry `restart`, and the editor,
-the dialog and `config set` all name which changes apply. Exactly two are `restart: false`,
-because those are the only two the running process re-reads from the shared config object:
-`storage.log_images` (`core.solve`) and `ui.notify_on_unresolved` (`handlePush`). Everything else
-— models, base URL, `offline_only`, `escalate_to_vision`, `self_consistency_n`, reply
-switch/wording, poll interval, `history_mode`, `ocr.variants`, `retain_days`, `ui.tray` and both
-secrets — is captured when the listener, reasoner or responder is built, so the editor says
-"restart" rather than appearing to save something that silently does nothing. The two live ones
-are copied into the live config by `applyLiveSettings` after a successful save.
+the dialog and `config set` all name which changes apply. A setting is `restart: false` only when
+the running process re-reads it from the shared config object per operation: `storage.log_images`
+and `solver.tier0`, `ocr.variants`, `ocr.min_confidence`, `image.max_pixels` (`core.solve`),
+`image.max_width`/`image.max_pixels` on the Pushbullet path (`handlePush`) and the HTTP request
+path, and `ui.notify_on_unresolved` (`handlePush`). The HTTP gate's image limits are read per
+request rather than captured at server construction for exactly this reason (#35), so the
+`[live]` label is true on both ingresses. Everything else — models, base URL, `offline_only`,
+`escalate_to_vision`, `self_consistency_n`, the breaker knobs, the whole `http.*` block,
+`ocr.languages`, the reply switch/wording/budgets, poll interval, `history_mode`, `retain_days`,
+`ui.tray` and all three secrets — is captured when the Tesseract worker, listener, reasoner,
+responder or HTTP server is built, so the editor says "restart" rather than appearing to save
+something that silently does nothing. The live ones are copied into the live config by
+`applyLiveSettings` after a successful save.
+
+**The editor covers the settings added after #27 (#35).** `http.enabled`, `http.bind`,
+`http.port`, `http.rate_limit_per_min`, `http.timeout_ms`, `http.max_body_bytes`, `http.max_queue`,
+`solver.tier0`, `solver.breaker_threshold`, `solver.breaker_cooldown_sec`, `ocr.languages`,
+`ocr.min_confidence`, `image.max_width`, `image.max_pixels` and `reply.unresolved_max_per_hour`
+all have descriptors, so `config list` and both editors see them. The same pass closes two
+settings #27's list had always omitted (`reply.strategy` and `reply.min_interval_sec`) rather
+than leaving the editor a quiet partial view. The HTTP bearer token is a
+**secret**: `http.token` is stored through `saveSecrets` and never reaches `config.toml`, the same
+rule and the same tested guarantee as the Pushbullet token — including a mixed save where a
+non-secret `http` key is written in the same call. The token has no endpoint to probe, so its
+descriptor carries `testable: false`; it is validated against the same strength rule the server
+enforces at startup (`httpTokenProblem`, moved to the leaf `http/defaults.js` so the editor does
+not import the image gate), which is what stops the editor from storing a token the app then
+refuses to start with.
 
 **Headless is the same editor, not a second path.** `--headless` has no tray, so
 `node src/cli.js config ...` is the non-interactive route and the guided prompt is also runnable
@@ -748,7 +784,7 @@ dependencies.
 | State | `node:sqlite` | built in, no dependency |
 | Config | `smol-toml` | tiny pure-JS TOML parser |
 | Tray | `systray2` + `node-notifier` | no Electron; ~200 MB saved; both declared, both imported lazily (M3) |
-| Secrets | Windows Credential Manager via napi binding | native protection; env fallback for dev |
+| Secrets | ACL-restricted per-user JSON file (mode 600) | no native dependency; the Windows Credential Manager provider is unverified code with no shipped binding (#50) |
 | Tests | `node:test` + `node:assert` | built in |
 
 **Trade-off accepted:** Node makes Windows packaging more awkward than .NET, mainly around
@@ -802,7 +838,9 @@ cooldown instead of one per puzzle.
 
 - Images leave the machine **only** if a cloud model is used; `solver.offline_only = true`
   restricts everything to Tier 0 + local OCR.
-- Secrets in the Windows Credential Manager, never logged, `secrets.*` gitignored.
+- Secrets in an ACL-restricted per-user JSON file, never logged, `secrets.*` gitignored.
+  The Windows Credential Manager provider is unverified and ships no binding, so the file is
+  what runs on Windows too (issue #50).
 - Transcripts are logged (needed for debugging); image bytes are not, unless
   `log_images = true` for unresolved puzzles specifically.
 - The app posts nothing except a validated answer, and only in response to the originating push.
@@ -936,7 +974,7 @@ captchasolver/
 
 ## 10. Testing
 
-**Working now — 370 tests (364 pass, 6 skip), none needing a network or an API key:**
+**Working now — 534 tests (528 pass, 6 skip), none needing a network or an API key:**
 
 1. **Offline unit (37):** Dutch number words and compounds including diaereses, all four
    operators, precedence, division by zero; transcript normalisation and every repair rule;
@@ -1001,10 +1039,18 @@ item with its provenance, and `src/accuracy.js` is the one place the number is c
 
 - **Provenance is never blended.** Every report groups `real` | `synthetic` | `derived` and
   `image` | `text`. The overall percentage is only ever printed next to its breakdown.
-- `validRate` = validator-accepted answers / puzzles seen, which works without ground truth and
-  is what the recorded-traffic report uses. `accuracy` = correct / gradeable, which needs known
-  answers and is null on real traffic. A recorded unresolved puzzle (expected null) counts in
-  `seen`/`validRate` but not in `accuracy`, so a failure cannot vanish from the denominator.
+- `validRate` = validator-accepted answers / puzzles seen, which works without ground truth.
+  `sentableRate` = validator-accepted **and corroborated** answers / seen, which is what the
+  default responder (`require_confidence = true`) would actually send; the difference is
+  `withheld`. The tray's traffic headline is the sent-able figure, not `validRate`, because the
+  old headline counted answers that `require_confidence` never sent (#49). `accuracy` = correct /
+  gradeable, which needs known answers and is null on real traffic. A recorded unresolved puzzle
+  (expected null) counts in `seen`/`validRate` but not in `accuracy`, so a failure cannot vanish
+  from the denominator.
+- **`failures` means graded failures only.** A report row is a failure when it has known ground
+  truth and did not match it. Recorded traffic has no ground truth, so listing `!correct` rows as
+  failures put every solved traffic puzzle under "failures"; an ungraded puzzle that produced no
+  answer is reported under `unresolved` instead (#49).
 - `npm run accuracy` runs the committed corpus (deterministic, ~30 s through real OCR) plus the
   recorded `attempts` store. The corpus report is cached to `accuracy.json` beside the state
   database, which the tray reads; the tray's live number comes straight from the store.

@@ -108,7 +108,9 @@ export async function defaultSettingsDialog({
         say(`rejected: ${err?.message ?? err}`);
         continue;
       }
-      if (setting.secret) {
+      // Only offer to probe a secret that has something to connect to. The HTTP
+      // bearer token has no endpoint; its value is checked at set time and at startup.
+      if (setting.secret && setting.testable !== false) {
         const probe = await ask('Test connection now? [y/N] ');
         if (/^y(es)?$/i.test(probe)) {
           const result = await editor.test(id);

@@ -136,6 +136,31 @@ test('the outbox claim happens before the send and is never released', () => {
   store.close();
 });
 
+test('countSentSince can exclude or isolate the acknowledgement marker (#48)', () => {
+  const store = memoryStore();
+  const now = () => Date.now() / 1000;
+  const at = now();
+  store.claimOutbox('p1', 'hash-answer');
+  store.markOutboxSent('p1', 'hash-answer');
+  store.claimOutbox('p2', 'unresolved');
+  store.markOutboxSent('p2', 'unresolved');
+  store.claimOutbox('p3', 'unresolved');
+  store.markOutboxSent('p3', 'unresolved');
+
+  assert.equal(store.countSentSince(at - 10), 3, 'with no options every send counts');
+  assert.equal(
+    store.countSentSince(at - 10, { excludeHash: 'unresolved' }),
+    1,
+    'the answer budget counts answers only'
+  );
+  assert.equal(
+    store.countSentSince(at - 10, { onlyHash: 'unresolved' }),
+    2,
+    'the acknowledgement budget counts acknowledgements only'
+  );
+  store.close();
+});
+
 test('a failed delivery stays claimed and records why', () => {
   const store = memoryStore();
   store.claimOutbox('p1', 'h1');

@@ -33,43 +33,30 @@ import {
   saveImage,
 } from '../pushbullet/files.js';
 import { redactRecord } from '../redact.js';
-import { DEFAULT_HTTP_BIND, DEFAULT_HTTP_PORT, DEFAULT_RATE_LIMIT_PER_MIN, DEFAULT_TIMEOUT_MS, SOLVE_PATH } from './defaults.js';
+import {
+  DEFAULT_HTTP_BIND,
+  DEFAULT_HTTP_PORT,
+  DEFAULT_RATE_LIMIT_PER_MIN,
+  DEFAULT_TIMEOUT_MS,
+  MIN_HTTP_TOKEN_LENGTH,
+  SOLVE_PATH,
+  httpTokenProblem,
+} from './defaults.js';
 
-export { DEFAULT_HTTP_BIND, DEFAULT_HTTP_PORT, DEFAULT_RATE_LIMIT_PER_MIN, DEFAULT_TIMEOUT_MS, SOLVE_PATH };
+// Re-exported so `server.js` remains the single import site for the HTTP ingress's
+// public surface; the implementation lives in the leaf `defaults` module so the
+// settings editor can validate a token without importing the image gate.
+export {
+  DEFAULT_HTTP_BIND,
+  DEFAULT_HTTP_PORT,
+  DEFAULT_RATE_LIMIT_PER_MIN,
+  DEFAULT_TIMEOUT_MS,
+  MIN_HTTP_TOKEN_LENGTH,
+  SOLVE_PATH,
+  httpTokenProblem,
+};
 
 const LOOPBACK_HOSTS = new Set(['::1', 'localhost']);
-
-/** Minimum HTTP bearer token length (#47). Long enough that guessing is hopeless. */
-export const MIN_HTTP_TOKEN_LENGTH = 16;
-
-// Values that are common enough to be guessed before the first request. Case-insensitive.
-const WEAK_TOKENS = new Set([
-  'changeme',
-  'password',
-  'secret',
-  'token',
-  'admin',
-  'test',
-  'letmein',
-  'default',
-  'http-auth-token',
-  'bearer',
-]);
-
-/**
- * Describe why an HTTP bearer token is unfit to guard the solver, or `null` if it is fine.
- * Kept as a plain function so `createApp` and `createHttpServer` report the same reason.
- */
-export function httpTokenProblem(token) {
-  const value = typeof token === 'string' ? token : '';
-  if (value.trim() === '') return 'the token is empty';
-  if (WEAK_TOKENS.has(value.toLowerCase())) return 'the token is a well-known weak value';
-  if (value.length < MIN_HTTP_TOKEN_LENGTH) {
-    return `the token is ${value.length} character(s); at least ${MIN_HTTP_TOKEN_LENGTH} are required (try \`openssl rand -hex 24\`)`;
-  }
-  if (new Set(value).size < 4) return 'the token has too little variation to resist guessing';
-  return null;
-}
 
 /** Throw with an actionable message when the token is too weak (#47). */
 export function assertHttpToken(token) {
@@ -468,12 +455,17 @@ export function createHttpServer({
   // The gate's limits come from config where they are configurable, and from the
   // shared defaults otherwise. `maxBytes` is the HTTP body cap; the push path keeps
   // its own byte default in `downloadImage`.
-  const imageLimits = {
+  //
+  // Read per request, not captured once, so `image.max_width` / `image.max_pixels`
+  // apply live on this ingress too. The same two values are re-read by `core.solve`
+  // and by the Pushbullet path, so the settings editor labels them `[live]`; a
+  // captured copy here would have made that promise false for HTTP requests.
+  const imageLimits = () => ({
     minHeight: DEFAULT_MIN_HEIGHT,
     maxHeight: DEFAULT_MAX_HEIGHT,
     maxWidth: config.image?.max_width ?? DEFAULT_MAX_WIDTH,
     maxPixels: config.image?.max_pixels ?? DEFAULT_MAX_PIXELS,
-  };
+  });
   const modelNames = { text: config.solver?.llm_text_model ?? null, vision: config.solver?.llm_vision_model ?? null };
   // The acknowledgement a human would receive for an unresolved puzzle. It is reported
   // even when nothing is delivered, so a caller can relay the same wording.
@@ -619,7 +611,7 @@ export function createHttpServer({
         inboxDir,
         maxBodyBytes: http.max_body_bytes,
         fetchImpl,
-        imageLimits,
+        imageLimits: imageLimits(),
       });
 
       const deliver = parsed.deliver ?? (url.searchParams.get('deliver') || null);

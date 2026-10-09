@@ -95,7 +95,8 @@ unresolved_text = """
 Deze puzzel kon niet automatisch worden opgelost, dus er is geen antwoord gegeven.
 This puzzle could not be solved automatically, so no answer is given."""
 min_interval_sec = 3
-max_per_hour = 20
+max_per_hour = 20               # answers per hour
+unresolved_max_per_hour = 60    # acknowledgements have their own, looser budget (#48)
 [storage]
 retain_days = 7
 log_images = false              # opt-in reference to an UNRESOLVED image only
@@ -140,9 +141,14 @@ token opens the first-run prompt (token, optional model key, **Test connection**
 stores what you enter in the credential store; cancel it and nothing starts.
 `--headless` has no prompt, so a missing token exits non-zero naming both
 `PUSHBULLET_TOKEN` and the credential-store file. The model key is optional: with none,
-the app runs offline-only (Tier 0). On Windows the Credential Manager is tried before
-the file, but its provider is **unverified** (see
-[Known limitations](#known-limitations)); the file store is the tested fallback.
+the app runs offline-only (Tier 0).
+
+**On Windows the file store is also what runs.** A Credential Manager provider exists in
+`src/secrets.js` behind an injectable loader, but the `keytar` binding it needs is **not a
+dependency** of this project, so `import('keytar')` fails and resolution falls through to
+the file (`%APPDATA%\PuzzleSolver\credentials.json`, mode 600). The provider is
+unverified code, not a shipped capability; do not expect a Windows Credential Manager
+entry to appear.
 
 When `[http] enabled = true`, a second secret is required: the bearer token for the
 HTTP endpoint. Set `HTTP_AUTH_TOKEN` in the environment, or add `http_auth_token` to the
@@ -206,25 +212,40 @@ node src/cli.js config set solver.offline_only true
 node src/cli.js config edit                  # the guided editor over stdin
 ```
 
-Secrets go to the credential store, never to `config.toml`: `config set pushbullet.token
-o.xxxxxxxx` writes `credentials.json` (or the Windows Credential Manager) and leaves the
-TOML file alone. Everything else is checked with the same `validateConfig` the loader
-uses, then written **atomically** — a temp file renamed over the old one, with the
+Secrets go to the credential store, never to `config.toml`. That covers all three of
+them: `config set pushbullet.token o.xxxxxxxx`, `config set llm.api_key sk-xxxxxxxx` and
+`config set http.token a-long-random-enough-token` each write `credentials.json` and leave
+the TOML file alone (or uncreated). The HTTP token is checked against the same strength
+rule the server enforces at startup, so the editor cannot store a token the app then
+refuses to start with. Everything else is checked with the same `validateConfig` the
+loader uses, then written **atomically** — a temp file renamed over the old one, with the
 previous file kept as `config.toml.bak`. Only values that differ from the built-in
-defaults are written, so the file stays an override rather than pinning every default. A rejected value names the setting and writes
-nothing at all, so the editor cannot leave a config that stops the app from starting.
+defaults are written, so the file stays an override rather than pinning every default. A
+rejected value names the setting and writes nothing at all, so the editor cannot leave a
+config that stops the app from starting.
+
+The editor covers the HTTP ingress too — `http.enabled`, `http.bind`, `http.port`,
+`http.rate_limit_per_min`, `http.timeout_ms`, `http.max_body_bytes`, `http.max_queue` and
+`http.token` — so enabling the endpoint no longer means hand-editing TOML **and** writing
+the credential by some other route.
 
 **Some settings need a restart.** The editor marks each one `[live]` or `[restart]`, and
 the headless command prints which applies:
 
-- **live** — `storage.log_images` and `ui.notify_on_unresolved`, which the running
-  process reads again for every solve/push;
+- **live** — `storage.log_images`, `ui.notify_on_unresolved`, `solver.tier0`,
+  `ocr.variants`, `ocr.min_confidence`, `image.max_width` and `image.max_pixels`. These
+  are re-read from the shared config object for every solve, push or HTTP request, so a
+  save takes effect without a restart.
 - **restart** — the models and base URL, `offline_only`, `escalate_to_vision`,
-  `self_consistency_n`, the reply switch/wording, `poll_interval_sec`, `history_mode`,
-  `ocr.variants`, `storage.retain_days`, `ui.tray`, and **both secrets**, because the
-  listener, reasoner and responder capture them when they are built. The running service
-  keeps the old value until it is restarted; the editor says so rather than appearing to
-  save something that does nothing.
+  `self_consistency_n`, the breaker knobs (`breaker_threshold`, `breaker_cooldown_sec`),
+  the reply switch/wording/budgets, `poll_interval_sec`, `history_mode`, `ocr.languages`,
+  `storage.retain_days`, `ui.tray`, the whole `http.*` block, and **all three secrets**,
+  because the listener, reasoner, responder or HTTP server capture them when they are
+  built. The running service keeps the old value until it is restarted; the editor says
+  so rather than appearing to save something that does nothing.
+
+`ocr.languages` is restart-bound even though it sits next to `ocr.min_confidence`: the
+Tesseract worker is created once at startup, and the bundled traineddata is `nld` only.
 
 ### Solve a local image (no Pushbullet needed)
 
@@ -279,7 +300,7 @@ curl -sS -X POST http://127.0.0.1:8765/v1/solve \
   "confident": true,
   "puzzleClass": "count",
   "transcript": "hoeveel kleuren in lijst wit ...",
-  "cost": { "escalated": false, "tier": "tier0", "model": null }
+  "cost": { "escalated": false, "tier": "tier0", "model": [] }
 }
 ```
 
@@ -400,14 +421,16 @@ to start; (2) `reply.enabled` is `true` and `reply.require_confidence` is not
 suppressing a merely validated answer; (3) the log and the listener state — a **grey
 tray icon** means the listener has been quiet for 10 minutes, and the stream reconnects
 with backoff while the 60 s poll is the second path; (4) the hourly cap (`max_per_hour`)
-has not been reached — a burst of unsolvable puzzles can exhaust it; (5) a model tier
-needs a key, and `offline_only = true` disables the model tiers entirely.
+has not been reached — answers and acknowledgements each have their own budget, so a
+burst of unsolvable puzzles can no longer starve a real answer; (5) a model tier needs a
+key, and `offline_only = true` disables the model tiers entirely.
 
 **A setting changed but nothing happened.** The editor and `config set` print which
 changes apply live and which need a restart (see
 [Settings](#settings-change-configuration-without-editing-files)). The models, the
-offline switches, the reply wording, the poll interval, the OCR variants and both secrets
-are read at startup, so restart the service (Quit and relaunch, or restart the scheduled
+offline switches, the reply wording, the poll interval, `ocr.languages`, the breaker knobs,
+the HTTP ingress and all three secrets are read at startup, so restart the service (Quit
+and relaunch, or restart the scheduled
 task). If a hand-edited `config.toml` now blocks startup, the loader names the offending
 key; the editor keeps the previous file as `config.toml.bak`, so copying that back is the
 way out.
@@ -441,10 +464,12 @@ folders. Manually: `schtasks /Delete /TN PuzzleSolver /F`, then delete
 
 - **Pre-release.** 0.1.0 is a pre-release: expect rough edges and no stability promise.
 - **The Windows-specific paths have never executed on a real Windows machine.** The
-  tray widget, the `schtasks` registration and restart behaviour, the Credential
-  Manager, the install/uninstall PowerShell and the packaged `node.exe` are written and
-  tested at their seams, but this project is developed on Linux. Treat the first Windows
-  install as unverified; `--headless` is the supported fallback.
+  tray widget, the `schtasks` registration and restart behaviour, the Credential Manager
+  provider (which is not shipped at all - see
+  [Secrets](#secrets-go-in-the-environment-or-the-credential-store)), the
+  install/uninstall PowerShell and the packaged `node.exe` are written and tested at
+  their seams, but this project is developed on Linux. Treat the first Windows install as
+  unverified; `--headless` is the supported fallback.
 - **The first-run setup dialog and the settings editor are terminal prompts, not native
   widgets.** In tray mode with no token, startup presents the first-run prompt (Pushbullet
   token, optional model key, **Test connection**) before the listener starts; a cancelled
@@ -485,7 +510,7 @@ plain ESM.
 
 ```bash
 npm install
-npm test              # 517 tests (511 pass, 6 skip), offline: no network, no token, no key
+npm test              # 534 tests (528 pass, 6 skip), offline: no network, no token, no key
 npm run test:unit     # fast subset
 npm run test:corpus   # real images through real OCR, ~4s
 npm run test:live     # opt-in; skips unless LLM_API_KEY is set

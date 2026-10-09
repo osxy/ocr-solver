@@ -128,6 +128,15 @@ export function openStore({ path = ':memory:', now = () => Date.now() / 1000 } =
   const sentSince = db.prepare(
     'SELECT COUNT(*) AS n FROM outbox WHERE sent_at IS NOT NULL AND sent_at >= ?'
   );
+  // Answer and acknowledgement budgets share one table but not one counter (#48).
+  // The marker is a caller-supplied string so the store stays unaware of the
+  // responder's literal; it only knows how to include or exclude one hash.
+  const sentSinceExcludingHash = db.prepare(
+    'SELECT COUNT(*) AS n FROM outbox WHERE sent_at IS NOT NULL AND sent_at >= ? AND answer_hash != ?'
+  );
+  const sentSinceOnlyHash = db.prepare(
+    'SELECT COUNT(*) AS n FROM outbox WHERE sent_at IS NOT NULL AND sent_at >= ? AND answer_hash = ?'
+  );
   const pendingOutbox = db.prepare('SELECT * FROM outbox WHERE sent_at IS NULL ORDER BY push_iden');
 
   // Retention. `attempts` hold puzzle transcripts and model replies, which are the
@@ -260,7 +269,17 @@ export function openStore({ path = ':memory:', now = () => Date.now() / 1000 } =
       return row?.t == null ? null : Number(row.t);
     },
 
-    countSentSince(epochSeconds) {
+    /**
+     * Count sent rows since `epochSeconds`.
+     *
+     * With no options every send counts, which is the original behaviour and what
+     * `lastSentAt`-style callers expect. `excludeHash` removes one category - the
+     * answer budget must not count acknowledgements - and `onlyHash` counts exactly
+     * one category, which is how the acknowledgement budget is bounded separately.
+     */
+    countSentSince(epochSeconds, { excludeHash = null, onlyHash = null } = {}) {
+      if (onlyHash != null) return sentSinceOnlyHash.get(Number(epochSeconds), String(onlyHash)).n;
+      if (excludeHash != null) return sentSinceExcludingHash.get(Number(epochSeconds), String(excludeHash)).n;
       return sentSince.get(Number(epochSeconds)).n;
     },
 
