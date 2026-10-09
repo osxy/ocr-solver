@@ -29,6 +29,8 @@ import {
   SolveTimeoutError,
 } from '../src/http/server.js';
 import { validateImageBuffer } from '../src/pushbullet/files.js';
+import { createResponder } from '../src/pushbullet/respond.js';
+import { memoryStore } from '../src/state/db.js';
 import { createSolveCore } from '../src/solver/core.js';
 import { createApp, MissingHttpTokenError } from '../src/app.js';
 import { validateConfig } from '../src/config.js';
@@ -691,4 +693,174 @@ test('the solve timeout is a 504, not a hang', async (t) => {
 test('SolveTimeoutError carries a 504 status', () => {
   assert.equal(new SolveTimeoutError(1000).status, 504);
   assert.equal(new SolveTimeoutError(1000).code, 'solve_timeout');
+});
+
+// ---------------------------------------------------------------------------
+// Three claims in src/http/server.js that had no test behind them (#31)
+// ---------------------------------------------------------------------------
+
+/** A solve result the HTTP layer reports as a solved 200. Local so each test states it. */
+function solvedResult() {
+  return {
+    answer: '2',
+    confident: true,
+    method: 'tier0:count',
+    puzzleClass: 'count',
+    transcript: '2',
+    model: null,
+    opinions: [],
+    disputed: false,
+  };
+}
+
+// Claim 1: one solve at a time, because the shared Tesseract worker is not safe
+// to drive concurrently.
+
+test('concurrent POST /v1/solve requests are serialised behind the queue', async (t) => {
+  const delayMs = 60;
+  let active = 0;
+  let maxActive = 0;
+  const trace = [];
+  const core = {
+    solve: async () => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      trace.push(`start:${active}`);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      active -= 1;
+      trace.push('end');
+      return solvedResult();
+    },
+  };
+  const { url } = await startServer(t, { core });
+  const bytes = await smallPng();
+
+  const responses = await Promise.all([
+    post(url, { body: bytes, contentType: 'image/png' }),
+    post(url, { body: bytes, contentType: 'image/png' }),
+    post(url, { body: bytes, contentType: 'image/png' }),
+  ]);
+
+  for (const res of responses) assert.equal(res.status, 200, res.text);
+  assert.equal(maxActive, 1, `the shared worker was driven ${maxActive} times at once`);
+  // Pins the shape too: every solve ends before the next begins, all three ran.
+  assert.deepEqual(trace, ['start:1', 'end', 'start:1', 'end', 'start:1', 'end']);
+});
+
+// Claim 2: the response never contains a secret or an upstream error body. The
+// image half is tested above; these cover the 500 body, the most externally
+// visible surface and the one not yet covered by the log/store redaction tests.
+
+test('a model failure whose upstream body carries a key never reaches the HTTP response', async (t) => {
+  const secret = 'sk-or-v1-' + 'deadbeef'.repeat(8);
+  const upstream = `upstream 500 body: {"error":{"api_key":"${secret}"}}`;
+  const core = {
+    solve: async () => {
+      throw new Error(upstream);
+    },
+  };
+  const logger = collectingLogger();
+  const { url } = await startServer(t, { core, logger });
+
+  const res = await post(url, { body: await smallPng(), contentType: 'image/png' });
+
+  assert.equal(res.status, 500, res.text);
+  assert.equal(res.json.error, 'internal');
+  assert.deepEqual(Object.keys(res.json).sort(), ['error', 'id'], 'the 500 body must be a bare error id');
+  assert.equal(res.text.includes(secret), false, 'the key must not reach the response body');
+  assert.equal(res.text.includes('deadbeef'), false, 'no part of the key body may survive');
+  assert.equal(res.text.includes('upstream'), false, 'the upstream error body must not reach the response');
+
+  // The operator still gets a redacted line, and the response id identifies it.
+  const line = logger.logs.map((l) => l.args.join(' ')).find((text) => /request .* failed/.test(text));
+  assert.ok(line, 'the failure was still logged for the operator');
+  assert.equal(line.includes(secret), false, 'the log line is the redacted one');
+  assert.ok(line.includes(res.json.id), 'the response id quotes the log line');
+});
+
+test('an unexpected internal error returns a bare 500, not a stack or an upstream body', async (t) => {
+  const token = 'o.' + 'A1b2C3d4E5f6'.repeat(4);
+  const responder = {
+    respond: async () => {
+      // A string throw, so this exercises the non-Error branch of sendError too.
+      throw `pushbullet upstream body: {"access_token":"${token}"}`;
+    },
+  };
+  const { url } = await startServer(t, { responder });
+  const res = await post(url, {
+    body: JSON.stringify({ image_base64: (await smallPng()).toString('base64'), deliver: 'pushbullet' }),
+    contentType: 'application/json',
+  });
+
+  assert.equal(res.status, 500, res.text);
+  assert.equal(res.json.error, 'internal');
+  assert.deepEqual(Object.keys(res.json).sort(), ['error', 'id']);
+  assert.equal(res.text.includes(token), false, 'the Pushbullet token must not reach the response');
+  assert.equal(res.text.includes('access_token'), false, 'the upstream body must not reach the response');
+  assert.match(res.json.id, /^[0-9a-f-]{36}$/, 'the id is a generated UUID, never attacker-influenced text');
+});
+
+// Claim 3: after a 504, the abandoned solve keeps running on the worker but its
+// result is discarded - nothing is delivered later.
+
+test('a solve that finishes after the 504 is discarded, never delivered or claimed', async (t) => {
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  let finished = false;
+  const core = {
+    solve: async () => {
+      await gate;
+      finished = true;
+      return solvedResult();
+    },
+  };
+
+  // A real responder over a real (in-memory) outbox, with the claim spied on, so
+  // "nothing was delivered" means no outbox row and no note - not merely a stub
+  // nobody happened to call. `minIntervalMs: 0` skips the send-spacing sleep.
+  const store = memoryStore();
+  t.after(() => store.close());
+  const claims = [];
+  let notes = 0;
+  const spyStore = {
+    getOutbox: (...args) => store.getOutbox(...args),
+    claimOutbox: (iden, hash) => {
+      claims.push({ iden, hash });
+      return store.claimOutbox(iden, hash);
+    },
+    countSentSince: (...args) => store.countSentSince(...args),
+    lastSentAt: () => store.lastSentAt(),
+    noteOutboxError: (...args) => store.noteOutboxError(...args),
+    markOutboxSent: (...args) => store.markOutboxSent(...args),
+    record: (...args) => store.record(...args),
+  };
+  const responder = createResponder({
+    client: {
+      createNote: async () => {
+        notes += 1;
+        return { iden: 'note-1' };
+      },
+    },
+    store: spyStore,
+    minIntervalMs: 0,
+  });
+
+  const { url } = await startServer(t, { core, responder, rawHttp: { timeout_ms: 40 } });
+  const res = await post(url, {
+    body: JSON.stringify({ image_base64: (await smallPng()).toString('base64'), deliver: 'pushbullet' }),
+    contentType: 'application/json',
+  });
+
+  assert.equal(res.status, 504, res.text);
+  assert.equal(res.json.error, 'solve_timeout');
+
+  // Let the abandoned solve finish, then give a late-delivery bug time to run.
+  release();
+  await new Promise((resolve) => setTimeout(resolve, 100));
+
+  assert.equal(finished, true, 'the abandoned solve did keep running on the worker');
+  assert.equal(claims.length, 0, 'a solve that outlived the timeout must not claim an outbox row');
+  assert.equal(notes, 0, 'a solve that outlived the timeout must not send a note');
 });
