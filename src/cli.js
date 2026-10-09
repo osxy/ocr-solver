@@ -57,6 +57,14 @@ function parseArgs(argv) {
     costTier: process.env.LLM_COST_TIER ?? null,
     allowedModels: (process.env.LLM_ALLOWED_MODELS ?? '').split(',').filter(Boolean),
     excludedModels: (process.env.LLM_EXCLUDED_MODELS ?? '').split(',').filter(Boolean),
+    // listen mode: run the Pushbullet service rather than solving local images.
+    listen: false,
+    config: null,
+    // Explicit secrets only. `apiKey` above may come from the environment, but the
+    // secret resolver should still report the environment as the source, so only a
+    // literal --api-key travels as an explicit option.
+    explicitApiKey: null,
+    token: null,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -67,7 +75,11 @@ function parseArgs(argv) {
     else if (a === '--fake-model') { opts.useModel = true; opts.fakeModel = true; }
     else if (a === '--fake-answer') { opts.useModel = true; opts.fakeModel = true; opts.fakeAnswer = next() ?? '0'; }
     else if (a === '--fake-class') { opts.fakeClass = next() ?? 'unknown'; }
-    else if (a === '--api-key') opts.apiKey = next() ?? '';
+    else if (a === '--api-key') { opts.apiKey = next() ?? ''; opts.explicitApiKey = opts.apiKey; }
+    else if (a === '--token') opts.token = next() ?? null;
+    else if (a === '--pushbullet-token') opts.token = next() ?? null;
+    else if (a === '--config') opts.config = next() ?? null;
+    else if (a === '--listen') opts.listen = true;
     else if (a === '--base-url') opts.baseUrl = next() ?? opts.baseUrl;
     else if (a === '--auto') {
       // Auto-route the TEXT tier only. The vision tier stays a chosen model: it runs
@@ -251,7 +263,10 @@ async function main() {
       '  --vision-model <name>  image-level model, chosen deliberately (or comma list)\n' +
       '  --samples <n>          samples per puzzle for self-consistency\n' +
       '  --store <file.db>      record every attempt to SQLite\n' +
-      '  --attempts <file.db>   print recorded attempts and exit'
+      '  --attempts <file.db>   print recorded attempts and exit\n' +
+      '  listen                 run the Pushbullet service (see also --listen)\n' +
+      '  --config <path>        TOML config file (or PUZZLESOLVER_CONFIG)\n' +
+      '  --token <token>        Pushbullet token for listen mode (or PUSHBULLET_TOKEN)'
     );
     process.exit(opts.help ? 0 : 2);
   }
@@ -354,7 +369,27 @@ async function main() {
   process.exit(results.every((r) => r.answer != null) ? 0 : 1);
 }
 
-main().catch((err) => {
-  console.error(err.stack ?? String(err));
-  process.exit(1);
-});
+/** Run the Pushbullet service (M2). Kept separate from the local-solve path so the
+ * default behaviour of `node src/cli.js <image|dir>` is unchanged. */
+async function runListen(argv) {
+  const opts = parseArgs(argv);
+  const { runApp } = await import('./app.js');
+  await runApp({
+    configPath: opts.config,
+    // Only literal flags travel as explicit secrets; env vars keep source 'env'.
+    explicitSecrets: { pushbullet: opts.token, llm: opts.explicitApiKey },
+  });
+}
+
+const argv = process.argv.slice(2);
+if (argv[0] === 'listen' || argv.includes('--listen')) {
+  runListen(argv).catch((err) => {
+    console.error(err.stack ?? String(err));
+    process.exit(1);
+  });
+} else {
+  main().catch((err) => {
+    console.error(err.stack ?? String(err));
+    process.exit(1);
+  });
+}

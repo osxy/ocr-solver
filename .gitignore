@@ -154,6 +154,10 @@ vite.config.ts.timestamp-*
 # config with an embedded key, sqlite state, downloaded puzzle images).
 config.toml
 secrets.*
+# The module and its test are source code, not secret files; `secrets.*` above
+# would otherwise hide them from Git entirely.
+!src/secrets.js
+!tests/secrets.test.js
 *.dpapi
 *.env
 !*.env.example

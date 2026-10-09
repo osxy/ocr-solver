@@ -416,6 +416,27 @@ Windows Credential Manager through a napi binding, with an ACL-restricted file a
 and environment variables (`PUSHBULLET_TOKEN`, `LLM_API_KEY`) for development on Linux. The
 logger redacts anything matching `o\.[A-Za-z0-9]{20,}`.
 
+**Runtime resolution, settled in M2 leg 2.** Two points the schema above left implicit are now
+fixed by the implementation and its tests:
+
+- **`solver.self_consistency_n` scopes to the voting classes only** (`ordinal-pick`, `unknown`).
+  `count` and `arithmetic` stay at one sample, because M1-5 records them as deterministic and
+  sampling `9 - 4` would add cost for no information. The default of 3 is therefore exactly the
+  M1-5 default for the voting classes, not a new policy.
+- **The credential store is a provider interface**, not one hardcoded mechanism. The Windows
+  Credential Manager provider is loaded lazily and is **unverified** (this project is developed
+  on Linux); the cross-platform fallback is an ACL-restricted JSON file at
+  `%APPDATA%\PuzzleSolver\credentials.json` or `${XDG_CONFIG_HOME:-~/.config}/puzzlesolver/credentials.json`.
+  A group/world-readable file still resolves but reports a warning. Resolution order is
+  explicit option → environment → provider → `null`, and `describeSecret()` exposes only
+  `{ present, source, hint }`.
+
+A missing config file is not an error: every value has a working default, so the app starts with
+no config at all. A *bad* value (unknown enum, negative or non-numeric interval, unknown OCR
+variant, a secret-looking key) throws and names the key; an unknown key from a newer version only
+warns. `ocr.languages` is validated but the bundled traineddata is `nld` only, and `ui.tray` /
+`ui.notify_on_unresolved` are accepted and stored as the M3 seam.
+
 ### 4.14 UI & logging ⬜ M3
 
 - Tray via `systray2`, notifications via `node-notifier`; `--headless` skips both.
@@ -423,6 +444,13 @@ logger redacts anything matching `o\.[A-Za-z0-9]{20,}`.
   image" re-runs the pipeline on the newest image — essential for tuning without a live push.
 - First run: a small setup dialog (token, key, **Test connection**).
 - Rotating log at `%LOCALAPPDATA%\PuzzleSolver\logs\app.log` (5 MB × 3).
+
+**As built in M2 leg 2.** The rotating logger already exists; the tray/notifications/setup dialog
+remain M3. On non-Windows platforms the log lives at
+`${XDG_STATE_HOME:-~/.local/state}/puzzlesolver/logs/app.log` (same 5 MB × 3 rotation). Every
+record passes through both existing redactors (`redact` and `redactPushbullet`) rather than a
+third copy, and a file sink that fails disables itself instead of throwing, matching the attempts
+store's rule that logging must never break solving.
 
 ---
 
