@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { createSetup, defaultTestModel, validateSetupInput } from '../src/ui/setup.js';
+import { createChatClient, chatEndpoint } from '../src/model/client.js';
 import { createFileCredentialProvider, saveSecrets, loadSecrets } from '../src/secrets.js';
 
 test('an empty token or key is rejected with a field-specific error', () => {
@@ -59,6 +60,27 @@ test('#79: defaultTestModel probes the configured base URL and model', async () 
   await defaultTestModel('sk-x', { fetchImpl });
   assert.equal(calls[1].url, 'https://api.openai.com/v1/chat/completions');
   assert.equal(calls[1].body.model, 'gpt-4o-mini');
+});
+
+test('#88: the probe and the client join the endpoint identically (trailing slash, default, OpenRouter)', async () => {
+  const calls = [];
+  const fetchImpl = async (url, options) => {
+    calls.push({ url, options });
+    return { ok: true, status: 200, text: async () => '{}' };
+  };
+  const bases = [
+    'https://x.example/v1/', // the trailing slash that made the probe request //chat/completions and 404
+    'https://api.openai.com/v1', // the documented default
+    'https://openrouter.ai/api/v1/', // an OpenRouter base spelled with a trailing slash
+  ];
+  for (const baseUrl of bases) {
+    await defaultTestModel('k', { fetchImpl, baseUrl, model: 'm' });
+    const client = createChatClient({ baseUrl, fetchImpl });
+    assert.equal(calls.at(-1).url, client.endpoint, `the probe and the client must agree for ${baseUrl}`);
+    assert.equal(calls.at(-1).url, chatEndpoint(baseUrl), 'both use the one shared join');
+  }
+  assert.equal(calls[0].url, 'https://x.example/v1/chat/completions', 'a trailing slash no longer yields a double slash');
+  assert.ok(calls[0].options.signal instanceof AbortSignal, 'the probe is bounded by a timeout signal');
 });
 
 test('#79: a failed probe names the host and model that were probed', async () => {

@@ -1,6 +1,6 @@
 /**
- * The default settings editor: a terminal prompt, the same shape as the first-run
- * dialog in `setup-dialog.js`.
+ * The default settings editor: a terminal prompt, the same shape as first-run
+ * setup (`defaultWebSetupDialog`, which replaced the old terminal setup dialog).
  *
  * It holds no logic about what a setting means or where it is stored; `src/ui/settings.js`
  * does that. This file only lists `editor.list()`, reads a number or id, calls

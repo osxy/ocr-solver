@@ -15,6 +15,7 @@
  * only network in this file and are only reached in the real dialog; every test
  * injects a fake.
  */
+import { chatEndpoint } from '../model/client.js';
 
 export const SETUP_FIELDS = ['pushbulletToken', 'llmApiKey'];
 
@@ -51,7 +52,7 @@ export async function defaultTestPushbullet(token, { fetchImpl = globalThis.fetc
  */
 export async function defaultTestModel(
   key,
-  { fetchImpl = globalThis.fetch, baseUrl = 'https://api.openai.com/v1', model = 'gpt-4o-mini' } = {}
+  { fetchImpl = globalThis.fetch, baseUrl = 'https://api.openai.com/v1', model = 'gpt-4o-mini', timeoutMs = 10_000 } = {}
 ) {
   if (!String(key ?? '').trim()) {
     // Ask for a key rather than sending an anonymous request and reporting the 401
@@ -60,10 +61,13 @@ export async function defaultTestModel(
   }
   const host = hostOf(baseUrl);
   const probed = `${host} (model ${model})`;
-  const res = await fetchImpl(`${baseUrl}/chat/completions`, {
+  const res = await fetchImpl(chatEndpoint(baseUrl), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${String(key)}` },
     body: JSON.stringify({ model, max_tokens: 1, messages: [{ role: 'user', content: 'ping' }] }),
+    // Without a bound an unreachable host leaves the web `/test` request pending
+    // until the OS gives up (#88). The client uses the same pattern.
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (res.status === 401 || res.status === 403) {
     return { ok: false, detail: `the model key was rejected (HTTP ${res.status}) by ${probed}` };

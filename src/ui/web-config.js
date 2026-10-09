@@ -293,7 +293,7 @@ function summaryTable(title, group) {
   if (!rows) return '';
   return (
     `<h3>${escapeHtml(title)}</h3>` +
-    '<table><thead><tr><th></th><th>seen</th><th>solved</th><th>withheld</th><th>sent-able</th></tr></thead>' +
+    '<table><thead><tr><th></th><th>distinct puzzles</th><th>solved</th><th>withheld</th><th>sent-able</th></tr></thead>' +
     `<tbody>${rows}</tbody></table>`
   );
 }
@@ -342,11 +342,12 @@ export function renderStatsPage({
   const unresolved = overall ? overall.seen - overall.valid : 0;
   const trafficSection = overall
     ? `<h2>Recorded traffic (real)</h2>` +
-      '<p>Every puzzle the app actually saw, from the <code>attempts</code> store. Real ' +
-      'traffic carries no ground truth, so there is no accuracy figure here: the real ' +
-      'number is the <strong>sent-able rate</strong> - answers that passed validation ' +
-      'and were corroborated, and so would have been sent.</p>' +
-      '<table><thead><tr><th>seen</th><th>solved (valid)</th><th>unresolved</th><th>withheld</th><th>sent-able</th></tr></thead>' +
+      '<p>Every <strong>distinct puzzle</strong> the app actually saw (one row per subject), from ' +
+      'the <code>attempts</code> store. Real traffic carries no ground truth, so there is no ' +
+      'accuracy figure here: the real number is the <strong>sent-able rate</strong> - answers ' +
+      'that passed validation and were corroborated, and so would have been sent. Re-solving ' +
+      'the same image counts once here, while the recent-solves list above shows each solve.</p>' +
+      '<table><thead><tr><th>distinct puzzles</th><th>solved (valid)</th><th>unresolved</th><th>withheld</th><th>sent-able</th></tr></thead>' +
       `<tbody><tr><td>${overall.seen}</td><td>${overall.valid}</td><td>${unresolved}</td>` +
       `<td>${overall.withheld}</td><td>${overall.sentable}/${overall.seen} (${escapeHtml(percent(overall.sentableRate))})</td></tr></tbody></table>` +
       summaryTable('By tier (how the answer was produced)', traffic.byTier) +
@@ -378,7 +379,8 @@ export function renderStatsPage({
     `<h2>Recent solves</h2>` +
     `<p>Newest first, at most ${escapeHtml(String(recent.length))} shown. Read on request only; ` +
     'there is no auto-refresh. The answer and method come from the same recorded verdict the ' +
-    'solve page formats, so the two cannot disagree.</p>' +
+    'solve page formats, so the two cannot disagree. <strong>took</strong> is that solve\'s own ' +
+    'recorded duration; <em>unknown</em> means no timing was recorded for it.</p>' +
     recentTable +
     trafficSection +
     corpusSection +

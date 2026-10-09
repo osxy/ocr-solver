@@ -84,14 +84,14 @@ function guardWrites(inner) {
 function validationRows(store) {
   store.record({ subject: 'solved-tier0', stage: 'ocr', payload: { text: 'hoeveel' }, ms: 40 });
   store.record({ subject: 'solved-tier0', stage: 'tier0', payload: { answer: '1' }, ms: 2 });
-  store.record({ subject: 'solved-tier0', stage: 'validate', ok: true, payload: { answer: '1', class: 'count', confident: true, method: 'tier0:count' } });
+  store.record({ subject: 'solved-tier0', stage: 'validate', ok: true, ms: 45, payload: { answer: '1', class: 'count', confident: true, method: 'tier0:count' } });
   store.record({ subject: 'solved-tier0', stage: 'respond', ok: true, payload: { answer: '1', sent: true } });
 
-  store.record({ subject: 'solved-vision', stage: 'validate', ok: true, payload: { answer: '7', class: 'count', confident: true, method: 'model:vision' } });
+  store.record({ subject: 'solved-vision', stage: 'validate', ok: true, ms: 900, payload: { answer: '7', class: 'count', confident: true, method: 'model:vision' } });
   store.record({ subject: 'solved-vision', stage: 'model-vision', payload: {}, ms: 900 });
   store.record({ subject: 'solved-vision', stage: 'respond', ok: true, payload: { answer: '7', sent: true } });
 
-  store.record({ subject: 'withheld', stage: 'validate', ok: true, payload: { answer: '3', class: 'count', confident: false, method: 'model:text' } });
+  store.record({ subject: 'withheld', stage: 'validate', ok: true, ms: 500, payload: { answer: '3', class: 'count', confident: false, method: 'model:text' } });
   store.record({ subject: 'withheld', stage: 'model-text', payload: {}, ms: 500 });
   store.record({ subject: 'withheld', stage: 'respond', ok: false, payload: { answer: '3', sent: false, reason: 'unconfirmed' } });
 
@@ -121,6 +121,29 @@ test('the page lists the last solves, newest first, with answer, method and deli
   assert.match(html, /withheld - unconfirmed/, 'a withheld answer names the reason');
   assert.match(html, /nothing sent/, 'an unresolved answer is labelled as nothing sent');
   assert.match(html, /\d+ ms/, 'the recorded timing is shown');
+});
+
+test('the traffic totals are labelled distinct puzzles and took is per solve (#86)', async (t) => {
+  // The same image re-solved: two validate rows for one subject. The totals count it
+  // once ("distinct puzzles"); the recent list shows both with their own times.
+  let clock = 1_000_000;
+  const store = openStore({ path: ':memory:', now: () => { clock += 0.001; return clock; } });
+  t.after(() => store.close());
+  store.record({ subject: 'http-abc', stage: 'validate', ok: true, ms: 300, payload: { answer: '7', class: 'count', confident: true, method: 'tier0:count' } });
+  store.record({ subject: 'http-abc', stage: 'validate', ok: true, ms: 250, payload: { answer: '7', class: 'count', confident: true, method: 'tier0:count' } });
+
+  const config = validateConfig({}).config;
+  const { server } = await startUi(t, { store, config });
+  const session = await openSession(server);
+  const html = await (await fetch(`${baseUrl(server)}/stats?session=${session}`)).text();
+
+  const trafficSection = html.slice(html.indexOf('Recorded traffic'), html.indexOf('Offline corpus'));
+  assert.match(trafficSection, /distinct puzzles/, 'the total is labelled as distinct puzzles');
+  assert.match(trafficSection, /one row per subject/, 'the label states the counting unit');
+  assert.equal(/\bseen\b/.test(trafficSection), false, 'the ambiguous "seen" label is gone from the traffic section');
+  // Each solve reports its own recorded duration, not the subject span.
+  assert.match(html, /300 ms/);
+  assert.match(html, /250 ms/);
 });
 
 test('ui.stats_recent_solves defaults to 5 and bounds the list (#64)', async (t) => {

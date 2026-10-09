@@ -303,9 +303,10 @@ export function storeRecentSolves(store, { limit = 5 } = {}) {
       confident: payload.confident === true,
       puzzleClass: payload.class ?? null,
       disputed: payload.disputed === true,
-      // The validate row records no `ms`; the elapsed wall time between the subject's
-      // first and last attempt is the timing the store actually has.
-      ms: row.ms != null ? row.ms : row.elapsedMs ?? null,
+      // The pipeline records each solve's own wall time on its validate row. A row
+      // without it (an older row, or a caller that never timed a solve) reports
+      // `null`, which the page renders as "unknown" rather than inventing a span.
+      ms: row.ms == null ? null : Number(row.ms),
       // The Pushbullet responder's own verdict, when one was recorded. HTTP and CLI
       // solves have no responder row, so `null` means "not recorded", not "not sent".
       sent: row.respond ? row.respond.sent === true : null,

@@ -262,6 +262,30 @@ test('storeRecentSolves returns the newest first, bounded, with the stored verdi
   store.close();
 });
 
+test('re-solving the same image reports each solve\'s own duration, not the subject total (#86)', () => {
+  // The issue's reproduction, with the timing now recorded on the validate row. The
+  // old query reported `MAX(created_at) - MIN(created_at)` over the subject, so this
+  // 0.3 s re-solve one day later was shown as 86,401,300 ms.
+  let t = 1_000_000;
+  const store = memoryStore({ now: () => t });
+  store.record({ subject: 'http-abc', stage: 'ocr', payload: {} });
+  t += 1;
+  store.record({ subject: 'http-abc', stage: 'validate', ok: true, payload: { answer: '7', method: 'tier0', confident: true }, ms: 300 });
+  t += 86_400;
+  store.record({ subject: 'http-abc', stage: 'ocr', payload: {} });
+  t += 0.3;
+  store.record({ subject: 'http-abc', stage: 'validate', ok: true, payload: { answer: '7', method: 'tier0', confident: true }, ms: 300 });
+
+  const recent = storeRecentSolves(store, { limit: 5 });
+  assert.deepEqual(recent.map((r) => r.ms), [300, 300], 'each solve reports its own duration, not the 24 h span');
+
+  // A row that carries no timing is reported as unknown rather than a fabricated span.
+  t += 1;
+  store.record({ subject: 'legacy', stage: 'validate', ok: true, payload: { answer: '1', method: 'tier0', confident: true } });
+  assert.equal(storeRecentSolves(store, { limit: 1 })[0].ms, null, 'no recorded ms means unknown, not a guessed span');
+  store.close();
+});
+
 test('storeStats counts model calls from the model stages', () => {
   const store = memoryStore();
   store.record({ subject: 'a', stage: 'validate', ok: true, payload: { answer: '1', method: 'tier0:count', confident: true } });
