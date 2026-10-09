@@ -1074,4 +1074,6 @@ tiers against the real images and real observed OCR damage; it needs a key and i
 `npm test`. Its `OBSERVED_OCR_DAMAGE` now lives in `src/corpus/observed.js` so the derived
 fixtures and the live evaluation cannot drift apart. Re-running it and comparing the per-tier
 counts is the drift check; the reference result remains offline 3/3, text-on-damage 3/3,
-vision 3/3 (DESIGN 10).
+vision 3/3 (DESIGN 10). **Re-run for M4:** offline 3/3, text-on-damage 3/3, vision 3/3, 6 model
+calls and 0 failures (the router picked `deepseek-v4.1-flash` and `gemini-3.7/3.8-flash`), so the
+rolling aliases still answer the three real puzzles correctly on this date.
