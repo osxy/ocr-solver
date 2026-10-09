@@ -13,9 +13,11 @@ import {
   ConfigError,
   CONFIG_ENV_VAR,
   DEFAULTS,
+  autoRouterOptions,
   defaultConfigPath,
   defaultStatePath,
   loadConfig,
+  resolveAutoRouter,
   resolveConfigPath,
   validateConfig,
 } from '../src/config.js';
@@ -118,6 +120,70 @@ test('the default OCR variants are the real preset names', () => {
   for (const name of config.ocr.variants) {
     assert.ok(name in VARIANTS, `${name} must be a real preset exported by preprocess.js`);
   }
+});
+
+test('#78: the auto-router settings load and validate by name', () => {
+  const { config } = validateConfig({});
+  // Empty is "send no band"; the arrays are empty, i.e. no policy restriction.
+  assert.equal(config.solver.cost_tier, '');
+  assert.deepEqual(config.solver.allowed_models, []);
+  assert.deepEqual(config.solver.excluded_models, []);
+
+  const tuned = validateConfig({
+    solver: {
+      cost_tier: 'high',
+      allowed_models: ['openai/*', 'google/gemini-*'],
+      excluded_models: ['*/claude-*'],
+    },
+  }).config;
+  assert.deepEqual(autoRouterOptions(tuned), {
+    costTier: 'high',
+    allowedModels: ['openai/*', 'google/gemini-*'],
+    excludedModels: ['*/claude-*'],
+  });
+
+  // A misspelled band must not be silently ignored: it is the difference between a
+  // policy the user set and no policy at all.
+  assert.throws(
+    () => validateConfig({ solver: { cost_tier: 'cheap' } }),
+    (err) => err instanceof ConfigError && /solver\.cost_tier/.test(err.message) && /low, medium, high, xhigh, max/.test(err.message)
+  );
+  assert.throws(
+    () => validateConfig({ solver: { allowed_models: 'openai/*' } }),
+    (err) => err instanceof ConfigError && /solver\.allowed_models/.test(err.message)
+  );
+  assert.throws(
+    () => validateConfig({ solver: { excluded_models: [42] } }),
+    (err) => err instanceof ConfigError && /solver\.excluded_models/.test(err.message)
+  );
+});
+
+test('#78: resolveAutoRouter layers a flag over the environment over the config', () => {
+  const config = validateConfig({
+    solver: { cost_tier: 'low', allowed_models: ['openai/*'], excluded_models: ['old/*'] },
+  }).config;
+  const env = { LLM_COST_TIER: 'medium', LLM_ALLOWED_MODELS: 'google/*' };
+
+  // The environment beats the config; an unset env list falls back to the config.
+  assert.deepEqual(resolveAutoRouter({ config, env }), {
+    costTier: 'medium',
+    allowedModels: ['google/*'],
+    excludedModels: ['old/*'],
+  });
+
+  // A flag beats both. An empty flag list is "not set", so it must not erase the
+  // policy the environment or config supplied.
+  assert.deepEqual(
+    resolveAutoRouter({ config, env, explicit: { costTier: 'max', allowedModels: [], excludedModels: ['new/*'] } }),
+    { costTier: 'max', allowedModels: ['google/*'], excludedModels: ['new/*'] }
+  );
+
+  // With no env or flags, the config is the source.
+  assert.deepEqual(resolveAutoRouter({ config }), {
+    costTier: 'low',
+    allowedModels: ['openai/*'],
+    excludedModels: ['old/*'],
+  });
 });
 
 test('the resilience and privacy knobs have defaults and reject bad values', () => {

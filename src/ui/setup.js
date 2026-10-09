@@ -42,32 +42,66 @@ export async function defaultTestPushbullet(token, { fetchImpl = globalThis.fetc
   return { ok: true, detail: 'Pushbullet accepted the token' };
 }
 
-/** Real model probe: the cheapest possible authenticated completion. */
+/**
+ * Real model probe: the cheapest possible authenticated completion against the
+ * configured provider. #79: the caller supplies `baseUrl` and `model`, so the probe
+ * reports on the service the user actually configured rather than a hardwired
+ * OpenAI endpoint. A failure names the host and model, so it cannot be misread as
+ * "your key is bad" when the endpoint or model was the problem.
+ */
 export async function defaultTestModel(
   key,
   { fetchImpl = globalThis.fetch, baseUrl = 'https://api.openai.com/v1', model = 'gpt-4o-mini' } = {}
 ) {
+  if (!String(key ?? '').trim()) {
+    // Ask for a key rather than sending an anonymous request and reporting the 401
+    // it produces: an absent key is not a rejected key.
+    return { ok: false, detail: 'no model API key is configured; enter one before testing the connection' };
+  }
+  const host = hostOf(baseUrl);
+  const probed = `${host} (model ${model})`;
   const res = await fetchImpl(`${baseUrl}/chat/completions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${String(key)}` },
     body: JSON.stringify({ model, max_tokens: 1, messages: [{ role: 'user', content: 'ping' }] }),
   });
-  if (res.status === 401 || res.status === 403) return { ok: false, detail: `the model key was rejected (${res.status})` };
+  if (res.status === 401 || res.status === 403) {
+    return { ok: false, detail: `the model key was rejected (HTTP ${res.status}) by ${probed}` };
+  }
   if (!res.ok) {
     const body = await res.text?.().catch?.(() => '') ?? '';
-    return { ok: false, detail: `the model endpoint returned HTTP ${res.status}${body ? `: ${body.slice(0, 120)}` : ''}` };
+    return { ok: false, detail: `the model endpoint ${probed} returned HTTP ${res.status}${body ? `: ${body.slice(0, 120)}` : ''}` };
   }
-  return { ok: true, detail: 'the model key was accepted' };
+  return { ok: true, detail: `the model key was accepted by ${probed}` };
+}
+
+/** The host (no scheme or path) of a base URL, for a failure message a human reads. */
+function hostOf(baseUrl) {
+  try {
+    return new URL(baseUrl).host;
+  } catch {
+    // A malformed base URL is still worth naming exactly as configured.
+    return String(baseUrl ?? '');
+  }
 }
 
 export function createSetup({
   saveSecrets,
   testPushbullet = defaultTestPushbullet,
   testModel = defaultTestModel,
+  // #79: `{ baseUrl, model }` for the configured provider. A function is called per
+  // probe so the settings editor can test a pending edit to the base URL or model
+  // rather than the value on disk. Absent, `defaultTestModel`'s own default applies.
+  modelProbe = null,
   requireModelKey = true,
   logger = null,
 } = {}) {
   if (typeof saveSecrets !== 'function') throw new Error('createSetup needs the saveSecrets provider function');
+
+  function probeOptions() {
+    const value = typeof modelProbe === 'function' ? modelProbe() : modelProbe;
+    return value ?? {};
+  }
 
   async function runProbe(name, fn, value) {
     if (!String(value ?? '').trim()) return { ok: false, detail: `${name} is empty` };
@@ -83,7 +117,9 @@ export function createSetup({
   async function testConnection({ pushbulletToken = '', llmApiKey = '' } = {}) {
     const results = {};
     if (String(pushbulletToken).trim()) results.pushbullet = await runProbe('Pushbullet', testPushbullet, pushbulletToken);
-    if (String(llmApiKey).trim()) results.llm = await runProbe('model', testModel, llmApiKey);
+    if (String(llmApiKey).trim()) {
+      results.llm = await runProbe('model', (key) => testModel(key, probeOptions()), llmApiKey);
+    }
     const ok = Object.keys(results).length > 0 && Object.values(results).every((r) => r.ok);
     return { ok, results };
   }

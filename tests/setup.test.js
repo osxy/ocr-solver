@@ -10,7 +10,7 @@ import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { createSetup, validateSetupInput } from '../src/ui/setup.js';
+import { createSetup, defaultTestModel, validateSetupInput } from '../src/ui/setup.js';
 import { createFileCredentialProvider, saveSecrets, loadSecrets } from '../src/secrets.js';
 
 test('an empty token or key is rejected with a field-specific error', () => {
@@ -32,6 +32,79 @@ test('internal whitespace is rejected, but a trailing newline is trimmed and acc
 test('a valid pair passes, and the model key is optional when it is not required', () => {
   assert.equal(validateSetupInput({ pushbulletToken: 'o.abc', llmApiKey: 'sk-xyz' }).ok, true);
   assert.equal(validateSetupInput({ pushbulletToken: 'o.abc', llmApiKey: '', requireModelKey: false }).ok, true);
+});
+
+// ---------------------------------------------------------------------------
+// #79: the model probe follows the configured provider
+// ---------------------------------------------------------------------------
+
+test('#79: defaultTestModel probes the configured base URL and model', async () => {
+  const calls = [];
+  const fetchImpl = async (url, options) => {
+    calls.push({ url, body: JSON.parse(options.body) });
+    return { ok: true, status: 200, text: async () => '{}' };
+  };
+
+  const openrouter = await defaultTestModel('sk-or-x', {
+    fetchImpl,
+    baseUrl: 'https://openrouter.ai/api/v1',
+    model: 'openrouter/auto',
+  });
+  assert.equal(calls[0].url, 'https://openrouter.ai/api/v1/chat/completions', 'OpenRouter is configured, not OpenAI');
+  assert.equal(calls[0].body.model, 'openrouter/auto');
+  assert.match(openrouter.detail, /openrouter\.ai/);
+  assert.match(openrouter.detail, /openrouter\/auto/);
+
+  // With no override, the documented OpenAI default still works.
+  await defaultTestModel('sk-x', { fetchImpl });
+  assert.equal(calls[1].url, 'https://api.openai.com/v1/chat/completions');
+  assert.equal(calls[1].body.model, 'gpt-4o-mini');
+});
+
+test('#79: a failed probe names the host and model that were probed', async () => {
+  const fetchImpl = async () => ({ ok: false, status: 401, text: async () => 'unauthorized' });
+  const result = await defaultTestModel('sk-or-x', {
+    fetchImpl,
+    baseUrl: 'https://openrouter.ai/api/v1',
+    model: 'openrouter/auto',
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.detail, /openrouter\.ai/, 'the host must be named so the message is not misread as a bad key');
+  assert.match(result.detail, /openrouter\/auto/);
+  assert.match(result.detail, /401/);
+});
+
+test('#79: defaultTestModel asks for a key rather than probing anonymously', async () => {
+  let called = 0;
+  const fetchImpl = async () => {
+    called += 1;
+    return { ok: true, status: 200, text: async () => '{}' };
+  };
+  const result = await defaultTestModel('   ', {
+    fetchImpl,
+    baseUrl: 'https://openrouter.ai/api/v1',
+    model: 'openrouter/auto',
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.detail, /no model API key/i);
+  assert.equal(called, 0, 'an absent key must never reach the provider');
+});
+
+test('#79: createSetup passes the configured provider into the model probe', async () => {
+  let seen = null;
+  const setup = createSetup({
+    saveSecrets: async () => ({ saved: [] }),
+    testModel: async (key, options) => {
+      seen = { key, options };
+      return { ok: true, detail: 'ok' };
+    },
+    modelProbe: { baseUrl: 'https://openrouter.ai/api/v1', model: 'openrouter/auto' },
+  });
+  await setup.testConnection({ llmApiKey: 'sk-or-x' });
+  assert.deepEqual(seen, {
+    key: 'sk-or-x',
+    options: { baseUrl: 'https://openrouter.ai/api/v1', model: 'openrouter/auto' },
+  });
 });
 
 test('test connection probes each non-empty field and reports failures without throwing', async () => {

@@ -250,7 +250,10 @@ gate are all exercised deterministically offline.
 
 **OpenRouter auto routing** is supported for the **text tier only** (`openrouter/auto`,
 `cost_tier: low` or `medium`). Reading a transcript and emitting JSON is easy work, so
-letting the router pick per request is sensible and cheap.
+letting the router pick per request is sensible and cheap. The cost band, the allowlist and
+the blocklist are `[solver] cost_tier / allowed_models / excluded_models` config keys, and
+the service passes them to the client it builds just as the CLI does (issue #78); an empty
+band sends no `cost_tier`.
 
 **The vision tier is a deliberately chosen model, not a routed one.** It runs only when
 OCR failed, so it is the single tier where model choice matters most — and an unset cost
@@ -444,6 +447,9 @@ escalate_to_vision = true
 llm_text_model = "gpt-4o-mini"
 llm_vision_model = "gpt-4o"
 llm_base_url = "https://api.openai.com/v1"
+cost_tier = ""                   # OpenRouter auto-router band: low|medium|high|xhigh|max; "" sends none
+allowed_models = []              # wildcard patterns the auto router may choose from
+# excluded_models = []           # wildcard patterns it must avoid
 offline_only = false
 breaker_threshold = 3            # consecutive transient failures before a tier opens
 breaker_cooldown_sec = 600       # how long an open tier waits before one probe

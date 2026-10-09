@@ -23,6 +23,7 @@ import {
   autoRouterPlugin,
   normalizeModelChain,
 } from './model/client.js';
+import { loadConfig, resolveAutoRouter } from './config.js';
 
 /** Default auto slug; the slug->plugin-id mapping lives in the client. */
 const AUTO_ROUTER_SLUG = 'openrouter/auto';
@@ -56,9 +57,11 @@ function parseArgs(argv) {
     fakeAnswer: '0',
     fakeClass: 'unknown',
     auto: false,
-    costTier: process.env.LLM_COST_TIER ?? null,
-    allowedModels: (process.env.LLM_ALLOWED_MODELS ?? '').split(',').filter(Boolean),
-    excludedModels: (process.env.LLM_EXCLUDED_MODELS ?? '').split(',').filter(Boolean),
+    // #78: flags only. The environment and then the config file are layered on in
+    // `resolveAutoRouter`, so the CLI and the service read the same three keys.
+    costTier: null,
+    allowedModels: [],
+    excludedModels: [],
     // listen mode: run the Pushbullet service rather than solving local images.
     listen: false,
     // --headless: skip the tray and every notification; the default is tray mode.
@@ -197,7 +200,7 @@ function warnIfVisionIsRouted(opts) {
   );
 }
 
-function buildReasoner(opts, store, subject) {
+function buildReasoner(opts, store, subject, config = null) {
   if (opts.fakeModel) {
     // Offline demo path: makes the model tiers exercisable without a provider key.
     const client = createFakeClient({
@@ -222,11 +225,13 @@ function buildReasoner(opts, store, subject) {
   const textModel = opts.textModel ?? 'gpt-4o-mini';
   const visionModel = resolveVisionModel(opts, isOpenRouter);
 
-  const autoRouter = {
-    costTier: opts.costTier,
-    allowedModels: opts.allowedModels,
-    excludedModels: opts.excludedModels,
-  };
+  // #78: the same config keys the service honours, with a flag beating the
+  // environment and the environment beating the config file.
+  const autoRouter = resolveAutoRouter({
+    config,
+    env: process.env,
+    explicit: { costTier: opts.costTier, allowedModels: opts.allowedModels, excludedModels: opts.excludedModels },
+  });
 
   // Validate the cost tier now rather than inside a retry loop, where an unknown
   // tier would be retried as if it were a transient fault.
@@ -307,6 +312,12 @@ async function main() {
 
   const store = opts.store ? openStore({ path: opts.store }) : null;
   const worker = await createOcrWorker();
+  // #78: the model path reads the same config the service does. Only loaded when a
+  // real model client is built, so an offline `cli.js corpus` and the `--fake-model`
+  // demo neither depend on config.toml.
+  const reasonerConfig = opts.useModel && !opts.fakeModel
+    ? loadConfig({ explicitPath: opts.config, env: process.env }).config
+    : null;
   const results = [];
 
   try {
@@ -322,7 +333,7 @@ async function main() {
         }
       }
 
-      const reasoner = opts.useModel ? buildReasoner(opts, store, subject) : null;
+      const reasoner = opts.useModel ? buildReasoner(opts, store, subject, reasonerConfig) : null;
       const result = await solveImage(worker, file, {
         variants: opts.variants,
         psms: opts.psms ?? undefined,
