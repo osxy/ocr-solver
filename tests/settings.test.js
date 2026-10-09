@@ -92,6 +92,9 @@ test('every setting the issue names is editable', () => {
     'solver.llm_vision_model',
     'solver.llm_base_url',
     'reply.enabled',
+    // Two settings the #27 list omitted; the editor must not be a partial view (#35).
+    'reply.strategy',
+    'reply.min_interval_sec',
     'reply.require_confidence',
     'reply.title',
     'reply.prefix',
@@ -350,6 +353,8 @@ test('#35: every new non-secret setting round-trips through the real loader', as
     ['http.max_body_bytes', '1048576'],
     ['http.max_queue', '3'],
     ['reply.unresolved_max_per_hour', '90'],
+    ['reply.strategy', 'clipboard+notify'],
+    ['reply.min_interval_sec', '10'],
   ];
   for (const [id, value] of changes) editor.set(id, value);
   const result = await editor.save();
@@ -371,6 +376,8 @@ test('#35: every new non-secret setting round-trips through the real loader', as
   assert.equal(config.http.max_body_bytes, 1048576);
   assert.equal(config.http.max_queue, 3);
   assert.equal(config.reply.unresolved_max_per_hour, 90);
+  assert.equal(config.reply.strategy, 'clipboard+notify');
+  assert.equal(config.reply.min_interval_sec, 10);
 });
 
 test('#35: out-of-range new values are rejected and write nothing', async (t) => {

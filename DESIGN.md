@@ -605,7 +605,9 @@ something that silently does nothing. The live ones are copied into the live con
 `http.port`, `http.rate_limit_per_min`, `http.timeout_ms`, `http.max_body_bytes`, `http.max_queue`,
 `solver.tier0`, `solver.breaker_threshold`, `solver.breaker_cooldown_sec`, `ocr.languages`,
 `ocr.min_confidence`, `image.max_width`, `image.max_pixels` and `reply.unresolved_max_per_hour`
-all have descriptors, so `config list` and both editors see them. The HTTP bearer token is a
+all have descriptors, so `config list` and both editors see them. The same pass closes two
+settings #27's list had always omitted (`reply.strategy` and `reply.min_interval_sec`) rather
+than leaving the editor a quiet partial view. The HTTP bearer token is a
 **secret**: `http.token` is stored through `saveSecrets` and never reaches `config.toml`, the same
 rule and the same tested guarantee as the Pushbullet token — including a mixed save where a
 non-secret `http` key is written in the same call. The token has no endpoint to probe, so its

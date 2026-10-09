@@ -31,6 +31,7 @@ import { DEFAULTS, validateConfig } from '../config.js';
 import { httpTokenProblem } from '../http/defaults.js';
 import { VARIANTS } from '../imaging/preprocess.js';
 import { HISTORY_MODES } from '../pushbullet/listener.js';
+import { STRATEGIES } from '../pushbullet/respond.js';
 import { describeSecret } from '../secrets.js';
 import { createSetup, defaultTestModel, defaultTestPushbullet, hasInternalWhitespace } from './setup.js';
 
@@ -72,6 +73,8 @@ export const SETTINGS = Object.freeze([
   Object.freeze({ id: 'solver.llm_base_url', label: 'Model base URL', path: ['solver', 'llm_base_url'], type: 'string', restart: true }),
 
   Object.freeze({ id: 'reply.enabled', label: 'Reply at all', path: ['reply', 'enabled'], type: 'boolean', restart: true }),
+  Object.freeze({ id: 'reply.strategy', label: 'Reply strategy', path: ['reply', 'strategy'], type: 'enum', choices: Object.keys(STRATEGIES), restart: true }),
+  Object.freeze({ id: 'reply.min_interval_sec', label: 'Minimum interval between sends (seconds)', path: ['reply', 'min_interval_sec'], type: 'number', min: 0, restart: true }),
   Object.freeze({ id: 'reply.require_confidence', label: 'Reply only to corroborated answers', path: ['reply', 'require_confidence'], type: 'boolean', restart: true }),
   Object.freeze({ id: 'reply.title', label: 'Reply title', path: ['reply', 'title'], type: 'string', restart: true }),
   Object.freeze({ id: 'reply.prefix', label: 'Reply prefix', path: ['reply', 'prefix'], type: 'string', allowEmpty: true, restart: true }),
