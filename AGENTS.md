@@ -136,7 +136,7 @@ the old code. Behaviour that took live testing to find must not be able to come 
 ## 5. Tests
 
 ```bash
-npm test              # 120 tests, fully offline: no network, no token, no key
+npm test              # 363 tests (357 pass, 6 skip), fully offline: no network, no token, no key
 npm run test:unit     # fast subset
 npm run test:corpus   # real images through real OCR, ~4s
 npm run test:live     # opt-in; skips itself unless LLM_API_KEY is set
@@ -147,6 +147,34 @@ it usable in CI and by a contributor who has no provider account. Live tests mus
 cleanly rather than fail when a key is absent.
 
 Never make the offline suite depend on a network call.
+
+### Live provider testing
+
+The model tiers are covered offline by a scripted client, but that cannot tell you whether a
+real model actually reads these puzzles. The live test is opt-in and needs a provider key.
+Keep the key **outside** the repository, so it reaches neither the project directory, shell
+history, nor a session transcript:
+
+```bash
+mkdir -p ~/.config/puzzlesolver
+cp config/llm.env.example ~/.config/puzzlesolver/env
+chmod 600 ~/.config/puzzlesolver/env
+$EDITOR ~/.config/puzzlesolver/env      # paste key, set base URL + models
+set -a; . ~/.config/puzzlesolver/env; set +a
+npm run test:live
+```
+
+`config/llm.env.example` documents the model-side variables (`LLM_API_KEY`, `LLM_BASE_URL`,
+`LLM_TEXT_MODEL`, `LLM_VISION_MODEL`, the cost band and the allow/deny lists). The live test
+skips cleanly when `LLM_API_KEY` is unset, so a normal run never needs it.
+`scripts/live-eval.js` measures the text and vision tiers against the real corpus images
+instead of the clean synthetic fixture, with `--verbose` to print every raw reply.
+
+To exercise the model tiers without a key at all use `--fake-answer`; to see the OCR bitmaps
+use `--dump-masks <dir>`; to record a run and read it back use `--store run.db` then
+`--attempts run.db`. To check the wiring without spending anything, point the client at the
+real endpoint with a deliberately invalid key:
+`LLM_API_KEY=sk-invalid-key-for-plumbing-check node src/cli.js corpus/needs-model --use-model`.
 
 ---
 
