@@ -202,7 +202,7 @@ bind = "127.0.0.1"             # never 0.0.0.0 unless you mean it; it warns if y
 ```
 
 Every key and its default is in
-[configuration](./docs/configuration.md#every-option-with-its-default);
+[configuration](./docs/configuration.md#every-configtoml-key-with-its-default);
 `DEFAULTS` in [`src/config.js`](./src/config.js) is the schema.
 
 ### The web UI
