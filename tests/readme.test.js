@@ -17,7 +17,9 @@
  *   6. a page that describes configuration also mentions the settings editor, so the
  *      file is not the only route a page shows;
  *   7. every `section.key` the docs' TOML blocks show exists in the settings registry,
- *      so a page cannot document a setting the editor cannot set.
+ *      so a page cannot document a setting the editor cannot set;
+ *   8. every setting in the registry is documented in the configuration reference, the
+ *      reverse of 7, so a registry key the docs never show cannot hide (#138).
  *
  * The budget numbers are deliberately stated here and in AGENTS.md §10. When the README
  * legitimately grows, raise them in one deliberate commit and say why in the message -
@@ -358,4 +360,55 @@ test('every config key the docs show exists in the settings registry', () => {
   }
 
   assert.ok(documentedKeys > 0, 'no docs show a section.key; the test has lost its subject');
+});
+
+/**
+ * The mirror of the guard above: not just that a documented key is settable, but that
+ * every settable key is documented somewhere a reader will look. #133's check runs only
+ * one way, so a registry key the docs never show is invisible to it - which is how
+ * `[ocr]` and `[ui]` came to be omitted from a list headed "Every option" (#138).
+ *
+ * The canonical reference (`docs/configuration.md`, the block under "Every ... key") is
+ * held to the strong form: every setting with a `path` (a key that can live in
+ * `config.toml`) must appear there as a `section.key`, with a default - not merely be
+ * named in prose elsewhere. A secret has no `path` by design (it lives in the credential
+ * store), so the strong form cannot apply; each is instead required to be named by its
+ * literal id in the docs, which is how the page explains where it goes.
+ *
+ * WHAT THIS GUARD IS NOT. It checks that the key is listed, not that its default or
+ * comment is right - a wrong default passes. And "documented" is satisfied by the id
+ * appearing as a `section.key` in the canonical block, not by the surrounding prose
+ * making sense. A green run means a reader can find the key and a value; the reader
+ * still has to read the line.
+ */
+test('every setting in the registry is documented in the configuration reference', () => {
+  const pages = loadDocPages();
+  const configurationPath = join(repoRoot, 'docs', 'configuration.md');
+  assert.ok(existsSync(configurationPath), 'docs/configuration.md is missing; the test cannot find its subject');
+  const configuration = readFileSync(configurationPath, 'utf8');
+
+  // The canonical block: the first TOML block after the "Every ... key" heading.
+  const heading = configuration.match(/^##\s+Every\b[^\n]*\n/m);
+  assert.ok(heading, 'docs/configuration.md has no "Every ... key" heading; the test has lost its subject');
+  const block = tomlBlocks(configuration.slice(heading.index))[0];
+  assert.ok(block, 'the "Every ... key" heading is not followed by a TOML block; the test has lost its subject');
+
+  const canonical = new Set(keyPaths(parseToml(block)));
+  const prose = pages.map((page) => page.text).join('\n');
+
+  assert.ok(SETTINGS.length > 0, 'SETTINGS is empty; the test has lost its subject');
+
+  for (const setting of SETTINGS) {
+    if (setting.path) {
+      assert.ok(
+        canonical.has(setting.id),
+        `"${setting.id}" is a config.toml setting (it has a path in SETTINGS), but docs/configuration.md's "Every ... key" block does not list it, so a reader cannot find its default.`
+      );
+    } else {
+      assert.ok(
+        prose.includes(setting.id),
+        `"${setting.id}" is a secret with no config.toml path, and no docs page names it, so a reader cannot find where it goes.`
+      );
+    }
+  }
 });
