@@ -16,6 +16,10 @@
 # Startup shim go, the user's config.toml/credentials.json/state.db survive intact, and
 # uninstall.ps1 -Purge is the only path that deletes them.
 #
+# Since #181 it asserts the commented example config the installer writes beside where
+# config.toml lives: present, generated from the defaults, fully commented, never a live
+# config.toml, and a user's edited copy kept across a reinstall.
+#
 # Every check throws on failure, so a human never has to read the log to decide whether
 # the job passed. The per-user folders are redirected into a temp tree so the run cannot
 # touch the runner's real profile and is removed afterwards.
@@ -112,6 +116,20 @@ try {
     }
     Write-Host "install: $($expected.Count) expected files are present under $installDir"
 
+    # --- 1a. the commented example config is installed, and is not config.toml ---
+    # #181: the file lives in the config directory, not the install directory (which an
+    # update replaces), so a reader finds it where the file they copy *to* lives. Every
+    # line is commented, so even a careless copy over config.toml pins no default.
+    $exampleFile = Join-Path $env:APPDATA 'PuzzleSolver\config.toml.example'
+    Assert (Test-Path $exampleFile) "install: expected the example config at $exampleFile"
+    Assert (-not (Test-Path (Join-Path $env:APPDATA 'PuzzleSolver\config.toml'))) 'install: the installer must not write a live config.toml'
+    $exampleText = Get-Content $exampleFile -Raw
+    Assert ($exampleText -match 'poll_interval_sec = 60') 'install: the example does not show the generated defaults'
+    Assert ($exampleText -match 'config set') 'install: the example must say where secrets go'
+    $liveLines = @($exampleText -split "`n" | Where-Object { $_.Trim() -ne '' -and -not $_.StartsWith('#') })
+    Assert ($liveLines.Count -eq 0) "install: the example has live TOML lines: $($liveLines -join '; ')"
+    Write-Host 'install: commented example config present in the config directory, no live config.toml'
+
     # --- 1b. the default install starts the app it just installed ------------
     # This is the post-install start (issue #167) and the only place a runner can observe
     # it. It also leaves a stale lock behind: the process is killed, so the `--headless`
@@ -176,6 +194,9 @@ try {
     $configText = "# written before the uninstall`n[storage]`nkeep_images = true"
     $credentialsText = '{"pushbullet":"dpapi-ciphertext-marker"}'
     $stateText = 'sqlite-marker'
+    # An example the user has edited: the reinstall below must keep it (#181).
+    $editedExample = $exampleText + "`n# user edit marker`n"
+    Set-Content -Path $exampleFile -Value $editedExample -NoNewline -Encoding utf8
     Set-Content -Path (Join-Path $dataRoaming 'config.toml') -Value $configText -NoNewline -Encoding utf8
     Set-Content -Path (Join-Path $dataRoaming 'credentials.json') -Value $credentialsText -NoNewline -Encoding utf8
     Set-Content -Path (Join-Path $dataLocal 'state.db') -Value $stateText -NoNewline -Encoding utf8
@@ -185,6 +206,7 @@ try {
     $reinstall = Invoke-Installer (Join-Path $payload 'install.ps1') -extraArgs '-NoStart'
     Assert ($reinstall.code -eq 0) "reinstall: install.ps1 exited $($reinstall.code): $($reinstall.text)"
     Assert ((Get-Content (Join-Path $dataRoaming 'config.toml') -Raw) -ceq $configText) 'reinstall: config.toml was overwritten'
+    Assert ((Get-Content $exampleFile -Raw) -ceq $editedExample) 'reinstall: the user-edited example config was overwritten'
 
     # A throw inside uninstall.ps1 aborts this script (ErrorActionPreference = Stop), so
     # success is proved by the file assertions below rather than by $LASTEXITCODE.

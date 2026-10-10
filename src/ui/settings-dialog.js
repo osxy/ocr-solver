@@ -62,7 +62,9 @@ export async function defaultSettingsDialog({
     items.forEach((item, index) => {
       const tag = item.restart ? 'restart' : 'live';
       const mark = item.isNew ? ' [new]' : '';
-      say(`${String(index + 1).padStart(2)}. ${item.id} = ${item.display}  [${tag}]${mark}`);
+      // The registry's label is the human heading; the id stays beside it because it is
+      // what the prompt accepts and what the round trip submits (#139).
+      say(`${String(index + 1).padStart(2)}. ${item.label ?? item.id} (${item.id}) = ${item.display}  [${tag}]${mark}`);
     });
   }
 

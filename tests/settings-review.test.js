@@ -347,8 +347,8 @@ test('#67: the web page marks new and security-relevant settings with a banner',
   assert.match(html, /setting\(s\) added since your last review/);
   // Row-level markers, so a removed badge is caught even though the banner also says
   // "[new]".
-  assert.match(html, /<th>http\.allow_image_url<\/th>[^\n]*\[new\]/);
-  assert.match(html, /<th>http\.allow_image_url<\/th>[^\n]*\[security\]/);
+  assert.match(html, /<code class="setting-id">http\.allow_image_url<\/code>[^\n]*\[new\]/);
+  assert.match(html, /<code class="setting-id">http\.allow_image_url<\/code>[^\n]*\[security\]/);
   // The offer summary is security-relevant first even though the optional setting is
   // first in the list (and therefore first in the rows) - #67's ordering rule.
   const bannerStart = html.indexOf('added since your last review');
