@@ -12,6 +12,10 @@
 # That is the check the deploy job was missing - and the reason the first real-machine
 # failure printed "Installed" after node had printed a stack trace.
 #
+# Since #186 it also proves what an uninstall must *not* do: the program folder and the
+# Startup shim go, the user's config.toml/credentials.json/state.db survive intact, and
+# uninstall.ps1 -Purge is the only path that deletes them.
+#
 # Every check throws on failure, so a human never has to read the log to decide whether
 # the job passed. The per-user folders are redirected into a temp tree so the run cannot
 # touch the runner's real profile and is removed afterwards.
@@ -161,16 +165,47 @@ try {
     Stop-InstalledNodeProcesses $installDir
     Start-Sleep -Seconds 2
 
-    # --- 5. uninstall.ps1 removes the startup shim and the folders -----------
+    # --- 5. uninstall.ps1 keeps the user's data; -Purge deletes it -----------
+    # The defect this proves fixed (#186): the uninstaller used to remove all three
+    # per-user folders unconditionally. Write the data a configured user already has, so
+    # the assertions below can tell "the folders are gone" from "the user's property
+    # survived with its contents intact".
+    $dataLocal = Join-Path $env:LOCALAPPDATA 'PuzzleSolver'
+    $dataRoaming = Join-Path $env:APPDATA 'PuzzleSolver'
+    New-Item -ItemType Directory -Force -Path $dataLocal, $dataRoaming | Out-Null
+    $configText = "# written before the uninstall`n[storage]`nkeep_images = true"
+    $credentialsText = '{"pushbullet":"dpapi-ciphertext-marker"}'
+    $stateText = 'sqlite-marker'
+    Set-Content -Path (Join-Path $dataRoaming 'config.toml') -Value $configText -NoNewline -Encoding utf8
+    Set-Content -Path (Join-Path $dataRoaming 'credentials.json') -Value $credentialsText -NoNewline -Encoding utf8
+    Set-Content -Path (Join-Path $dataLocal 'state.db') -Value $stateText -NoNewline -Encoding utf8
+
+    # A reinstall over the configured tree: the same door as uninstall, so #186 asked
+    # whether install.ps1 discards an existing config. It must not.
+    $reinstall = Invoke-Installer (Join-Path $payload 'install.ps1') -extraArgs '-NoStart'
+    Assert ($reinstall.code -eq 0) "reinstall: install.ps1 exited $($reinstall.code): $($reinstall.text)"
+    Assert ((Get-Content (Join-Path $dataRoaming 'config.toml') -Raw) -ceq $configText) 'reinstall: config.toml was overwritten'
+
     # A throw inside uninstall.ps1 aborts this script (ErrorActionPreference = Stop), so
     # success is proved by the file assertions below rather than by $LASTEXITCODE.
     & (Join-Path $installDir 'uninstall.ps1')
 
     Assert (-not (Test-Path $startupFile)) "uninstall: the Startup shim still exists: $startupFile"
     Assert (-not (Test-Path $installDir)) "uninstall: install dir still exists: $installDir"
-    Assert (-not (Test-Path (Join-Path $env:LOCALAPPDATA 'PuzzleSolver'))) 'uninstall: logs/state dir still exists'
-    Assert (-not (Test-Path (Join-Path $env:APPDATA 'PuzzleSolver'))) 'uninstall: config dir still exists'
-    Write-Host 'uninstall: Startup shim and all three per-user folders are gone'
+    Assert (Test-Path $dataLocal) 'uninstall: the logs/state dir must survive a default uninstall'
+    Assert (Test-Path $dataRoaming) 'uninstall: the config dir must survive a default uninstall'
+    Assert ((Get-Content (Join-Path $dataRoaming 'config.toml') -Raw) -ceq $configText) 'uninstall: config.toml did not survive with its contents intact'
+    Assert ((Get-Content (Join-Path $dataRoaming 'credentials.json') -Raw) -ceq $credentialsText) 'uninstall: credentials.json did not survive with its contents intact'
+    Assert ((Get-Content (Join-Path $dataLocal 'state.db') -Raw) -ceq $stateText) 'uninstall: state.db did not survive with its contents intact'
+    Write-Host 'uninstall: program directory and Startup shim are gone; the user data survived intact'
+
+    # The installed copy went with the install dir, so the purge half uses the payload's
+    # copy. This also proves the default run above did not leak into it: -Purge is the
+    # only path that deletes the data (#186).
+    & (Join-Path $payload 'uninstall.ps1') -Purge
+    Assert (-not (Test-Path $dataLocal)) 'uninstall -Purge: the logs/state dir still exists'
+    Assert (-not (Test-Path $dataRoaming)) 'uninstall -Purge: the config dir still exists'
+    Write-Host 'uninstall: -Purge removed the data directories when explicitly asked'
 
     # --- 6. a failing child must be propagated, never printed as success ----
     # This is the check that was missing when the first real user saw "Installed" after
@@ -205,7 +240,7 @@ try {
         Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value @"
 ### Windows deployment
 
-install -> per-user Startup shim inspected -> packaged app starts under ``--headless`` -> ``PuzzleSolver.vbs`` launches -> uninstall: all passed in **${seconds}s**.
+install -> per-user Startup shim inspected -> packaged app starts under ``--headless`` -> ``PuzzleSolver.vbs`` launches -> uninstall keeps the user's data intact and ``-Purge`` removes it: all passed in **${seconds}s**.
 
 The failure path is proved too: a payload whose installer exits non-zero makes ``install.ps1`` exit non-zero and print no success line (#162).
 

@@ -214,7 +214,8 @@ test('run-deploy.ps1 asserts every deployment surface and throws on the first mi
   assert.match(script, /function Assert/);
   // install lands the files, the per-user Startup shim exists with the documented delay,
   // the app refuses with the documented message, the launcher starts a process,
-  // uninstall is clean, and a failing installer is propagated (#162).
+  // uninstall keeps the user's data and -Purge removes it (#186), and a failing
+  // installer is propagated (#162).
   for (const marker of [
     'install.ps1',
     'PuzzleSolver-startup.vbs',
@@ -226,6 +227,10 @@ test('run-deploy.ps1 asserts every deployment surface and throws on the first mi
     'PuzzleSolver.vbs',
     'Stop-Process',
     'uninstall.ps1',
+    '-Purge',
+    'config.toml',
+    'credentials.json',
+    'must survive a default uninstall',
   ]) {
     assert.ok(script.includes(marker), `run-deploy.ps1 no longer checks ${marker}`);
   }

@@ -1563,7 +1563,11 @@ the installer appear to hang. `-NoStart` is the switch for a scripted or unatten
 where opening the first-run setup page is wrong. On a fresh install with no token the started
 app opens its setup page (#56), so install -> running -> it asks for the token is the first
 run. `packaging/uninstall.ps1` delegates the shim deletion the
-same way, then removes the three per-user folders. All path decisions live in the Node modules;
+same way, then removes the program folder. The user's data folders are **kept by default**
+and removed only by `-Purge` (#186): `%APPDATA%`/`%LOCALAPPDATA%` application data
+outliving an uninstall is the Windows convention, and `credentials.json` is
+DPAPI-protected with `CurrentUser` scope, so deleting it protects nobody while costing the
+legitimate owner. All path decisions live in the Node modules;
 the PowerShell is locator/launcher glue. Both `_ps1` scripts check `$LASTEXITCODE` after the
 native child, because `$ErrorActionPreference = 'Stop'` does not cover it and a failure otherwise
 still printed "Installed" (#162).
@@ -1647,7 +1651,9 @@ redirected there, and runs `packaging/run-deploy.ps1`. It executes `install.ps1`
 per-user Startup shim exists and carries the `WScript.Sleep` logon delay; starts the packaged
 `node.exe` under `--headless` and asserts the documented exit-1 refusal rather than a stack trace;
 runs `PuzzleSolver.vbs` and asserts a `node.exe` process appears; then runs `uninstall.ps1` and
-asserts the shim and all three per-user folders are gone. It then **proves the failure path**: a
+asserts the shim and the program folder are gone while the `config.toml`, `credentials.json`
+and `state.db` written beforehand survive with their contents intact, and that `-Purge` is the
+only path that removes them (#186). It then **proves the failure path**: a
 payload whose `app/src/deploy/install.js` exits non-zero must make `install.ps1` exit non-zero and
 print no success line (#162) — the check that was missing when the first real user saw "Installed"
 after node had failed. The `release` job now needs it too, so a broken installer blocks a release.

@@ -121,15 +121,24 @@ test('install.ps1 installs per-user, delegates to Node and checks the child exit
   assert.match(ps, /starting now/, 'the success text describes what happened, not what to do next');
 });
 
-test('uninstall.ps1 removes the startup shim and all three per-user folders', () => {
+test('uninstall.ps1 keeps the user data unless -Purge asks for it (#186)', () => {
   const ps = readFileSync(join(packaging, 'uninstall.ps1'), 'utf8');
   assert.match(ps, /deploy\\uninstall\.js/, 'the startup shim is removed through the Node runner');
   assert.ok(ps.includes(STARTUP_FILE), 'the damaged-install fallback must name the same shim file');
   assert.match(ps, /Start Menu\\Programs\\Startup/, 'the fallback must use the per-user Startup folder');
-  assert.match(ps, /Programs\\PuzzleSolver/);
-  assert.match(ps, /Join-Path \$env:LOCALAPPDATA 'PuzzleSolver'/, 'logs/state must go');
-  assert.match(ps, /Join-Path \$env:APPDATA 'PuzzleSolver'/, 'config/credentials must go');
+  assert.match(ps, /Programs\\PuzzleSolver/, 'the installer-created program folder is removed');
   assert.match(ps, /Remove-Item -Recurse -Force/);
+
+  // The defect: the default path removed the data folders too. They must be absent
+  // from the default removal list and reachable only through -Purge.
+  assert.match(ps, /\[switch\]\$Purge/, 'a purge switch is how deletion is asked for');
+  assert.match(ps, /\$Targets = @\(\$InstallDir\)/, 'the default target list must be the install dir alone');
+  assert.match(ps, /if \(\$Purge\) \{ \$Targets \+= \$DataTargets \}/, 'the data folders are added only under -Purge');
+  assert.match(ps, /Join-Path \$env:LOCALAPPDATA 'PuzzleSolver'/, 'the logs/state dir is named');
+  assert.match(ps, /Join-Path \$env:APPDATA 'PuzzleSolver'/, 'the config/credentials dir is named');
+  // The reason a reviewer must not "fix" this back: the credentials are already
+  // useless to any other account, so deleting them protects nobody.
+  assert.match(ps, /CurrentUser/, 'the DPAPI rationale must stay next to the deletion logic');
 });
 
 test('every packaged file is tracked in git (no generated artefact left untracked)', () => {
