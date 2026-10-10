@@ -57,8 +57,11 @@ $DataTargets = @(
     (Join-Path $env:LOCALAPPDATA 'PuzzleSolver'),
     (Join-Path $env:APPDATA 'PuzzleSolver')
 )
-$Targets = @($InstallDir)
-if ($Purge) { $Targets += $DataTargets }
+$Targets = @(
+    $InstallDir,
+    (Join-Path $env:LOCALAPPDATA 'PuzzleSolver'),
+    (Join-Path $env:APPDATA 'PuzzleSolver')
+)
 
 foreach ($Target in $Targets) {
     if (Test-Path $Target) {
