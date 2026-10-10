@@ -33,7 +33,10 @@ param(
     [switch]$NoStart,
     # Repair/reinstall the same version. Never a downgrade: the version gate still
     # refuses an older payload even with -Force.
-    [switch]$Force
+    [switch]$Force,
+    # Clear the Mark-of-the-Web from the downloaded archive before extracting it. Off by
+    # default: the mark is an accurate record of where the file came from (#176).
+    [switch]$Unblock
 )
 
 $ErrorActionPreference = 'Stop'
@@ -62,6 +65,21 @@ if (Test-Path $Sidecar) {
     Write-Host "checksum verified: $([IO.Path]::GetFileName($Zip))"
 } else {
     Write-Warning "no checksum sidecar beside $Zip; the download's integrity was not verified"
+}
+
+# Mark-of-the-Web (#176): `Expand-Archive` propagates the archive's internet-download mark
+# to the files it extracts. The updater reports it and never clears it silently - the mark
+# is an accurate record of the user's own download; `-Unblock` is how they ask for that.
+# The one command that prevents it is unblocking the ZIP before extracting, so that is what
+# the message names.
+$ZipMark = Get-Item -LiteralPath $Zip -Stream Zone.Identifier -ErrorAction SilentlyContinue
+if ($ZipMark) {
+    if ($Unblock) {
+        Unblock-File -LiteralPath $Zip
+        Write-Host "Mark-of-the-Web: cleared the download mark from $([IO.Path]::GetFileName($Zip)) (-Unblock)."
+    } else {
+        Write-Host "Mark-of-the-Web: $([IO.Path]::GetFileName($Zip)) carries the internet-download mark; Windows may warn the first time each extracted file is opened. No file was changed. Unblock-File `"$Zip`" clears it (or re-run with -Unblock)."
+    }
 }
 
 # --- 2. Extract to a temp directory and validate the payload --------------------

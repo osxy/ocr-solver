@@ -212,6 +212,9 @@ test('update.ps1 verifies the download, stops through the lock and replaces the 
   assert.match(ps, /--self/);
   assert.match(ps, /deploy\\install\.js/);
   assert.match(ps, /-NoStart/);
+  // One MOTW rule, both scripts (#176): detect and report, never silently unblock.
+  assert.match(ps, /Zone\.Identifier/);
+  assert.match(ps, /\[switch\]\$Unblock/);
 });
 
 test('runInstall writes the launcher, the Startup shim and the example config, and runs nothing', () => {
