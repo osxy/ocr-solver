@@ -1,4 +1,8 @@
-# CI: the offline suite, on every push and on PRs to main or a milestone branch.
+# CI: the offline suite, on pushes to main or a milestone branch and on PRs to either.
+#
+# A feature or fix branch gets CI through its pull request, not on every push: the run
+# is identical, a PR into main or a milestone branch triggers it, and restricting the
+# push trigger drops a redundant run per commit while nudging the PR open sooner.
 #
 # No secrets are configured. The live model tests in tests/live-model.test.js skip
 # themselves when LLM_API_KEY is absent, so a fork's pull request runs green rather
@@ -12,12 +16,21 @@ name: CI
 
 on:
   push:
+    branches: [main, 'milestone/**']
   pull_request:
     branches: [main, 'milestone/**']
   # Callable from the Windows package workflow so there is one Node matrix and no
   # second copy of the offline suite to keep in sync. Adding this does not change what
   # runs on push or pull_request.
   workflow_call:
+
+# Cancel a superseded run for the same ref: the last push is the one worth testing and
+# a queued older run is billed. `github.workflow` keeps this group distinct from the
+# same file's reusable-workflow call inside Package (Windows), so a fresh CI push cannot
+# cancel that run's test job.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
