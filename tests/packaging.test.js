@@ -176,15 +176,15 @@ test('run-deploy.ps1 asserts every deployment surface and throws on the first mi
   const script = readFileSync(join(repoRoot, 'packaging', 'run-deploy.ps1'), 'utf8');
 
   assert.match(script, /function Assert/);
-  // install lands the files, the task exists with the documented properties, the app
-  // refuses with the documented message, the launcher starts a process, uninstall is clean.
+  // install lands the files, the per-user Startup shim exists with the documented delay,
+  // the app refuses with the documented message, the launcher starts a process,
+  // uninstall is clean, and a failing installer is propagated (#162).
   for (const marker of [
     'install.ps1',
-    'schtasks.exe /Query /TN $taskName /XML',
-    '<LogonTrigger>',
-    '<Delay>PT20S</Delay>',
-    '<RestartOnFailure>',
-    '<Interval>PT1M</Interval>',
+    'PuzzleSolver-startup.vbs',
+    'Sleep 20000',
+    'process.exit(3)',
+    "-notmatch 'Installed'",
     "'listen', '--headless'",
     'no Pushbullet token found',
     'PuzzleSolver.vbs',

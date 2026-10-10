@@ -1419,9 +1419,8 @@ is not tracked by git — the `secrets.*`-hid-`src/secrets.js` trap can no longe
 injected clock, including the exact boundary. `tests/tray.test.js` exercises every menu action
 against a fake listener. `tests/tray-systray.test.js` asserts the actionable `--headless` failure
 with an injected loader and the click forwarding with a fake `SysTray`. `tests/deploy.test.js`
-asserts the launcher text, the task XML (20 s delay, restart-on-failure, quoted paths), the
-`schtasks` arguments and the PowerShell content, plus the install/uninstall runners against
-injected fs/spawn. `tests/setup.test.js` covers validation, the connection probes and the real
+asserts the launcher text, the per-user Startup shim (20 s delay, delegation) and the PowerShell
+content, plus the install/uninstall runners against injected fs. `tests/setup.test.js` covers validation, the connection probes and the real
 credential-file round-trip at mode 0600. The whole suite runs on Linux with no tray, no display
 and no key; what a Windows build would do is listed as unverified in §11.
 
@@ -1462,35 +1461,53 @@ item with its provenance, and `src/accuracy.js` is the one place the number is c
 1. Ship a folder: pinned `node.exe`, `node_modules`, `app/`, and `PuzzleSolver.vbs` (a
    `wscript` shim that launches `node src/cli.js` hidden — no console window flashes).
 2. Install to `%LOCALAPPDATA%\Programs\PuzzleSolver\` — no admin rights needed.
-3. **Autostart:** a Task Scheduler task at logon with a 20 s delay and "restart on failure",
-   preferred over the `Run` registry key because it survives a crash loop and uninstalls cleanly.
+3. **Autostart:** a shim in the per-user Startup folder with a 20 s delay. Chosen after a
+   scheduled task was refused for an ordinary user (#163); see below.
 4. First run: setup dialog → secrets stored → tray icon appears.
 5. Stretch goal: Node SEA single executable. Native `sharp` and the WASM traineddata make
    this fiddly, which is why it is not the primary plan.
 
-**As built in M3.** The task is generated as **XML**, not from `schtasks` switches, because
-`schtasks` has no command-line switch for restart-on-failure — it exists only in the XML schema.
-`src/deploy/autostart.js` builds the XML (logon trigger with `<Delay>PT20S</Delay>`,
-`<RestartOnFailure><Interval>PT1M</Interval><Count>3</Count></RestartOnFailure>`,
-`<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>`, `<ExecutionTimeLimit>PT0S</…>`)
-and the `schtasks /Create|/Delete` argument lists; `src/deploy/launcher.js` builds the `wscript`
-shim. Both are asserted as literal text, with a path that contains spaces. The shim is
-location-independent (everything derives from `WScript.ScriptFullName`), which is why the
-checked-in `packaging/PuzzleSolver.vbs` can be asserted byte-for-byte against the generator.
+**As built: a per-user Startup-folder entry, not a scheduled task (#163).** The M3 design used a
+Task Scheduler task for its logon trigger, 20 s delay and "restart on failure". The first real run
+of the packaged app, in an ordinary PowerShell, had `schtasks /Create` refused with `Toegang
+geweigerd`: the Task Scheduler service writes the definition into the root task folder
+(`%SystemRoot%\System32\Tasks`), which a standard user may not write, while `%LOCALAPPDATA%`
+needs no elevation. Copying the app worked and registering the task did not — and the installer
+then printed "Installed" anyway (#162).
 
-**Requested restarts are explicit, never `RestartOnFailure` (issue #128).** The task's
-`<RestartOnFailure>` fires on a **non-zero** exit after `PT1M`, so it is crash recovery with a
-delay and a retry count, not a restart API. A deliberate restart (`src/deploy/restart.js`)
-quiesces the ingresses, drains the in-flight solve on the shared core lock, calls `app.stop()` so
-the HTTP port and the SQLite file are released *before* the successor starts, launches exactly one
-successor through the `wscript` shim (`wscript.exe "<PuzzleSolver.vbs>"`, which keeps the console
-hidden) and exits **0** — so the scheduler never sees a failure and never starts a second process.
-The launcher exports its own path as `PUZZLESOLVER_LAUNCHER`; when neither that marker nor a shim
+A scheduled task in the root folder requires elevation; the root folder grants standard users
+read/execute only, and there is no per-user task folder an ordinary user owns. This could not be
+re-measured on `windows-latest`, which runs as an administrator — the same reason CI never caught
+it. The replacement is the **per-user Startup folder**
+(`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup`), which needs no elevation and is
+already per-user. `src/deploy/launcher.js` builds both `.vbs` shims: `PuzzleSolver.vbs` (the
+launcher, location-independent from `WScript.ScriptFullName`, asserted byte-for-byte against the
+checked-in `packaging/PuzzleSolver.vbs`) and `PuzzleSolver-startup.vbs`, which sleeps 20 s and
+then runs the launcher hidden. The delay lives in the startup shim, not the launcher, because a
+manual start must not wait. `src/deploy/autostart.js` builds the install plan (which file goes
+where), and `tests/deploy.test.js` asserts the shim text and the plan.
+
+The task's two extras are handled honestly. The **20 s delay** is reproduced. **Restart on
+failure** is dropped, and it was already a no-op for an app crash: the task's action was
+`wscript.exe`, which runs node with `shell.Run ..., 0, False` and exits immediately, so the task
+instance had ended before the app could fail. The only path it ever covered was a failed
+*deliberate* restart (#135); with no task, that now waits for the next logon (see below).
+
+**Requested restarts are explicit, never a crash-recovery restart (issue #128).** The installed
+autostart is a Startup shim with no `RestartOnFailure` at all, so the rule is simply: a deliberate
+restart (`src/deploy/restart.js`) quiesces the ingresses, drains the in-flight solve on the shared
+core lock, calls `app.stop()` so the HTTP port and the SQLite file are released *before* the
+successor starts, launches exactly one successor through the `wscript` shim
+(`wscript.exe "<PuzzleSolver.vbs>"`, which keeps the console hidden) and exits **0** — so nothing
+starts a second process. Should the successor fail to start, the process exits **non-zero** rather
+than claiming success; with no scheduler to retry it, that leaves the service down until the next
+logon. The launcher exports its own path as `PUZZLESOLVER_LAUNCHER`; when neither that marker nor a shim
 beside the bundled `node.exe` exists (a shell run, a dev checkout, `config edit`), the app prints
 the exact command instead of pretending. `process.execPath` re-exec was rejected: it loses the
 hidden window and replays an argv that is not necessarily the task's configured mode. `schtasks
 /End` + `/Run` was rejected: `/End` hard-terminates the running instance and cannot run the
-graceful drain. `RestartOnFailure` is never used intentionally. The decision is a pure function
+graceful drain, and the task it depended on is gone (#163). `RestartOnFailure` is never used
+intentionally. The decision is a pure function
 (`planRestart`) with injected `fileExists`/`spawn`, asserted offline in `tests/restart.test.js`,
 including that a restart exits `0` and that an in-flight solve delays the release. The settings
 done page offers `Restart now` (responding to the browser before the process goes down) and the
@@ -1498,18 +1515,21 @@ tray has a **Restart** item; both route through the same `createShutdownHandler`
 
 Install layout: `packaging/install.ps1` locates `%LOCALAPPDATA%\Programs\PuzzleSolver`, copies
 the payload, then hands off to `app/src/deploy/install.js` (run by the bundled `node.exe`) to
-write the shim + XML and call `schtasks`. `packaging/uninstall.ps1` delegates the task deletion
-the same way, then removes the three per-user folders. All path and task decisions live in the
-Node modules; the PowerShell is locator/launcher glue.
+write the launcher and the Startup shim. `packaging/uninstall.ps1` delegates the shim deletion the
+same way, then removes the three per-user folders. All path decisions live in the Node modules;
+the PowerShell is locator/launcher glue. Both `_ps1` scripts check `$LASTEXITCODE` after the
+native child, because `$ErrorActionPreference = 'Stop'` does not cover it and a failure otherwise
+still printed "Installed" (#162).
 
-**Unverifiable on the Linux development host:** `wscript` execution, `schtasks` registration and
-restart-on-failure behaviour, the `_ps1` scripts end to end, Explorer opening a log, and the
-actual tray widget. Every one of those has a testable seam (content, arguments or an injected
-loader) which is asserted. Since issue #59 the installer, task registration and inspection, the
-`--headless` start, the `wscript` launcher and uninstall are also executed on `windows-latest`,
-and since #60 the real DPAPI round trip is (`packaging/run-dpapi.ps1`), run as two processes so the
-read must decrypt from disk and the job asserts `Unprotect` ran (#83); what remains native-only
-is the interactive-desktop behaviour (tray, toast, Explorer hand-off).
+**Unverifiable on the Linux development host:** `wscript` execution, the `_ps1` scripts end to
+end, Explorer opening a log, and the actual tray widget. Every one of those has a testable seam
+(content, plan or an injected loader) which is asserted. Since issue #59 the installer, the
+Startup shim, the `--headless` start, the `wscript` launcher and uninstall are also executed on
+`windows-latest`, and since #60 the real DPAPI round trip is (`packaging/run-dpapi.ps1`), run as
+two processes so the read must decrypt from disk and the job asserts `Unprotect` ran (#83). What
+remains unverified is the interactive-desktop behaviour (tray, toast, Explorer hand-off) **and
+the unprivileged install path**: the runner is an administrator, so it cannot prove the install
+works without elevation (#163).
 
 **CI packaging and release (issue #19).** `.github/workflows/package.yml` builds and publishes the
 Windows package; `ci.yml` gained `workflow_call` and is the gate, so the Node matrix still has one
@@ -1547,19 +1567,21 @@ home. Decided here, additively:
 
 **The deployment glue is executed (issue #59).** A `deploy` job in `package.yml` downloads the
 artifact the `package` job built, extracts it into a temp tree with `%LOCALAPPDATA%`/`%APPDATA%`
-redirected there, and runs `packaging/run-deploy.ps1`. It executes `install.ps1`; queries the
-registered task with `schtasks /Query /XML` and asserts the logon trigger (`PT20S`) and
-restart-on-failure (`PT1M`/`3`); starts the packaged `node.exe` under `--headless` and asserts the
-documented exit-1 refusal rather than a stack trace; runs `PuzzleSolver.vbs` and asserts a
-`node.exe` process appears; then runs `uninstall.ps1` and asserts the task and all three per-user
-folders are gone. The `release` job now needs it too, so a broken installer blocks a release. It is
-bounded at 15 minutes and runs on the same triggers as `package` because it costs a fraction of the
-Windows build it reuses, and an installer regression belongs on the PR that introduces it.
+redirected there, and runs `packaging/run-deploy.ps1`. It executes `install.ps1`; asserts the
+per-user Startup shim exists and carries the `WScript.Sleep` logon delay; starts the packaged
+`node.exe` under `--headless` and asserts the documented exit-1 refusal rather than a stack trace;
+runs `PuzzleSolver.vbs` and asserts a `node.exe` process appears; then runs `uninstall.ps1` and
+asserts the shim and all three per-user folders are gone. It then **proves the failure path**: a
+payload whose `app/src/deploy/install.js` exits non-zero must make `install.ps1` exit non-zero and
+print no success line (#162) — the check that was missing when the first real user saw "Installed"
+after node had failed. The `release` job now needs it too, so a broken installer blocks a release.
+It is bounded at 15 minutes and runs on the same triggers as `package` because it costs a fraction
+of the Windows build it reuses, and an installer regression belongs on the PR that introduces it.
 
 What an interactive desktop would be needed for is still unverified: the native `systray2` tray
 widget and the `node-notifier` toast need a window station, and the `explorer.exe` browser hand-off
-(#56) is likewise unexercised. Restart-on-failure is inspected as a task *property*; a crash loop
-has not been observed restarting it. The DPAPI credential round trip, by contrast, *is* executed
+(#56) is likewise unexercised. The unprivileged install path is likewise unexercised, because the
+runner is an administrator (#163). The DPAPI credential round trip, by contrast, *is* executed
 on the runner as two processes: the writer migrates and saves, the reader decrypts from disk and
 asserts `Unprotect` was called (see [§8](#8-security--privacy)); what it cannot cover is a process
 running as the same user.

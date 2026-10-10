@@ -2,7 +2,7 @@
  * Restart decision logic (issue #128). Fully offline: no process is started, no shell
  * runs and no Windows is needed. The claims that matter are the *decisions* - which
  * mechanism applies, what is printed when none does, and that a deliberate restart
- * exits 0 so the task's RestartOnFailure never fires.
+ * exits 0 so nothing starts a second copy.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -262,7 +262,7 @@ test('a restart quiesces, drains, stops, spawns and exits 0 - in that order', as
   assert.deepEqual(exits, [0], 'a deliberate restart must exit 0');
 });
 
-test('a successor that never starts exits non-zero, so the scheduler recovery fires', async () => {
+test('a successor that never starts exits non-zero instead of claiming success', async () => {
   const app = recordingApp();
   const exits = [];
   const warnings = [];
@@ -279,8 +279,8 @@ test('a successor that never starts exits non-zero, so the scheduler recovery fi
 
   // The old code caught only synchronous throws, so the asynchronous 'error' escaped and
   // killed the process; the documented clean exit(0) then never ran. The exit must be
-  // non-zero here: no successor exists, so RestartOnFailure is the only thing that can
-  // bring the service back before the next logon.
+  // non-zero here: no successor exists, and since #163 no scheduler recovers it, so
+  // reporting success would misdescribe a dead process as a running one.
   assert.deepEqual(exits, [1], 'a failed restart must not exit 0');
   assert.match(warnings.join('\n'), /could not start a successor/);
   assert.match(warnings.join('\n'), /no successor was started/);

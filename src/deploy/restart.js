@@ -3,18 +3,18 @@
  * (issue #128). Kept pure and injectable so the whole decision is exercised offline,
  * with no process, no shell and no Windows.
  *
- * The scheduled task declares `<RestartOnFailure><Interval>PT1M</Interval><Count>3</Count>`,
- * which fires on a **non-zero** exit. It is crash recovery with a delay and a retry
- * count, not a request API. So a deliberate restart starts exactly one successor itself
- * and then exits **0**, which the scheduler reads as success. That is the whole defence
- * against hazard 1 - the double-start.
+ * The installed app is autostarted by a per-user Startup-folder shim (#163), which has no
+ * `RestartOnFailure`; the rule is nevertheless unchanged: a deliberate restart starts
+ * exactly one successor itself and then exits **0**, so nothing starts a second copy. That
+ * is the whole defence against hazard 1 - the double-start.
  *
  * But only a successor that actually started gets that clean exit. `spawn` reports a
  * missing command asynchronously on `'error'` (never by throwing), so the restart waits
- * for `'spawn'` or `'error'` before deciding: success exits **0**, failure exits **non-zero**
- * so the scheduler's `RestartOnFailure` - crash recovery, the thing it exists for - brings
- * the service back. There is no successor on that path, so the port contention the clean
- * exit guards against cannot happen.
+ * for `'spawn'` or `'error'` before deciding: success exits **0**, failure exits **non-zero**.
+ * There is no successor on that path, so the port contention the clean exit guards against
+ * cannot happen. (Before #163 a scheduled task's `RestartOnFailure` retried a non-zero exit;
+ * the Startup-folder mechanism has no such recovery, so a failed restart now waits for the
+ * next logon. The realistic failure - no launcher - is a damaged install, not a crash.)
  *
  * The installed app is launched by `wscript.exe "<PuzzleSolver.vbs>"`, which runs node
  * with window style `0`. A successor spawned as bare `node` would lose that and could
@@ -28,12 +28,12 @@
  *    hidden window and it replays whatever argv the *current* process happens to have,
  *    which is not necessarily the deployment mode the task is configured to run. The
  *    shim already encodes that mode, so it is the better authority.
- *  - **`schtasks /End` + `/Run`.** An OS-owned lifecycle that preserves the launcher,
+ *  - **`schtasks /End` + `/Run`.** Was an OS-owned lifecycle that preserved the launcher,
  *    but `/End` hard-terminates the running task instance and therefore cannot run the
- *    graceful shutdown that drains an in-flight solve (hazard 4). It is also only
- *    correct under the installed task, and nothing here could verify the task identity
- *    without `schtasks.exe`.
- *  - **`RestartOnFailure` on purpose.** Never. It is the hazard.
+ *    graceful shutdown that drains an in-flight solve (hazard 4). The scheduled task was
+ *    dropped in #163, so it is no longer an option at all.
+ *  - **Relying on the scheduler's crash recovery on purpose.** Never. It was the hazard when
+ *    a task existed, and the task itself is gone (#163).
  *
  * Where neither the marker nor an installed shim is present - a shell run, a dev
  * checkout, `config edit` - there is no honest self-restart, and the caller is handed
@@ -214,10 +214,9 @@ export async function drainSolves(core, { timeoutMs = DEFAULT_DRAIN_TIMEOUT_MS, 
 
 /**
  * The one shutdown path, shared by SIGINT/SIGTERM, the tray Quit item and a requested
- * restart. A **successful** restart `exit(0)` is not incidental: it is what keeps
- * `RestartOnFailure` from firing and double-starting with the successor. A restart whose
- * successor did not start exits **non-zero** instead, deliberately asking the scheduler's
- * recovery to bring the service back.
+ * restart. A **successful** restart `exit(0)` is not incidental: it is what keeps a
+ * second copy from starting. A restart whose successor did not start exits **non-zero**
+ * instead; there is no scheduler to retry it, so that is the last thing the process does.
  *
  * For a restart it first quiesces the ingresses, drains the in-flight solve, and only
  * then calls `app.stop()` - so the successor is spawned after the port and the SQLite
@@ -279,11 +278,12 @@ export function createShutdownHandler({
         logger?.warn?.(`could not start a successor: ${err?.message ?? err}`);
       }
       if (!spawned) {
-        // No successor exists, so nothing can contend for the port. A non-zero exit is
-        // the case RestartOnFailure exists for: the scheduler starts the task again
-        // after a minute and the service comes back. Exiting 0 would leave the service
-        // dead until the next logon, because RestartOnFailure never fires on success.
-        logger?.warn?.('no successor was started; exiting non-zero so the scheduler restarts the task');
+        // No successor exists, so nothing can contend for the port. Before #163 a
+        // non-zero exit asked the task's RestartOnFailure to bring the service back;
+        // the Startup-folder mechanism has no such recovery, so this now leaves the
+        // service down until the next logon. Kept non-zero because a silent success
+        // would misreport a dead process as a running one.
+        logger?.warn?.('no successor was started; exiting non-zero (no autostart recovery until the next logon)');
         exit(1);
         return { closed: true, restarted: false, error: error ?? null };
       }

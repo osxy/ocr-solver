@@ -110,7 +110,7 @@ the store.
 
 A headless or unattended run reads them from the environment instead. It must be a
 **persistent** variable — `setx`, or System Properties → Environment Variables — because
-the logon task does not see a session `$env:` assignment:
+the app started at logon does not see a session `$env:` assignment:
 
 ```powershell
 setx PUSHBULLET_TOKEN "o.xxxxxxxx"
@@ -134,7 +134,7 @@ endpoint. Like the other two it goes in the credential store — the settings ed
 **HTTP bearer token** row, or `node src/cli.js config set http.token a-long-random-string`.
 An unattended run may set `HTTP_AUTH_TOKEN` in the environment instead, but that variable
 must be **persistent** (`setx` or System Properties, as above), not a session `$env:`
-assignment, or the logon task will not see it. A hand-written `credentials.json` with
+assignment, or the app started at logon will not see it. A hand-written `credentials.json` with
 `http_auth_token` is migrated to DPAPI on the next start on Windows:
 
 ```json

@@ -1,22 +1,37 @@
 /**
- * Remove the logon task. Directory removal is left to `packaging/uninstall.ps1`,
- * because a running Node process cannot delete its own install directory on Windows.
+ * Remove the per-user Startup-folder shim. Directory removal is left to
+ * `packaging/uninstall.ps1`, because a running Node process cannot delete its own
+ * install directory on Windows.
  *
- * UNVERIFIED ON WINDOWS: `schtasks.exe` is not available here, so only the argument
- * construction in `autostart.js` is asserted.
+ * Executed on `windows-latest` since #59. The filename and the Startup-folder path live
+ * here so there is one owner for both, and `tests/deploy.test.js` asserts them without a
+ * Windows host.
  */
-import { spawnSync } from 'node:child_process';
+import { existsSync, unlinkSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildDeleteTaskArgs, TASK_NAME } from './autostart.js';
+import { defaultStartupDir, STARTUP_FILE } from './autostart.js';
 
-export function runUninstall({ spawn = spawnSync, log = console } = {}) {
-  const args = buildDeleteTaskArgs({ taskName: TASK_NAME });
-  const result = spawn('schtasks.exe', args, { stdio: 'inherit' });
-  // A task that was never registered is already the desired end state.
-  const missing = result.status !== 0;
-  if (missing) log.warn?.(`schtasks ${args.join(' ')} returned ${result.status}; assuming no task to remove`);
-  return { removed: !missing, args };
+export function runUninstall({
+  startupDir = defaultStartupDir(),
+  fileExists = existsSync,
+  unlink = unlinkSync,
+  log = console,
+} = {}) {
+  const path = `${startupDir}\\${STARTUP_FILE}`;
+  if (!fileExists(path)) {
+    // A startup entry that was never written is already the desired end state.
+    return { removed: false, path };
+  }
+  try {
+    unlink(path);
+  } catch (err) {
+    // Windows can briefly lock a file an antivirus scanner is reading. Report it rather
+    // than swallow it; the caller decides whether that is fatal.
+    log.warn?.(`could not remove ${path}: ${err?.message ?? err}`);
+    return { removed: false, path };
+  }
+  return { removed: true, path };
 }
 
 const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);

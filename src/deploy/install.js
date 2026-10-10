@@ -1,45 +1,41 @@
 /**
- * Register the logon task and write the launcher shim, at install time.
+ * Write the launcher shim and the per-user Startup-folder shim, at install time.
  *
- * UNVERIFIED ON WINDOWS. This runner is executed by `packaging/install.ps1` from the
- * bundled `node.exe`; it has never run on this host. The decisions it acts on - the
- * task XML, the shim text, the `schtasks` arguments - are built by `autostart.js` and
- * `launcher.js` and asserted there.
+ * Executed by `packaging/install.ps1` from the bundled `node.exe`, and executed for real
+ * on `windows-latest` since #59. What is still unverified is the *unprivileged* path:
+ * the CI runner is an administrator, so it cannot prove the install works without
+ * elevation (issue #163). The mechanism here - plain file writes under `%APPDATA%` and
+ * `%LOCALAPPDATA%` - is chosen precisely so that an un-elevated user can perform it.
  *
  * Invoked as: node.exe <installDir>\app\src\deploy\install.js
  * The install dir is therefore three levels above this file.
  */
 import { writeFileSync, mkdirSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildInstallPlan, TASK_NAME } from './autostart.js';
-import { buildLauncherVbs, defaultInstallDir } from './launcher.js';
+import { buildInstallPlan } from './autostart.js';
+import { defaultInstallDir, defaultStartupDir } from './launcher.js';
 
 export function runInstall({
   installDir = defaultInstallDir(),
+  startupDir = defaultStartupDir(),
   writeFile = writeFileSync,
   mkdir = mkdirSync,
-  spawn = spawnSync,
   log = console,
 } = {}) {
-  const launcherPath = `${installDir}\\PuzzleSolver.vbs`;
-  const plan = buildInstallPlan({ installDir, launcherPath });
-  const vbs = buildLauncherVbs();
+  const plan = buildInstallPlan({ installDir, startupDir });
 
-  mkdir(installDir, { recursive: true });
-  writeFile(launcherPath, vbs, 'utf8');
-
-  const xmlFile = plan.files.find((f) => f.path.endsWith('.task.xml'));
-  mkdir(dirname(xmlFile.path), { recursive: true });
-  writeFile(xmlFile.path, xmlFile.content, 'utf8');
-
-  for (const { command, args } of plan.commands) {
-    const result = spawn(command, args, { stdio: 'inherit' });
-    if (result.status !== 0) throw new Error(`${command} ${args.join(' ')} failed with ${result.status}`);
+  // Both files are plain per-user writes; nothing here needs elevation. A write error
+  // (a full disk, a locked-down profile) throws naturally, and install.ps1 propagates
+  // the non-zero exit instead of printing success.
+  for (const file of plan.files) {
+    mkdir(dirname(file.path), { recursive: true });
+    writeFile(file.path, file.content, 'utf8');
   }
-  log.log?.(`installed ${TASK_NAME} to ${installDir}, task registered`);
-  return { launcherPath, xmlPath: xmlFile.path };
+
+  const launcherPath = plan.files.find((f) => f.role === 'launcher').path;
+  log.log?.(`installed to ${installDir}; autostart shim at ${plan.startupPath}`);
+  return { launcherPath, startupPath: plan.startupPath };
 }
 
 // Run only when executed, not when imported by a test.

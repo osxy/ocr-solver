@@ -1,151 +1,70 @@
 /**
- * Task Scheduler autostart.
+ * Autostart registration.
  *
- * DESIGN 11 prefers a scheduled task over the `Run` registry key for one concrete
- * reason: `HKCU\...\Run` re-launches the app after a reboot but not after a crash
- * loop, and it leaves nothing behind for an uninstaller to find. A task gives us a
- * logon trigger with a delay, "restart on failure", and a single named object that
- * `schtasks /Delete` removes cleanly.
+ * **A per-user Startup-folder entry, not a scheduled task (issue #163).** DESIGN 11
+ * originally chose a Task Scheduler task for its logon trigger, 20 s delay and
+ * "restart on failure". On a real machine, in an ordinary PowerShell, `schtasks
+ * /Create` was refused with `Toegang geweigerd`: the service writes the task definition
+ * into the root task folder, which a standard user may not write. `%LOCALAPPDATA%` (the
+ * install dir) needs no elevation, so the copying half worked and only the autostart
+ * half failed.
  *
- * The task is generated as XML rather than built from `schtasks` switches, because
- * `schtasks` has no command-line switch for restart-on-failure - it only exists in
- * the XML schema. The XML is asserted directly in the tests, on every load-bearing
- * field: the 20 s delay, the restart count/interval, the hidden `wscript` launch and
- * the quoted path. Constructing the command is the testable part; actually
- * registering the task is not, and is marked unverified on Windows.
+ * The Startup folder needs no elevation at all and is already per-user, so it reaches the
+ * same "starts at logon" outcome with nothing an ordinary user cannot do. The two extras
+ * the task had are handled honestly:
  *
- * UNVERIFIED ON WINDOWS: `schtasks.exe` does not exist on this host. No task has
- * ever been registered here.
+ *  - the **20 s delay** is reproduced with `WScript.Sleep` in the startup shim
+ *    (`launcher.js`), because a manual start must not wait;
+ *  - **restart on failure** is dropped. It was a no-op for an app crash: the task's
+ *    action is `wscript.exe`, which runs node with `shell.Run ..., 0, False` and exits
+ *    immediately, so the task instance ended before the app could fail. The only path
+ *    it ever covered was a failed *deliberate* restart (#135), and that now falls back
+ *    to the next logon. The app's own restart logic (#128) does not need it.
+ *
+ * The plan is data - the files to write and where - so the deploy logic is asserted on
+ * Linux even though only a Windows runner can create the files for real.
  */
+import {
+  buildLauncherVbs,
+  buildStartupVbs,
+  defaultStartupDir,
+  LAUNCHER_FILE,
+  STARTUP_FILE,
+} from './launcher.js';
 
-export const TASK_NAME = 'PuzzleSolver';
+export { STARTUP_FILE, defaultStartupDir };
+
+/** Logon delay, in seconds, before the startup shim launches the app. */
 export const LOGON_DELAY_SEC = 20;
-export const RESTART_INTERVAL = 'PT1M';
-export const RESTART_COUNT = 3;
-
-export const TASK_NAMESPACE = 'http://schemas.microsoft.com/windows/2004/02/mit/task';
-
-function xmlEscape(value) {
-  return String(value)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
 
 /**
- * Build the task XML. All paths are XML-escaped; the command and argument paths are
- * quoted because `%LOCALAPPDATA%` routinely contains spaces (the user's name).
+ * Describe the whole install as data - the files to write and where - without writing
+ * anything. `install.js` executes it; `tests/deploy.test.js` asserts it. This is the
+ * seam that keeps the deploy logic verifiable on Linux.
  *
  * @param {object} options
- * @param {string} options.launcherPath full path to `PuzzleSolver.vbs`
- * @param {string} [options.wscriptPath] `wscript.exe`; defaults to `%SystemRoot%`
- * @param {string} [options.workingDirectory] usually the install dir
- * @param {string} [options.taskName]
+ * @param {string} options.installDir
+ * @param {string} [options.launcherPath]
+ * @param {string} [options.startupDir]
+ * @param {string} [options.startupPath] explicit startup-shim path (tests)
  * @param {number} [options.delaySec]
- */
-export function buildTaskXml({
-  launcherPath,
-  wscriptPath = '%SystemRoot%\\System32\\wscript.exe',
-  workingDirectory = null,
-  taskName = TASK_NAME,
-  delaySec = LOGON_DELAY_SEC,
-} = {}) {
-  if (!launcherPath) throw new Error('buildTaskXml needs a launcherPath');
-  if (!(delaySec >= 0)) throw new Error(`delaySec must be >= 0, got ${delaySec}`);
-  const workDir = workingDirectory ?? launcherPath.replace(/[\\/][^\\/]*$/, '');
-  const delay = delaySec === 0 ? 'PT0S' : `PT${delaySec}S`;
-
-  return `<?xml version="1.0" encoding="UTF-16"?>
-<Task version="1.4" xmlns="${TASK_NAMESPACE}">
-  <RegistrationInfo>
-    <Description>PuzzleSolver tray app. Restarts after a crash and starts at logon.</Description>
-    <URI>\\${xmlEscape(taskName)}</URI>
-  </RegistrationInfo>
-  <Triggers>
-    <LogonTrigger>
-      <Enabled>true</Enabled>
-      <Delay>${delay}</Delay>
-    </LogonTrigger>
-  </Triggers>
-  <Principals>
-    <Principal id="Author">
-      <GroupId>S-1-5-32-545</GroupId>
-      <RunLevel>LeastPrivilege</RunLevel>
-    </Principal>
-  </Principals>
-  <Settings>
-    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
-    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
-    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
-    <AllowHardTerminate>true</AllowHardTerminate>
-    <StartWhenAvailable>false</StartWhenAvailable>
-    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
-    <IdleSettings>
-      <StopOnIdleEnd>false</StopOnIdleEnd>
-      <RestartOnIdle>false</RestartOnIdle>
-    </IdleSettings>
-    <AllowStartOnDemand>true</AllowStartOnDemand>
-    <Enabled>true</Enabled>
-    <Hidden>false</Hidden>
-    <RunOnlyIfIdle>false</RunOnlyIfIdle>
-    <WakeToRun>false</WakeToRun>
-    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
-    <Priority>7</Priority>
-    <RestartOnFailure>
-      <Interval>${RESTART_INTERVAL}</Interval>
-      <Count>${RESTART_COUNT}</Count>
-    </RestartOnFailure>
-  </Settings>
-  <Actions Context="Author">
-    <Exec>
-      <Command>"${xmlEscape(wscriptPath)}"</Command>
-      <Arguments>"${xmlEscape(launcherPath)}"</Arguments>
-      <WorkingDirectory>${xmlEscape(workDir)}</WorkingDirectory>
-    </Exec>
-  </Actions>
-</Task>
-`;
-}
-
-/** `schtasks /Create` arguments for the generated XML. */
-export function buildCreateTaskArgs({ xmlPath, taskName = TASK_NAME } = {}) {
-  if (!xmlPath) throw new Error('buildCreateTaskArgs needs an xmlPath');
-  return ['/Create', '/TN', taskName, '/XML', xmlPath, '/F'];
-}
-
-/** `schtasks /Delete` arguments. */
-export function buildDeleteTaskArgs({ taskName = TASK_NAME } = {}) {
-  return ['/Delete', '/TN', taskName, '/F'];
-}
-
-/**
- * Describe the whole install as data - the files to write and the commands to run -
- * without writing or running anything. `install.js` executes the plan; the tests
- * assert it. This is the seam that keeps the deploy logic verifiable on Linux.
  */
 export function buildInstallPlan({
   installDir,
   launcherPath = null,
-  xmlPath = null,
-  taskName = TASK_NAME,
+  startupDir = null,
+  startupPath = null,
   delaySec = LOGON_DELAY_SEC,
 } = {}) {
   if (!installDir) throw new Error('buildInstallPlan needs an installDir');
-  const launcher = launcherPath ?? `${installDir}\\PuzzleSolver.vbs`;
-  const xml = xmlPath ?? `${installDir}\\PuzzleSolver.task.xml`;
+  const launcher = launcherPath ?? `${installDir}\\${LAUNCHER_FILE}`;
+  const startup = startupPath ?? `${startupDir ?? defaultStartupDir()}\\${STARTUP_FILE}`;
   return {
     target: 'win32',
+    startupPath: startup,
     files: [
-      {
-        path: launcher,
-        content: null, // filled by the caller from buildLauncherVbs, kept here for shape
-      },
-      {
-        path: xml,
-        content: buildTaskXml({ launcherPath: launcher, workingDirectory: installDir, taskName, delaySec }),
-      },
+      { role: 'launcher', path: launcher, content: buildLauncherVbs() },
+      { role: 'startup', path: startup, content: buildStartupVbs({ launcherPath: launcher, delaySec }) },
     ],
-    commands: [{ command: 'schtasks.exe', args: buildCreateTaskArgs({ xmlPath: xml, taskName }) }],
   };
 }
