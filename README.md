@@ -35,7 +35,7 @@ pages under [`docs/`](./docs/):
 
 ## Status
 
-**0.45.2 released.** The offline solver, model tiers, Pushbullet listener and reply path
+**0.46.0 released.** The offline solver, model tiers, Pushbullet listener and reply path
 are implemented and tested. The **Pushbullet ingress has been verified against the real
 Pushbullet service**: a puzzle pushed from a phone was read, solved and answered in the
 conversation, and one that could not be solved was acknowledged rather than answered
@@ -57,19 +57,19 @@ live in [DESIGN.md](./DESIGN.md).
 
 Install from a **release**, not from source. From the
 [releases page](https://github.com/osxy/ocr-solver/releases) download
-`PuzzleSolver-0.45.2-win-x64.zip` and its `.sha256` checksum. The ZIP carries
+`PuzzleSolver-0.46.0-win-x64.zip` and its `.sha256` checksum. The ZIP carries
 its own pinned `node.exe`, so Node does not have to be installed.
 
 The binary is **unsigned**, so **Windows SmartScreen will warn on first run** and the
 SHA256 checksum is the only integrity signal. Verify it before extracting:
 
 ```powershell
-Get-FileHash .\PuzzleSolver-0.45.2-win-x64.zip -Algorithm SHA256
-Get-Content .\PuzzleSolver-0.45.2-win-x64.zip.sha256
+Get-FileHash .\PuzzleSolver-0.46.0-win-x64.zip -Algorithm SHA256
+Get-Content .\PuzzleSolver-0.46.0-win-x64.zip.sha256
 ```
 
 The two hashes must match. (On Linux or macOS:
-`sha256sum -c PuzzleSolver-0.45.2-win-x64.zip.sha256`.)
+`sha256sum -c PuzzleSolver-0.46.0-win-x64.zip.sha256`.)
 
 > **Windows warned you about the download? Unblock the ZIP before extracting.** Windows
 > marks files downloaded from the internet (the *Mark-of-the-Web*). SmartScreen warns on
@@ -78,7 +78,7 @@ The two hashes must match. (On Linux or macOS:
 > detected threat, and unblocking is your call — but do it **on the ZIP, before
 > extracting**: Explorer copies the ZIP's mark onto every extracted file, so afterwards
 > each one has to be cleared instead
-> (`Unblock-File .\PuzzleSolver-0.45.2-win-x64.zip`). `install.ps1` reports any file that
+> (`Unblock-File .\PuzzleSolver-0.46.0-win-x64.zip`). `install.ps1` reports any file that
 > is still marked and clears nothing unless you pass `-Unblock`.
 
 Then extract the ZIP and, from the extracted folder, run the installer:
@@ -303,7 +303,7 @@ A reply that is not a solution is deliberate, not a bug:
 unsigned, so SmartScreen warns on `node.exe`, and double-clicking `PuzzleSolver.vbs` (or an
 `.ps1`) gets the *"Open File - Security Warning"* script prompt instead. Both are the
 Mark-of-the-Web, not a detected threat. Not extracted yet? `Unblock-File
-.\PuzzleSolver-0.45.2-win-x64.zip` first, so Explorer does not copy the ZIP's mark onto
+.\PuzzleSolver-0.46.0-win-x64.zip` first, so Explorer does not copy the ZIP's mark onto
 every extracted file. Already extracted? Clear them in place
 (`Get-ChildItem . -Recurse -File | Unblock-File`) or re-run `.\install.ps1 -Unblock`.
 `install.ps1` reports every file that is still marked, and never clears the mark on its
