@@ -15,11 +15,15 @@
 #     Windows packaging job is the only place the deployment glue and the DPAPI round
 #     trip actually execute (#59, #83) — a milestone branch that skipped it would leave
 #     that coverage dark for a whole milestone.
-#   - push -> main or a milestone branch: same, so every integration branch is known
-#     to package.
+#   - push -> main: the same build, for the one branch that is always the released
+#     state. A milestone or feature push does not repeat the work its PR already did;
+#     `main` is kept because a squash- or rebase-merge can produce a tree the PR never
+#     built, and a broken main should be visible in minutes rather than at the next
+#     tag. Coverage is reduced only where it is redundant, never where it is the only
+#     Windows check.
 #   - push of a `v*` tag: build + smoke test, then create the Release. The release job
-#     alone carries `if: startsWith(github.ref, 'refs/tags/v')`, so adding the branch
-#     filters above cannot make a branch push publish anything.
+#     alone carries `if: startsWith(github.ref, 'refs/tags/v')`, so the branch filter
+#     cannot make a branch push publish anything.
 #   - workflow_dispatch: manual run of the same pipeline, no release.
 name: Package (Windows)
 
@@ -27,7 +31,7 @@ on:
   pull_request:
     branches: [main, 'milestone/**']
   push:
-    branches: [main, 'milestone/**']
+    branches: [main]
     tags: ['v*']
   workflow_dispatch:
 
@@ -35,9 +39,12 @@ on:
 permissions:
   contents: read
 
+# A repeated push to the same branch must not queue a Windows run behind the one it
+# supersedes: queued runs are billed, and the newer push is the tree that matters. A
+# tag build publishes a release, so it is never cancelled, whatever lands beside it.
 concurrency:
   group: package-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
   # The existing Ubuntu offline suite is the gate. Reusing ci.yml keeps one source of

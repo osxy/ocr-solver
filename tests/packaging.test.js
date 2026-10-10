@@ -132,12 +132,19 @@ test('the required payload includes the app, the Windows sharp binary and the tr
 // Workflow shape
 // ---------------------------------------------------------------------------
 
-test('the package workflow triggers on PRs, main and milestone pushes, v* tags and dispatch', () => {
+test('the package workflow triggers on PRs, main pushes, v* tags and dispatch', () => {
   const workflow = readFileSync(join(repoRoot, '.github', 'workflows', 'package.yml'), 'utf8');
 
   assert.match(workflow, /pull_request:\s*\n\s*branches:\s*\[main, 'milestone\/\*\*'\]/, 'a PR into main or a milestone branch must build without publishing');
-  assert.match(workflow, /push:\s*\n\s*branches:\s*\[main, 'milestone\/\*\*'\]\s*\n\s*tags:\s*\['v\*'\]/, 'one push block, both branch families and tags');
+  assert.match(workflow, /push:\s*\n\s*branches:\s*\[main\]\s*\n\s*tags:\s*\['v\*'\]/, 'one push block, main and tags; a milestone branch is covered by its PR');
   assert.match(workflow, /workflow_dispatch:/);
+
+  // The milestone branch must not creep back into the push trigger: its PR already
+  // built the branch, and repeating it on every push is the redundant Windows spend
+  // this change removes. The PR coverage above is what must stay.
+  const pushBlock = workflow.match(/\n {2}push:\n([\s\S]*?)\n {2}workflow_dispatch:/);
+  assert.ok(pushBlock, 'the push trigger must remain, followed by workflow_dispatch');
+  assert.ok(!pushBlock[1].includes('milestone'), 'a milestone push must not rebuild Windows; its PR does');
 
   // The release step is the only publishing path, and it still requires a `v*` tag:
   // adding the milestone branch to `push:` must not let a branch push release.
@@ -152,10 +159,36 @@ test('the package workflow triggers on PRs, main and milestone pushes, v* tags a
   assert.match(workflow, /permissions:\s*\n\s*contents:\s*read/);
 });
 
-test('the CI workflow is reusable and keeps its original triggers', () => {
+test('the package workflow cancels a superseded branch run but never a tag build', () => {
+  const workflow = readFileSync(join(repoRoot, '.github', 'workflows', 'package.yml'), 'utf8');
+
+  // Queued Windows runs are billed, so a repeated push cancels its predecessor — but
+  // only for a branch ref: a tag build publishes a release and must run to completion.
+  assert.match(
+    workflow,
+    /concurrency:\s*\n\s*group:\s*package-\$\{\{\s*github\.ref\s*\}\}\s*\n\s*cancel-in-progress:\s*\$\{\{\s*!startsWith\(github\.ref, 'refs\/tags\/'\)\s*\}\}/,
+    'cancel superseded branch runs, never a tag'
+  );
+});
+
+test('the CI workflow is reusable and answers pushes and PRs only for main and milestone', () => {
   const workflow = readFileSync(join(repoRoot, '.github', 'workflows', 'ci.yml'), 'utf8');
   assert.match(workflow, /workflow_call:/);
-  assert.match(workflow, /on:\s*\n\s*push:\s*\n\s*pull_request:\s*\n\s*branches:\s*\[main, 'milestone\/\*\*'\]/);
+  // A bare `push:` runs the suite on every leg branch; restricting it means the PR is
+  // what verifies a leg branch, which is the run that was already going to happen.
+  assert.match(workflow, /on:\s*\n\s*push:\s*\n\s*branches:\s*\[main, 'milestone\/\*\*'\]\s*\n\s*pull_request:\s*\n\s*branches:\s*\[main, 'milestone\/\*\*'\]/);
+});
+
+test('the CI workflow cancels a superseded run on the same ref', () => {
+  const workflow = readFileSync(join(repoRoot, '.github', 'workflows', 'ci.yml'), 'utf8');
+
+  // `github.workflow` keeps this group off the reusable-workflow call Package
+  // (Windows) makes into this same file, so a fresh CI push cannot cancel that run.
+  assert.match(
+    workflow,
+    /concurrency:\s*\n\s*group:\s*ci-\$\{\{\s*github\.workflow\s*\}\}-\$\{\{\s*github\.ref\s*\}\}\s*\n\s*cancel-in-progress:\s*true/,
+    'a superseded CI run on the same ref must cancel'
+  );
 });
 
 test('the package workflow executes the deployment glue against the artifact it built', () => {
