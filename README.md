@@ -390,10 +390,12 @@ folders. Manually: `schtasks /Delete /TN PuzzleSolver /F`, then delete
   `node src/cli.js config edit`) remains the terminal editor for a headless machine.
 - **Synthetic accuracy is not real accuracy.** Of the 287 corpus items, 281 are
   **synthetic** images and text from our own generator — which refuses to write an image
-  the pipeline cannot read — so the synthetic figure is a **regression guard, not
-  real-world accuracy**. The only real evidence is 3/3 on the three real images. Run
-  `node src/cli.js accuracy` (or `npm run accuracy`) and read the provenance breakdown;
-  the measured detail is in [DESIGN.md](./DESIGN.md) §10.
+  the pipeline cannot read — 3 are real images, and 3 more are noisy transcripts derived
+  from those same three images, so the synthetic figure is a **regression guard, not
+  real-world accuracy** and the derived items are not independent evidence. The only real
+  evidence is 3/3 on the three real images. Run `node src/cli.js accuracy` (or
+  `npm run accuracy`) and read the provenance breakdown; the measured detail is in
+  [DESIGN.md](./DESIGN.md) §10.
 - **No form typing, no image grids.** It reads an image and replies; it does not act in
   a browser.
 
