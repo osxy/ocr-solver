@@ -654,6 +654,34 @@ test('multipart/form-data with a file part is accepted', async (t) => {
   assert.equal(res.json.answer, '2');
 });
 
+/**
+ * Build a multipart body by hand so the boundary spelling is ours, not undici's.
+ *
+ * undici's `FormData` generates an all-lowercase boundary, so lowercasing the whole
+ * `Content-Type` header is a no-op and cannot be told apart from a correct parser -
+ * that is exactly why #187 shipped green. A boundary is case-sensitive (RFC 2046) and
+ * Chrome, Edge and curl all send mixed case, so this is the input the tests must supply.
+ */
+function handBuiltMultipart(bytes, boundary = '----WebKitFormBoundaryAbCdEf12') {
+  const body = Buffer.concat([
+    Buffer.from(`--${boundary}\r\n`),
+    Buffer.from('Content-Disposition: form-data; name="image"; filename="puzzle.png"\r\n'),
+    Buffer.from('Content-Type: image/png\r\n'),
+    Buffer.from('\r\n'),
+    bytes,
+    Buffer.from(`\r\n--${boundary}--\r\n`),
+  ]);
+  return { body, contentType: `multipart/form-data; boundary=${boundary}` };
+}
+
+test('multipart/form-data with a mixed-case boundary is accepted (#187)', async (t) => {
+  const { url } = await startServer(t);
+  const { body, contentType } = handBuiltMultipart(await smallPng());
+  const res = await post(url, { body, contentType });
+  assert.equal(res.status, 200, res.text);
+  assert.equal(res.json.answer, '2');
+});
+
 // ---------------------------------------------------------------------------
 // The default egress is the HTTP response, never a Pushbullet push
 // ---------------------------------------------------------------------------

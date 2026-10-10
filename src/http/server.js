@@ -264,13 +264,20 @@ export function assertImageUrlAllowed(url, { enabled = false, hosts = [] } = {})
 
 /** Parse the request into a description the resolver can act on, without touching bytes yet. */
 export async function classifyRequest(req, body) {
-  const contentType = String(req.headers['content-type'] ?? '').toLowerCase();
-  if (contentType.startsWith('multipart/form-data')) {
+  const contentType = String(req.headers['content-type'] ?? '');
+  // The multipart boundary is carried in this header and is case-sensitive (RFC 2046),
+  // so only the media type may be lowercased for the comparison; the parser must
+  // receive the header as sent. Lowercasing the whole header rewrites the boundary, and
+  // the parser then looks for a delimiter the body never contains - which is how every
+  // browser upload (Chrome/Edge send mixed-case `----WebKitFormBoundary...`) became a
+  // `400 bad_multipart` (#187).
+  const mediaType = contentType.split(';')[0].trim().toLowerCase();
+  if (mediaType === 'multipart/form-data') {
     const file = await firstFormFile(contentType, body);
     if (!file) throw new HttpError(400, 'missing_image', 'multipart body had no file part');
     return { kind: 'raw', buffer: file.buffer, deliver: null };
   }
-  if (contentType.includes('application/json')) {
+  if (mediaType.includes('application/json')) {
     let json;
     try {
       json = JSON.parse(body.toString('utf8') || '{}');
