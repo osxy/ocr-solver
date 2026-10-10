@@ -142,9 +142,11 @@ jobs:
       # The headless launch above skips the tray by design, and the launcher step only
       # asserts a node.exe process starts - so the systray2 interop layer that had never
       # worked was entered by no automated check. This runs the artifact's own node.exe
-      # and app/src/ui/tray-systray.js and asserts the class resolves. It does not start
-      # the native widget (no interactive desktop on a runner).
-      - name: Prove the packaged systray2 class resolves
+      # and app/src/ui/tray-systray.js and asserts the class resolves; it then loads the
+      # shipped app/src/ui/icons/*.ico through the same Win32 LoadImage call the tray
+      # binary makes, which is the only place in the project the packaged icon is checked.
+      # It does not start the native widget (no interactive desktop on a runner).
+      - name: Prove the packaged systray2 resolves and the shipped tray icons load
         shell: pwsh
         run: |
           $zip = (Get-ChildItem dist/*.zip).FullName
