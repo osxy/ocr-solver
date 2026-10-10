@@ -111,7 +111,11 @@ async function openSession(t, server) {
 }
 
 function rowFor(html, id) {
-  const match = new RegExp(`<th>${id.replace(/\./g, '\\.')}</th>[\\s\\S]*?</tr>`).exec(html);
+  // Backslashes first, then the metacharacters that need escaping: escaping dots first
+  // would turn the `\` it inserts into `\\` when the backslash pass ran afterwards, so
+  // the pattern would stop meaning a literal `.` (CodeQL js/incomplete-sanitization).
+  const escaped = id.replace(/\\/g, '\\\\').replace(/\./g, '\\.');
+  const match = new RegExp(`<th>${escaped}</th>[\\s\\S]*?</tr>`).exec(html);
   assert.ok(match, `the page must contain a row for ${id}`);
   return match[0];
 }
