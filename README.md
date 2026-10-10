@@ -69,8 +69,17 @@ Get-Content .\PuzzleSolver-0.45.2-win-x64.zip.sha256
 ```
 
 The two hashes must match. (On Linux or macOS:
-`sha256sum -c PuzzleSolver-0.45.2-win-x64.zip.sha256`.) If Windows flags the download,
-`Unblock-File .\PuzzleSolver-0.45.2-win-x64.zip` first.
+`sha256sum -c PuzzleSolver-0.45.2-win-x64.zip.sha256`.)
+
+> **Windows warned you about the download? Unblock the ZIP before extracting.** Windows
+> marks files downloaded from the internet (the *Mark-of-the-Web*). SmartScreen warns on
+> the unsigned `node.exe`; double-clicking `PuzzleSolver.vbs` gets a different prompt, the
+> *"Open File - Security Warning"* script prompt. Both are about the download, not a
+> detected threat, and unblocking is your call — but do it **on the ZIP, before
+> extracting**: Explorer copies the ZIP's mark onto every extracted file, so afterwards
+> each one has to be cleared instead
+> (`Unblock-File .\PuzzleSolver-0.45.2-win-x64.zip`). `install.ps1` reports any file that
+> is still marked and clears nothing unless you pass `-Unblock`.
 
 Then extract the ZIP and, from the extracted folder, run the installer:
 
@@ -279,6 +288,16 @@ A reply that is not a solution is deliberate, not a bug:
   app started. Set `"watermark"` to answer from a stored mark.
 
 ## Troubleshooting
+
+**Windows warned me about a script, or SmartScreen blocked the download.** The ZIP is
+unsigned, so SmartScreen warns on `node.exe`, and double-clicking `PuzzleSolver.vbs` (or an
+`.ps1`) gets the *"Open File - Security Warning"* script prompt instead. Both are the
+Mark-of-the-Web, not a detected threat. Not extracted yet? `Unblock-File
+.\PuzzleSolver-0.45.2-win-x64.zip` first, so Explorer does not copy the ZIP's mark onto
+every extracted file. Already extracted? Clear them in place
+(`Get-ChildItem . -Recurse -File | Unblock-File`) or re-run `.\install.ps1 -Unblock`.
+`install.ps1` reports every file that is still marked, and never clears the mark on its
+own.
 
 **The tray does not start.** Run `listen --headless` (the fallback that needs no display
 and no `systray2`), or set `ui.tray = false`. The error itself names `--headless` when

@@ -130,6 +130,44 @@ test('install.ps1 installs per-user, delegates to Node and checks the child exit
   assert.match(ps, /starting now/, 'the success text describes what happened, not what to do next');
 });
 
+test('install.ps1 reports the Mark-of-the-Web and clears it only under -Unblock (#176)', () => {
+  const ps = readFileSync(join(packaging, 'install.ps1'), 'utf8');
+  // Detection reads the Zone.Identifier alternate data stream, per file.
+  assert.match(ps, /-Stream Zone\.Identifier/, 'detection must read the alternate data stream');
+  assert.match(ps, /Mark-of-the-Web/, 'the report must name the mechanism');
+  assert.match(ps, /\[switch\]\$Unblock/, 'clearing the mark is opt-in');
+  assert.match(ps, /Unblock-File/, 'the opt-in path exists');
+
+  // The rule is "never cleared silently", so the clear must sit after the -Unblock
+  // check. Hoisting `Unblock-File` above the switch is exactly the regression this
+  // asserts against; the deploy job asserts the same thing on a real marked file.
+  const branchAt = ps.indexOf('if ($Unblock)');
+  const clearAt = ps.indexOf('Unblock-File');
+  assert.ok(branchAt >= 0, 'the -Unblock branch must exist');
+  assert.ok(clearAt > branchAt, 'Unblock-File must run only inside the -Unblock branch');
+  assert.ok(
+    !ps.slice(0, branchAt).includes('Unblock-File'),
+    'Unblock-File must not run before the -Unblock check'
+  );
+
+  // Detection before the copy is load-bearing: -Unblock clears the source first, so the
+  // installed files are copied clean rather than being unblocked in place afterwards.
+  assert.ok(
+    ps.indexOf('Get-MarkedFile') < ps.indexOf('Copy-Item -Recurse'),
+    'detection must run before the payload is copied'
+  );
+});
+
+test('run-deploy.ps1 exercises the Mark-of-the-Web report on a marked payload file (#176)', () => {
+  const ps = readFileSync(join(packaging, 'run-deploy.ps1'), 'utf8');
+  assert.match(ps, /-Stream Zone\.Identifier/, 'the deploy test must create the mark it checks');
+  assert.match(ps, /motw:/, 'the MotW check must be present');
+  // It must prove the ordinary run leaves the mark alone, and that -Unblock clears it.
+  assert.match(ps, /only -Unblock may do that/, 'the ordinary run must be asserted not to clear the mark');
+  assert.match(ps, /-extraArgs @\('-NoStart', '-Unblock'\)/, 'the opt-in path must be exercised');
+  assert.match(ps, /cleared the download mark/, 'the opt-in run must be asserted to say what it did');
+});
+
 test('uninstall.ps1 keeps the user data unless -Purge asks for it (#186)', () => {
   const ps = readFileSync(join(packaging, 'uninstall.ps1'), 'utf8');
   assert.match(ps, /deploy\\uninstall\.js/, 'the startup shim is removed through the Node runner');
