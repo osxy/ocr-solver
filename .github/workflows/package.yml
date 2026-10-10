@@ -152,6 +152,17 @@ jobs:
           $zip = (Get-ChildItem dist/*.zip).FullName
           ./packaging/run-tray-interop.ps1 -Zip $zip
 
+      # The path branch of the opener is asserted on the shipped artifact: Open log and
+      # Open config pass paths, and a bare path handed to explorer.exe is the Documents
+      # window reported for three releases (#217). Only the URL branch was covered before.
+      # Whether a window appears cannot be asserted here; a runner has no interactive
+      # desktop, and the script says so.
+      - name: Prove the packaged opener reveals a file and opens the folder when it is missing
+        shell: pwsh
+        run: |
+          $zip = (Get-ChildItem dist/*.zip).FullName
+          ./packaging/run-open-path.ps1 -Zip $zip
+
   release:
     needs: [package, deploy]
     if: startsWith(github.ref, 'refs/tags/v')

@@ -15,6 +15,37 @@
 import { createInterface } from 'node:readline/promises';
 import { getSetting } from './settings.js';
 
+// One whitespace code unit, tested per character. This is the `\s` set; it is
+// deliberately never quantified - see `parseTestCommand` for why.
+const WHITESPACE = /\s/;
+
+/**
+ * Parse an interactive `test <id>` command without a backtracking regular expression.
+ *
+ * The previous parse was `/^test\s+(.+)$/i`, the same shape CodeQL flagged in the
+ * request authorization parser (`src/http/server.js`, #208): `\s+` and `(.+)` both
+ * match whitespace, so a line terminator after a long separator run - which `(.+)`
+ * cannot match - forces the engine to retry every split of the run, making the match
+ * O(N^2). Here the scheme is the first four characters, the separator run is skipped by
+ * index, and the id is the remainder; every character is visited at most once and no
+ * step can backtrack, so the parse is linear in the answer length. There is no remote
+ * input (`answer` comes from an interactive prompt), so this was a latent hazard rather
+ * than a vulnerability - fixed so the shape does not survive in the codebase (#214).
+ *
+ * Returns the id, or `null` when the answer is not a `test <id>` command. The caller
+ * keeps the previous tolerance: any whitespace separates the keyword from the id.
+ */
+export function parseTestCommand(answer) {
+  const text = String(answer ?? '');
+  if (text.slice(0, 4).toLowerCase() !== 'test') return null;
+  let end = 4;
+  while (end < text.length && WHITESPACE.test(text[end])) end += 1;
+  // A bare `test` (or `test` plus only whitespace) names no setting, exactly as the
+  // old pattern's `(.+)` required at least one character after the separator run.
+  if (end === 4 || end === text.length) return null;
+  return text.slice(end);
+}
+
 /**
  * @returns {Promise<{saved: boolean, cancelled?: boolean, failed?: boolean, detail?: string, changed?: string[], restartRequired?: string[]}>}
  */
@@ -81,11 +112,11 @@ export async function defaultSettingsDialog({
       if (answer === '') break;
       if (/^q(uit)?$/i.test(answer)) return { saved: false, cancelled: true };
 
-      const testMatch = /^test\s+(.+)$/i.exec(answer);
-      if (testMatch) {
-        const id = resolveId(testMatch[1]);
+      const testId = parseTestCommand(answer);
+      if (testId) {
+        const id = resolveId(testId);
         if (!id) {
-          say(`unknown setting "${testMatch[1]}"`);
+          say(`unknown setting "${testId}"`);
           continue;
         }
         try {
