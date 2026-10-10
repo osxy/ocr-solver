@@ -425,3 +425,62 @@ test('every setting in the registry is documented in the configuration reference
     }
   }
 });
+
+/** Backticked tokens inside a bullet body, in order. */
+function backticks(text) {
+  return [...text.matchAll(/`([^`]+)`/g)].map((match) => match[1]);
+}
+
+/**
+ * The prose enumeration of `[live]` / `[restart]` settings, checked against the same
+ * registry the two key-existence guards use. Those guards read fenced TOML blocks and
+ * key *existence* only, so a setting missing from this enumeration is outside their
+ * reach by construction - which is how `storage.max_images` (restart: true, captured at
+ * `src/app.js` build time) and the auto-router policy came to be absent from the page
+ * whose section title is the enumeration (issue #152).
+ *
+ * The **live** list must match the `restart: false` set exactly, because it is short and
+ * every entry is a full `section.key`. The **restart** list may group a whole block as
+ * `section.*`, so coverage is what is asserted there: every `restart: true` setting is
+ * named by id or covered by its block wildcard, and no live setting is listed as
+ * restart-bound. The reverse (a setting named in neither list) is already caught by the
+ * exact live check.
+ */
+test("the configuration reference's restart enumeration matches the registry", () => {
+  const configuration = readFileSync(join(repoRoot, 'docs', 'configuration.md'), 'utf8');
+  const section = configuration.slice(configuration.indexOf('## Some settings need a restart'));
+  assert.ok(section.length > 0, 'docs/configuration.md has no restart section; the test has lost its subject');
+
+  const liveMatch = section.match(/^- \*\*live\*\* — ([\s\S]*?)(?=^- \*\*restart\*\*)/m);
+  const restartMatch = section.match(/^- \*\*restart\*\* — ([\s\S]*?)\n\n/m);
+  assert.ok(liveMatch, 'the restart section has no `**live**` bullet; the test has lost its subject');
+  assert.ok(restartMatch, 'the restart section has no `**restart**` bullet; the test has lost its subject');
+
+  const byId = new Map(SETTINGS.map((setting) => [setting.id, setting]));
+  const expectedLive = SETTINGS.filter((setting) => setting.path && !setting.restart).map((setting) => setting.id);
+  const liveTokens = new Set(backticks(liveMatch[1]));
+
+  assert.deepEqual(
+    [...liveTokens].sort(),
+    [...expectedLive].sort(),
+    'the `[live]` enumeration must list exactly the settings the registry tags `restart: false`'
+  );
+
+  const restartTokens = new Set(backticks(restartMatch[1]));
+  const covered = (setting) =>
+    restartTokens.has(setting.id) || (setting.path && restartTokens.has(`${setting.path[0]}.*`));
+  const missing = SETTINGS.filter((setting) => setting.restart && !covered(setting)).map((setting) => setting.id);
+
+  assert.deepEqual(
+    missing,
+    [],
+    `the \`[restart]\` enumeration omits settings the registry tags restart-bound: ${missing.join(', ')}`
+  );
+
+  const misplaced = [...restartTokens].filter((token) => byId.get(token)?.path && !byId.get(token).restart);
+  assert.deepEqual(
+    misplaced,
+    [],
+    `the \`[restart]\` enumeration lists settings the registry says apply live: ${misplaced.join(', ')}`
+  );
+});
