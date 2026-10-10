@@ -3,7 +3,7 @@
 A small Windows background app that watches Pushbullet for incoming puzzle images,
 reads the image, solves the puzzle, and answers back on Pushbullet.
 
-Status: **v0.4.0 released** (offline solver + model reasoner tiers, verified live; the
+Status: **v0.45.0 released** (offline solver + model reasoner tiers, verified live; the
 Pushbullet listener, image fetcher and responder are built and tested offline, but the
 live Pushbullet ingress has never run against the real service — issue #3).
 Decisions confirmed — see §13.
