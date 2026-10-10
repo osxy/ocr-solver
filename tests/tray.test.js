@@ -4,11 +4,12 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 
 import { createTrayController, TRAY_MENU } from '../src/ui/tray.js';
 import { createWatchdog, DEFAULT_QUIET_MS } from '../src/ui/watchdog.js';
 import { resolveTrayMode } from '../src/ui/mode.js';
-import { openPathCommand } from '../src/ui/open-path.js';
+import { isUrl, openPath, openPathCommand } from '../src/ui/open-path.js';
 
 function fakeListener(overrides = {}) {
   return {
@@ -256,7 +257,8 @@ test('tray is the requested default, but the config and --headless can veto it',
   assert.equal(resolveTrayMode({}), false, 'the library default is off; the CLI opts in');
 });
 
-test('the opener command is the platform default-handler command', () => {
+test('the opener sends a path to explorer and a URL to the URL handler (#169)', () => {
+  // A path: the shell's file opener. *Open log* and *Open config* depend on this.
   assert.deepEqual(openPathCommand('C:\\logs\\app.log', { platform: 'win32', env: {} }), {
     command: 'explorer.exe',
     args: ['C:\\logs\\app.log'],
@@ -265,6 +267,63 @@ test('the opener command is the platform default-handler command', () => {
   assert.equal(openPathCommand('/x', { platform: 'linux' }).command, 'xdg-open');
   assert.equal(openPathCommand('/x', { platform: 'win32', env: { SystemRoot: 'C:\\Windows' } }).command, 'C:\\Windows\\explorer.exe');
   assert.throws(() => openPathCommand(''), /needs a target path/);
+
+  // A URL: the shell's *protocol* handler, never explorer. The setup URL carries a
+  // query string, and explorer's switch parsing turns that into its default folder
+  // (Documents) instead of a browser (#169). This is the regression that shipped, so
+  // the assertion names both the handler *and* the absence of explorer.
+  const url = 'http://127.0.0.1:51234/?token=abc123';
+  const spec = openPathCommand(url, { platform: 'win32', env: { SystemRoot: 'C:\\Windows' } });
+  assert.equal(spec.command, 'C:\\Windows\\System32\\rundll32.exe');
+  assert.deepEqual(spec.args, ['url.dll,FileProtocolHandler', url]);
+  assert.equal(spec.command.includes('explorer'), false, 'a URL must never reach explorer');
+  assert.equal(openPathCommand(url, { platform: 'win32', env: {} }).command, 'rundll32.exe');
+});
+
+// `isUrl` is the classifier the opener branches on: a wrong answer here silently sends a
+// URL to explorer again, so the drive-letter case is asserted explicitly.
+test('a Windows path is not a URL, and a scheme is (#169)', () => {
+  assert.equal(isUrl('C:\\logs\\app.log'), false);
+  assert.equal(isUrl('C:/logs/app.log'), false);
+  assert.equal(isUrl('\\\\server\\share\\x'), false);
+  assert.equal(isUrl('/var/log/app.log'), false);
+  assert.equal(isUrl('http://127.0.0.1:1/?token=x'), true);
+  assert.equal(isUrl('https://example.com/'), true);
+  assert.equal(isUrl('file:///C:/x.txt'), true);
+  assert.equal(isUrl('mailto:someone@example.com'), true);
+  assert.equal(isUrl(''), false);
+});
+
+test('openPath reports a launched handler, not an opened window (#169)', async () => {
+  // A spawn that fails must resolve `launched: false`, never reject: the caller has to
+  // be able to act on it.
+  const failed = await openPath('http://127.0.0.1:1/?token=x', {
+    platform: 'linux',
+    spawn: () => {
+      const emitter = new EventEmitter();
+      setImmediate(() => emitter.emit('error', new Error('ENOENT')));
+      return emitter;
+    },
+  });
+  assert.equal(failed.launched, false);
+  assert.equal(failed.kind, 'url');
+
+  const started = await openPath('/tmp/x.log', {
+    platform: 'linux',
+    spawn: () => {
+      const emitter = new EventEmitter();
+      emitter.unref = () => {};
+      queueMicrotask(() => emitter.emit('spawn'));
+      return emitter;
+    },
+  });
+  assert.equal(started.launched, true);
+  assert.equal(started.kind, 'path');
+  assert.equal(started.command, 'xdg-open');
+
+  // A synchronous spawn throw is the same outcome, not an exception.
+  const threw = await openPath('/tmp/x.log', { platform: 'linux', spawn: () => { throw new Error('boom'); } });
+  assert.equal(threw.launched, false);
 });
 
 test('a paused listener is never greyed out', async () => {

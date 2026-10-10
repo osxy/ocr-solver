@@ -193,23 +193,8 @@ starts with no config at all, and the file is for the advanced settings. It is
 (or `$PUZZLESOLVER_CONFIG`) overrides it. An unknown key warns and is ignored; a *bad*
 value fails loudly and names the key. Secrets are **not** config keys: a key whose name
 looks like one (`*token*`, `*key*`, `*secret*`, `*password*`) is rejected at load, because
-a config file ends up in backups and support threads.
-
-```toml
-[solver]
-offline_only = false            # true = never call a model; no image leaves the machine
-llm_text_model = "gpt-4o-mini"
-llm_vision_model = "gpt-4o"
-llm_base_url = "https://api.openai.com/v1"
-[reply]
-require_confidence = true       # only send answers every tier agreed on
-[http]
-# does not affect the web UI (web_ui has no enable flag)
-enabled = false                 # an HTTP endpoint that solves captchas is an oracle
-bind = "127.0.0.1"             # never 0.0.0.0 unless you mean it; it warns if you do
-```
-
-Every key and its default is in
+a config file ends up in backups and support threads. Every key with its default, and an
+annotated `config.toml` block, are in
 [configuration](./docs/configuration.md#every-configtoml-key-with-its-default);
 `DEFAULTS` in [`src/config.js`](./src/config.js) is the schema.
 
@@ -333,13 +318,16 @@ startup, the loader names the offending key; the editor keeps the previous file 
 | Install | `%LOCALAPPDATA%\Programs\PuzzleSolver` | — |
 | Config | `%APPDATA%\PuzzleSolver\config.toml` | `${XDG_CONFIG_HOME:-~/.config}/PuzzleSolver/config.toml` |
 | Credentials | `%APPDATA%\PuzzleSolver\credentials.dpapi` (DPAPI; a legacy `credentials.json` is migrated) | `${XDG_CONFIG_HOME:-~/.config}/puzzlesolver/credentials.json` |
-| Log | `%LOCALAPPDATA%\Programs\PuzzleSolver\logs\app.log` | `${XDG_STATE_HOME:-~/.local/state}/puzzlesolver/logs/app.log` |
+| Log | `%LOCALAPPDATA%\PuzzleSolver\logs\app.log` | `${XDG_STATE_HOME:-~/.local/state}/puzzlesolver/logs/app.log` |
 | State DB | `%LOCALAPPDATA%\PuzzleSolver\state.db` | `${XDG_DATA_HOME:-~/.local/share}/puzzlesolver/state.db` |
 | Inbox | `%LOCALAPPDATA%\PuzzleSolver\inbox` | `${XDG_DATA_HOME:-~/.local/share}/puzzlesolver/inbox` |
 | Stored images (opt-in) | `%LOCALAPPDATA%\PuzzleSolver\images` | `${XDG_DATA_HOME:-~/.local/share}/puzzlesolver/images` |
+| Settings link (one session) | `%LOCALAPPDATA%\PuzzleSolver\handoff\settings-url.txt` | `${XDG_STATE_HOME:-~/.local/state}/puzzlesolver/handoff/settings-url.txt` |
 
-The log rotates at 5 MB × 3. `storage.retain_days` (default 7) prunes the inbox and old
-attempt rows on startup.
+The log lives in the **data** directory beside the state DB and the inbox, not the install
+directory (`%LOCALAPPDATA%\Programs\PuzzleSolver`), which is replaced on update. It rotates
+at 5 MB × 3; `storage.retain_days` (default 7) prunes the inbox and old attempt rows on
+startup.
 
 **Stored review copies (`storage.keep_images`).** Off by default; when on, a bounded WebP
 copy of each solve is kept for the recent-solves page, pruned with `storage.retain_days` /
@@ -373,8 +361,8 @@ delete `%LOCALAPPDATA%\Programs\PuzzleSolver`, `%LOCALAPPDATA%\PuzzleSolver` and
   and proves a failing installer exits non-zero without printing success.
   What a runner cannot provide is an interactive desktop: `systray2` needs a window
   station, so the **native tray widget** and the **notification toast** are still
-  unverified, as is the `explorer.exe` browser hand-off for the settings UI (issue #56).
-  The runner is an administrator, so the **unprivileged install path** (issue #163) has
+  unverified, as is the browser hand-off for the settings UI (issue #56, #169). The runner is
+  an administrator, so the **unprivileged install path** (issue #163) has
   still never been exercised. The **DPAPI credential round trip** is executed on the
   runner: a plaintext file is migrated and removed by one process, and a second `node`
   process decrypts it from disk. What DPAPI cannot protect is a process running as the
@@ -392,9 +380,12 @@ delete `%LOCALAPPDATA%\Programs\PuzzleSolver`, `%LOCALAPPDATA%\PuzzleSolver` and
 - **The settings and first-run UI opens in the default browser; the browser hand-off
   itself is not exercised on Windows.** The HTTP server, the one-time link token, the
   `Host` check, the form post and the save path are exercised on Linux in
-  `tests/web-config.test.js`; the one seam that cannot be checked here is the
-  `explorer.exe`/`xdg-open` hand-off to a real browser. `config edit` (or
-  `node src/cli.js config edit`) remains the terminal editor for a headless machine.
+  `tests/web-config.test.js`; the one seam not checked here is the hand-off to a real
+  browser. On Windows a URL uses the shell's protocol handler (`rundll32
+  url.dll,FileProtocolHandler`), never `explorer.exe`, which opened its own folder for a URL
+  with a query string (issue #169). A failed hand-off still reaches a person: a terminal, or
+  on a hidden first run the message box and the one-session file above. `config edit` (or
+  `node src/cli.js config edit`) remains the editor for a headless machine.
 - **Synthetic accuracy is not real accuracy.** Of the 287 corpus items, 281 are
   **synthetic** images and text from our own generator — which refuses to write an image
   the pipeline cannot read — 3 are real images, and 3 more are noisy transcripts derived

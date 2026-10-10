@@ -451,9 +451,10 @@ test('defaultWebSettingsDialog opens the browser, saves through HTTP, and stops'
   let openedUrl = null;
   const dialog = defaultWebSettingsDialog({
     editor,
+    handoffDir: tempDir(t),
     openBrowser: async (url) => {
       openedUrl = url;
-      return { opened: true };
+      return { launched: true };
     },
   });
 
@@ -490,9 +491,10 @@ test('a web first-run dialog collects the two secrets through createSetup', asyn
   let openedUrl = null;
   const dialog = defaultWebSetupDialog({
     setup,
+    handoffDir: tempDir(t),
     openBrowser: async (url) => {
       openedUrl = url;
-      return { opened: true };
+      return { launched: true };
     },
   });
   for (let i = 0; openedUrl == null && i < 200; i++) await new Promise((r) => setTimeout(r, 5));
@@ -529,6 +531,101 @@ test('a start failure is returned as an actionable outcome, not thrown', async (
   assert.equal(outcome.failed, true);
   assert.match(outcome.detail, /could not start the settings web UI/);
   assert.match(outcome.detail, /EADDRINUSE/);
+});
+
+// ---------------------------------------------------------------------------
+// The hand-off fallback (#169): a launched handler is not a browser that opened
+// ---------------------------------------------------------------------------
+
+test('a failed browser hand-off prints the one-time link to the terminal (#169)', async (t) => {
+  const { editor } = makeEditor(t);
+  let openedUrl = null;
+  const written = [];
+  const dialog = defaultWebSettingsDialog({
+    editor,
+    timeoutMs: 20,
+    openBrowser: async (url) => {
+      openedUrl = url;
+      return { launched: false };
+    },
+    output: { write: (text) => written.push(text) },
+  });
+  const outcome = await dialog;
+  assert.equal(outcome.cancelled, true);
+  assert.ok(openedUrl, 'the opener is still tried');
+  assert.ok(written.join('').includes(openedUrl), 'the link must reach the terminal');
+  assert.match(written.join(''), /Open the settings UI in a browser:/);
+});
+
+test('the link is printed even when the opener reports a launch (#169)', async (t) => {
+  // The shipped bug: `openPath` resolved on `spawn`, so "success" hid a Documents window
+  // and this fallback never ran. A spawn is not an open, so a terminal is not gated on it.
+  const { editor } = makeEditor(t);
+  let openedUrl = null;
+  const written = [];
+  const dialog = defaultWebSettingsDialog({
+    editor,
+    timeoutMs: 20,
+    openBrowser: async (url) => {
+      openedUrl = url;
+      return { launched: true };
+    },
+    output: { write: (text) => written.push(text) },
+  });
+  await dialog;
+  assert.ok(written.join('').includes(openedUrl), 'a launched handler must not suppress the link');
+});
+
+test('a hidden first run records the link and shows it, then removes the record (#169)', async (t) => {
+  const { editor } = makeEditor(t);
+  const dir = tempDir(t);
+  const messages = [];
+  let openedUrl = null;
+  const dialog = defaultWebSetupDialog({
+    setup: {
+      validate: () => ({ ok: true, errors: {} }),
+      testConnection: async () => ({ ok: true, results: {} }),
+      apply: async () => ({ saved: true, savedNames: [] }),
+    },
+    timeoutMs: 60,
+    handoffDir: dir,
+    // Even a reported success must not suppress the dialog on first run: there is no
+    // terminal and no tray yet, so this is the user's only surface.
+    openBrowser: async (url) => {
+      openedUrl = url;
+      return { launched: true };
+    },
+    notifyUser: async (message) => messages.push(message),
+  });
+
+  const file = join(dir, 'settings-url.txt');
+  for (let i = 0; !existsSync(file) && i < 200; i++) await new Promise((r) => setTimeout(r, 5));
+  assert.ok(existsSync(file), 'the link must be recorded while the session is up');
+  assert.equal(readFileSync(file, 'utf8').trim(), openedUrl);
+  assert.ok(messages[0]?.includes(openedUrl), 'the link must reach a dialog the user can read');
+
+  const outcome = await dialog;
+  assert.equal(outcome.cancelled, true);
+  assert.equal(existsSync(file), false, 'the record is removed when the session settles');
+});
+
+test('a hidden tray Settings open stays quiet when the opener launched (#169)', async (t) => {
+  // The tray is the surface here, so only a reported failure raises the dialog; the
+  // file is still written, so a browser that silently never appeared is not a dead end.
+  const { editor } = makeEditor(t);
+  const dir = tempDir(t);
+  const messages = [];
+  const dialog = defaultWebSettingsDialog({
+    editor,
+    timeoutMs: 20,
+    handoffDir: dir,
+    openBrowser: async () => ({ launched: true }),
+    notifyUser: async (message) => messages.push(message),
+  });
+  const outcome = await dialog;
+  assert.equal(outcome.cancelled, true);
+  assert.deepEqual(messages, []);
+  assert.equal(existsSync(join(dir, 'settings-url.txt')), false);
 });
 
 // ---------------------------------------------------------------------------
