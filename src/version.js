@@ -35,9 +35,3 @@ export function compareVersions(a, b) {
   }
   return 0;
 }
-
-/** `true` when `version` is a valid version strictly newer than `than`. */
-export function isNewerVersion(version, than) {
-  const result = compareVersions(version, than);
-  return result != null && result > 0;
-}
