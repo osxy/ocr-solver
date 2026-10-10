@@ -101,6 +101,10 @@ test('every setting the issue names is editable', () => {
     // Two settings the #27 list omitted; the editor must not be a partial view (#35).
     'reply.strategy',
     'reply.min_interval_sec',
+    // #133: the primary answer budget was in DEFAULTS and the docs but absent from
+    // the registry, so the editor could not set it while its acknowledgement sibling
+    // could. Listed here so the omission cannot recur.
+    'reply.max_per_hour',
     'reply.require_confidence',
     'reply.title',
     'reply.prefix',

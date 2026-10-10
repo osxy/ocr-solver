@@ -85,6 +85,11 @@ export const SETTINGS = Object.freeze([
   Object.freeze({ id: 'reply.enabled', label: 'Reply at all', path: ['reply', 'enabled'], type: 'boolean', restart: true, since: '0.1.0' }),
   Object.freeze({ id: 'reply.strategy', label: 'Reply strategy', path: ['reply', 'strategy'], type: 'enum', choices: Object.keys(STRATEGIES), restart: true, since: '0.1.0' }),
   Object.freeze({ id: 'reply.min_interval_sec', label: 'Minimum interval between sends (seconds)', path: ['reply', 'min_interval_sec'], type: 'number', min: 0, restart: true, since: '0.1.0' }),
+  // The primary answer budget. It predates the acknowledgement budget (#48) - it is
+  // in v0.1.0's DEFAULTS - hence `since: '0.1.0'`, unlike its sibling's `0.2.0`. The
+  // label has to say "answers" so it is not mistaken for `unresolved_max_per_hour`
+  // below: the two are 20/hour and 60/hour and sit in the same reply group (#133).
+  Object.freeze({ id: 'reply.max_per_hour', label: 'Answer budget (per hour)', path: ['reply', 'max_per_hour'], type: 'integer', min: 0, restart: true, since: '0.1.0' }),
   Object.freeze({ id: 'reply.require_confidence', label: 'Reply only to corroborated answers', path: ['reply', 'require_confidence'], type: 'boolean', restart: true, since: '0.1.0' }),
   Object.freeze({ id: 'reply.title', label: 'Reply title', path: ['reply', 'title'], type: 'string', restart: true, since: '0.1.0' }),
   Object.freeze({ id: 'reply.prefix', label: 'Reply prefix', path: ['reply', 'prefix'], type: 'string', allowEmpty: true, restart: true, since: '0.1.0' }),
