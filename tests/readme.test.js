@@ -40,6 +40,7 @@ import { readFileSync, existsSync, statSync, readdirSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { parse as parseToml } from 'smol-toml';
 import { SETTINGS } from '../src/ui/settings.js';
+import { DEFAULTS } from '../src/config.js';
 
 const repoRoot = join(import.meta.dirname, '..');
 const readmePath = join(repoRoot, 'README.md');
@@ -369,11 +370,13 @@ test('every config key the docs show exists in the settings registry', () => {
  * `[ocr]` and `[ui]` came to be omitted from a list headed "Every option" (#138).
  *
  * The canonical reference (`docs/configuration.md`, the block under "Every ... key") is
- * held to the strong form: every setting with a `path` (a key that can live in
- * `config.toml`) must appear there as a `section.key`, with a default - not merely be
- * named in prose elsewhere. A secret has no `path` by design (it lives in the credential
- * store), so the strong form cannot apply; each is instead required to be named by its
- * literal id in the docs, which is how the page explains where it goes.
+ * held to the strong form, and against both sources of truth: **every leaf key in
+ * `DEFAULTS`** (a key can be validated and defaulted without a registry descriptor) and
+ * **every non-secret `SETTINGS` entry** must appear there as a `section.key`, with a
+ * default - not merely be named in prose elsewhere. A secret has no `path` by design (it
+ * lives in the credential store), so the strong form cannot apply; each is instead
+ * required to be named by its literal id in the docs, which is how the page explains
+ * where it goes.
  *
  * WHAT THIS GUARD IS NOT. It checks that the key is listed, not that its default or
  * comment is right - a wrong default passes. And "documented" is satisfied by the id
@@ -395,6 +398,16 @@ test('every setting in the registry is documented in the configuration reference
 
   const canonical = new Set(keyPaths(parseToml(block)));
   const prose = pages.map((page) => page.text).join('\n');
+
+  const schemaKeys = keyPaths(DEFAULTS);
+  assert.ok(schemaKeys.length > 0, 'DEFAULTS is empty; the test has lost its subject');
+
+  for (const key of schemaKeys) {
+    assert.ok(
+      canonical.has(key),
+      `"${key}" is in DEFAULTS (src/config.js), but docs/configuration.md's "Every ... key" block does not list it, so a reader cannot find its default. A key can be defaulted and validated without a registry descriptor, which is why this direction is checked against DEFAULTS rather than SETTINGS alone.`
+    );
+  }
 
   assert.ok(SETTINGS.length > 0, 'SETTINGS is empty; the test has lost its subject');
 
