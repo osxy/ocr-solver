@@ -87,20 +87,3 @@ export function validateAnswer(puzzleClass, normalized) {
   }
   return { ok: true, answer, reason: 'ok', expected: rule.describe };
 }
-
-/**
- * Extra structural check for ordinal-pick: the answer must actually appear in the
- * puzzle's word list. Catches a model answering with a plausible but invented word.
- */
-export function validateAgainstList(parsed, normalized) {
-  const answer = normalizeAnswer(normalized);
-  const inList = parsed.list.includes(answer);
-  const rightCategory = parsed.category ? true : false;
-  return {
-    ok: inList,
-    reason: inList
-      ? 'ok'
-      : `"${answer}" does not appear in the puzzle list [${parsed.list.join(', ')}]`,
-    rightCategory,
-  };
-}

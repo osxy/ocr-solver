@@ -180,9 +180,10 @@ Cost is trivial: integral image + union-find over 36k pixels, well under 10 ms p
   (~0.4 s, four runs each).
 - Runs every preprocessing variant at PSM 6 (uniform block) and PSM 7 (single line).
 - `rankResults()` **demotes empty transcripts below every non-empty one regardless of
-  reported confidence**, and `bestResult()` adds a small bonus for transcripts that
-  contain real Dutch question words, because a slightly lower-confidence full sentence
-  is far more useful than a high-confidence fragment.
+  reported confidence**, then orders the survivors by reported confidence. It is the
+  only ranking the pipeline applies (`src/solver/pipeline.js` calls it and nothing else),
+  so there is no length- or dictionary-based re-scoring: a higher-confidence fragment
+  outranks a lower-confidence full sentence.
 
 #### The #110 corpus flake
 

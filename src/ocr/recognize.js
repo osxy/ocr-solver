@@ -107,15 +107,3 @@ export function rankResults(results) {
     return b.confidence - a.confidence;
   });
 }
-
-/** Rank results, preferring transcripts that look like a real sentence. */
-export function bestResult(results) {
-  const scored = results.map((r) => {
-    const words = r.text.split(' ').filter(Boolean);
-    const lengthBonus = Math.min(words.length, 12) * 0.5; // real puzzles are 6-12 words
-    const dictionaryBonus = /\b(in|de|het|wat|is|lijst|hoeveel|eerste)\b/i.test(r.text) ? 3 : 0;
-    return { ...r, score: (r.empty ? -1000 : 0) + r.confidence + lengthBonus + dictionaryBonus };
-  });
-  scored.sort((a, b) => b.score - a.score);
-  return scored[0];
-}
