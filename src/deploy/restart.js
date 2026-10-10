@@ -5,9 +5,16 @@
  *
  * The scheduled task declares `<RestartOnFailure><Interval>PT1M</Interval><Count>3</Count>`,
  * which fires on a **non-zero** exit. It is crash recovery with a delay and a retry
- * count, not a request API. So a deliberate restart never *asks* the scheduler to do
- * it: it starts exactly one successor itself and then exits **0**, which the scheduler
- * reads as success. That is the whole defence against hazard 1 - the double-start.
+ * count, not a request API. So a deliberate restart starts exactly one successor itself
+ * and then exits **0**, which the scheduler reads as success. That is the whole defence
+ * against hazard 1 - the double-start.
+ *
+ * But only a successor that actually started gets that clean exit. `spawn` reports a
+ * missing command asynchronously on `'error'` (never by throwing), so the restart waits
+ * for `'spawn'` or `'error'` before deciding: success exits **0**, failure exits **non-zero**
+ * so the scheduler's `RestartOnFailure` - crash recovery, the thing it exists for - brings
+ * the service back. There is no successor on that path, so the port contention the clean
+ * exit guards against cannot happen.
  *
  * The installed app is launched by `wscript.exe "<PuzzleSolver.vbs>"`, which runs node
  * with window style `0`. A successor spawned as bare `node` would lose that and could
@@ -126,22 +133,54 @@ export function planRestart({
 }
 
 /**
- * Start exactly one successor, detached, and do not wait for it. The caller must have
- * released the port and the database first; `createShutdownHandler` guarantees that by
- * calling `app.stop()` before this.
+ * Start exactly one successor, detached, and wait only long enough to learn whether it
+ * actually started. The caller must have released the port and the database first;
+ * `createShutdownHandler` guarantees that by calling `app.stop()` before this.
+ *
+ * `'spawn'` fires when the OS created the process; `'error'` fires when it did not (a
+ * missing launcher is the realistic case). `spawn` never throws for a missing command,
+ * so the outcome cannot be known synchronously - hence the async signature and the
+ * truthful `spawned` it returns. `pid` is still filled in once the process exists.
  *
  * `wscript.exe` is a GUI-subsystem program, so `windowsHide` here only reinforces that
  * there is no console to show; the shim's own `shell.Run ..., 0, False` hides node.
+ *
+ * @returns {Promise<{spawned: boolean, pid?: number|null, reason?: string, error?: Error|null, display: string|null}>}
  */
-export function spawnSuccessor(plan, { spawn = spawnImpl, logger = null } = {}) {
+export async function spawnSuccessor(plan, { spawn = spawnImpl, logger = null } = {}) {
   if (!plan?.restartable) {
     logger?.warn?.(`restart is not available here; run: ${plan?.display ?? 'the service command'}`);
     return { spawned: false, reason: plan?.reason ?? 'not-restartable', display: plan?.display ?? null };
   }
-  const child = spawn(plan.command, plan.args, { detached: true, stdio: 'ignore', windowsHide: true });
+
+  let child;
+  try {
+    child = spawn(plan.command, plan.args, { detached: true, stdio: 'ignore', windowsHide: true });
+  } catch (err) {
+    // A synchronous throw (invalid invocation) is still a failure the caller must be
+    // able to act on, so it is reported, not rethrown.
+    logger?.warn?.(`could not start a successor: ${err?.message ?? err}`);
+    return { spawned: false, reason: 'spawn-error', error: err ?? null, display: plan.display };
+  }
   child.unref?.();
-  logger?.info?.(`restart: started successor (${plan.display}), pid ${child.pid ?? 'unknown'}`);
-  return { spawned: true, pid: child.pid ?? null, display: plan.display };
+
+  const outcome = await new Promise((resolve) => {
+    const onSpawn = () => { cleanup(); resolve('spawn'); };
+    const onError = (err) => { cleanup(); resolve({ error: err }); };
+    const cleanup = () => {
+      child.removeListener?.('spawn', onSpawn);
+      child.removeListener?.('error', onError);
+    };
+    child.once('spawn', onSpawn);
+    child.once('error', onError);
+  });
+
+  if (outcome === 'spawn') {
+    logger?.info?.(`restart: started successor (${plan.display}), pid ${child.pid ?? 'unknown'}`);
+    return { spawned: true, pid: child.pid ?? null, display: plan.display };
+  }
+  logger?.warn?.(`could not start a successor: ${outcome.error?.message ?? outcome.error}`);
+  return { spawned: false, reason: 'spawn-error', error: outcome.error ?? null, display: plan.display };
 }
 
 /**
@@ -175,7 +214,10 @@ export async function drainSolves(core, { timeoutMs = DEFAULT_DRAIN_TIMEOUT_MS, 
 
 /**
  * The one shutdown path, shared by SIGINT/SIGTERM, the tray Quit item and a requested
- * restart. `exit(0)` is not incidental: it is what keeps `RestartOnFailure` from firing.
+ * restart. A **successful** restart `exit(0)` is not incidental: it is what keeps
+ * `RestartOnFailure` from firing and double-starting with the successor. A restart whose
+ * successor did not start exits **non-zero** instead, deliberately asking the scheduler's
+ * recovery to bring the service back.
  *
  * For a restart it first quiesces the ingresses, drains the in-flight solve, and only
  * then calls `app.stop()` - so the successor is spawned after the port and the SQLite
@@ -228,13 +270,22 @@ export function createShutdownHandler({
     }
 
     if (signal === 'restart') {
+      let spawned = false;
       try {
-        spawnSuccessor(plan, { spawn, logger });
+        ({ spawned } = await spawnSuccessor(plan, { spawn, logger }));
       } catch (err) {
-        // A successor that cannot be spawned must not change the exit code: a non-zero
-        // exit would make the scheduler start its own, and then a half-dead app would
-        // contend for the port. Better to exit clean and be restarted at next logon.
+        // spawnSuccessor reports its own failures; this only catches a truly unexpected
+        // rejection, which is still a failed restart and takes the non-zero path below.
         logger?.warn?.(`could not start a successor: ${err?.message ?? err}`);
+      }
+      if (!spawned) {
+        // No successor exists, so nothing can contend for the port. A non-zero exit is
+        // the case RestartOnFailure exists for: the scheduler starts the task again
+        // after a minute and the service comes back. Exiting 0 would leave the service
+        // dead until the next logon, because RestartOnFailure never fires on success.
+        logger?.warn?.('no successor was started; exiting non-zero so the scheduler restarts the task');
+        exit(1);
+        return { closed: true, restarted: false, error: error ?? null };
       }
     }
     exit(0);

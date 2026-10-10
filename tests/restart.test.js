@@ -6,6 +6,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 
 import {
   createShutdownHandler,
@@ -122,19 +123,34 @@ test('wscriptFor falls back to the bare name without a system root', () => {
 // Spawning the successor
 // ---------------------------------------------------------------------------
 
-function fakeSpawn() {
+/**
+ * A child stand-in that behaves like a real spawn for the *first* event that matters:
+ * `'spawn'` when the process was created, `'error'` when it was not. `'spawn'` is
+ * emitted on a microtask, after spawnSuccessor has attached its listeners, exactly as
+ * the real child_process does.
+ */
+function childProcessDouble({ pid = 4242 } = {}) {
+  const child = new EventEmitter();
+  child.pid = pid;
+  child.unrefed = false;
+  child.unref = function unref() { this.unrefed = true; };
+  return child;
+}
+
+function fakeSpawn({ emit = 'spawn' } = {}) {
   const calls = [];
   const spawn = (command, args, options) => {
-    const child = { pid: 4242, unrefed: false, unref() { this.unrefed = true; } };
+    const child = childProcessDouble();
     calls.push({ command, args, options, child });
+    queueMicrotask(() => child.emit(emit, emit === 'error' ? Object.assign(new Error('spawn x ENOENT'), { code: 'ENOENT' }) : undefined));
     return child;
   };
   return { spawn, calls };
 }
 
-test('a restartable plan spawns exactly one detached, unrefed, windowless successor', () => {
+test('a restartable plan spawns exactly one detached, unrefed, windowless successor', async () => {
   const { spawn, calls } = fakeSpawn();
-  const result = spawnSuccessor(
+  const result = await spawnSuccessor(
     { restartable: true, command: 'wscript.exe', args: [LAUNCHER], display: 'wscript.exe ...' },
     { spawn }
   );
@@ -148,12 +164,35 @@ test('a restartable plan spawns exactly one detached, unrefed, windowless succes
   assert.equal(calls[0].child.unrefed, true);
 });
 
-test('a non-restartable plan spawns nothing and says why', () => {
+test('a non-restartable plan spawns nothing and says why', async () => {
   const { spawn, calls } = fakeSpawn();
-  const result = spawnSuccessor({ restartable: false, reason: 'no-launcher', display: 'node cli.js listen' }, { spawn });
+  const result = await spawnSuccessor({ restartable: false, reason: 'no-launcher', display: 'node cli.js listen' }, { spawn });
   assert.equal(result.spawned, false);
   assert.equal(result.reason, 'no-launcher');
   assert.equal(calls.length, 0);
+});
+
+test('a successor that fails to spawn reports failure and cannot claim a pid', async () => {
+  const warnings = [];
+  const { spawn } = fakeSpawn({ emit: 'error' });
+  const result = await spawnSuccessor(
+    { restartable: true, command: 'does-not-exist', args: [], display: 'does-not-exist' },
+    { spawn, logger: { warn: (m) => warnings.push(m), info: () => {} } }
+  );
+  assert.equal(result.spawned, false, 'a missing command must not report spawned: true');
+  assert.equal(result.reason, 'spawn-error');
+  assert.match(warnings.join('\n'), /could not start a successor/);
+});
+
+test('a synchronous spawn throw is reported as failure rather than rethrown', async () => {
+  const warnings = [];
+  const result = await spawnSuccessor(
+    { restartable: true, command: 'x', args: [], display: 'x' },
+    { spawn: () => { throw new Error('bad args'); }, logger: { warn: (m) => warnings.push(m), info: () => {} } }
+  );
+  assert.equal(result.spawned, false);
+  assert.equal(result.reason, 'spawn-error');
+  assert.match(warnings.join('\n'), /bad args/);
 });
 
 // ---------------------------------------------------------------------------
@@ -223,6 +262,30 @@ test('a restart quiesces, drains, stops, spawns and exits 0 - in that order', as
   assert.deepEqual(exits, [0], 'a deliberate restart must exit 0');
 });
 
+test('a successor that never starts exits non-zero, so the scheduler recovery fires', async () => {
+  const app = recordingApp();
+  const exits = [];
+  const warnings = [];
+  const { spawn } = fakeSpawn({ emit: 'error' });
+  const shutdown = createShutdownHandler({
+    app,
+    plan: { restartable: true, command: 'missing-launcher', args: [], display: 'missing-launcher' },
+    spawn,
+    logger: { info: () => {}, warn: (m) => warnings.push(m) },
+    exit: (code) => exits.push(code),
+  });
+
+  await shutdown('restart');
+
+  // The old code caught only synchronous throws, so the asynchronous 'error' escaped and
+  // killed the process; the documented clean exit(0) then never ran. The exit must be
+  // non-zero here: no successor exists, so RestartOnFailure is the only thing that can
+  // bring the service back before the next logon.
+  assert.deepEqual(exits, [1], 'a failed restart must not exit 0');
+  assert.match(warnings.join('\n'), /could not start a successor/);
+  assert.match(warnings.join('\n'), /no successor was started/);
+});
+
 test('the successor is spawned only after the port and database were released', async () => {
   const order = [];
   let stopDone = false;
@@ -238,7 +301,9 @@ test('the successor is spawned only after the port and database were released', 
     spawn: (command, args, options) => {
       order.push('spawn');
       assert.equal(stopDone, true, 'the spawn must happen after stop() resolved');
-      return { pid: 1, unref() {} };
+      const child = childProcessDouble({ pid: 1 });
+      queueMicrotask(() => child.emit('spawn'));
+      return child;
     },
     exit: () => {},
   });
@@ -258,7 +323,12 @@ test('an in-flight solve delays the stop and the successor until it drains', asy
   const shutdown = createShutdownHandler({
     app,
     plan: { restartable: true, command: 'wscript.exe', args: [LAUNCHER], display: 'x' },
-    spawn: () => { order.push('spawn'); return { pid: 1, unref() {} }; },
+    spawn: () => {
+      order.push('spawn');
+      const child = childProcessDouble({ pid: 1 });
+      queueMicrotask(() => child.emit('spawn'));
+      return child;
+    },
     exit: () => order.push('exit'),
     drainTimeoutMs: 5_000,
   });
@@ -277,7 +347,7 @@ test('a restart is refused, without exiting, when no mechanism applies', async (
   const shutdown = createShutdownHandler({
     app,
     plan: { restartable: false, mechanism: 'manual', display: 'node cli.js listen' },
-    spawn: () => { spawns += 1; return { pid: 1, unref() {} }; },
+    spawn: () => { spawns += 1; const child = childProcessDouble({ pid: 1 }); queueMicrotask(() => child.emit('spawn')); return child; },
     exit: (code) => exits.push(code),
   });
 
@@ -297,7 +367,7 @@ test('SIGINT/SIGTERM stop and exit 0 without spawning', async () => {
   const shutdown = createShutdownHandler({
     app,
     plan: { restartable: true, command: 'wscript.exe', args: [LAUNCHER], display: 'x' },
-    spawn: () => { spawns += 1; return { pid: 1, unref() {} }; },
+    spawn: () => { spawns += 1; const child = childProcessDouble({ pid: 1 }); queueMicrotask(() => child.emit('spawn')); return child; },
     exit: (code) => exits.push(code),
   });
   await shutdown('SIGINT');
