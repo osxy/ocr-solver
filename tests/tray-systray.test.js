@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { startTray, TrayUnavailableError } from '../src/ui/tray-systray.js';
+import { startTray, resolveSysTray, TrayUnavailableError } from '../src/ui/tray-systray.js';
 
 function fakeApp() {
   return {
@@ -55,6 +55,33 @@ test('a module that exports no SysTray class is reported the same way', async ()
     () => startTray({ app: fakeApp(), loadSystray: async () => ({ default: {} }) }),
     (err) => err instanceof TrayUnavailableError && /--headless/.test(err.message)
   );
+});
+
+// The interop regression guard. This is the assertion that fails on the code the
+// repository shipped: the old `mod?.default ?? mod` resolved the real module to an
+// object, so the tray threw before it ever constructed a widget. It imports the real
+// `systray2` - the dependency is mandatory, and importing it does not start the
+// native binary - so it exercises the actual Babel/CJS shape rather than a stand-in.
+test('the real systray2 import resolves to a SysTray function', async () => {
+  const mod = await import('systray2');
+  const resolved = resolveSysTray(mod);
+  assert.equal(
+    typeof resolved,
+    'function',
+    `systray2 resolved to ${typeof resolved}; exports seen: ${Object.keys(mod).join(', ')}`
+  );
+});
+
+// Every interop shape that is realistic, so the resolution does not quietly depend on
+// the one shape seen on this host.
+test('resolveSysTray accepts each realistic interop shape', () => {
+  class C {}
+  assert.equal(resolveSysTray({ SysTray: C }), C, 'an ESM build exposing the class by name');
+  assert.equal(resolveSysTray({ default: { SysTray: C } }), C, 'a CJS namespace holding the class under default');
+  assert.equal(resolveSysTray({ default: { default: C } }), C, 'the Babel __esModule shape shipped today');
+  assert.equal(resolveSysTray({ default: C }), C, 'a plain default export');
+  assert.equal(resolveSysTray({}), undefined, 'nothing resolvable yields undefined, never a throw');
+  assert.equal(resolveSysTray({ default: {} }), undefined, 'default without a function is not accepted');
 });
 
 test('the adapter renders the controller menu and forwards clicks back by id', async (t) => {

@@ -25,6 +25,31 @@ export class TrayUnavailableError extends Error {
   }
 }
 
+/**
+ * Find the `SysTray` class in whatever shape `await import('systray2')` hands back.
+ *
+ * The shape is not obvious and has to be read from the package, not guessed.
+ * `systray2` is CommonJS (`"main": "index.js"`, `"type": "commonjs"`) compiled by
+ * Babel, whose only export is `exports.default = SysTray` (index.js:496) with
+ * `__esModule` set. Node therefore does not lift `default` onto the ES import
+ * namespace, and the class lands at `mod.default.default` - not `mod.SysTray`, and
+ * not `mod.default` (which is a module-ish object). #164 fixed the icon and shipped
+ * without this, so the tray had never started on any platform.
+ *
+ * `mod.SysTray` and `mod.default` are kept because a future release might compile
+ * differently: an actual ESM build would expose `mod.SysTray` (or `mod.default`),
+ * and a CommonJS build without `__esModule` gets `default` lifted to the namespace
+ * too. Resolving all four realistic interop shapes is more durable than swapping one
+ * hardcoded path for another.
+ *
+ * @param {object} mod the `systray2` import namespace
+ * @returns {unknown} the class, or `undefined` when no candidate is a function
+ */
+export function resolveSysTray(mod) {
+  const candidates = [mod?.SysTray, mod?.default?.SysTray, mod?.default?.default, mod?.default];
+  return candidates.find((candidate) => typeof candidate === 'function');
+}
+
 const DEFAULT_POLL_MS = 30_000;
 
 /**
@@ -50,9 +75,10 @@ export async function startTray({
   pollIntervalMs = DEFAULT_POLL_MS,
 } = {}) {
   let SysTray;
+  let mod = null;
   try {
-    const mod = await loadSystray();
-    SysTray = mod?.default ?? mod;
+    mod = await loadSystray();
+    SysTray = resolveSysTray(mod);
   } catch (err) {
     throw new TrayUnavailableError(
       "the tray needs the optional 'systray2' package, which could not be loaded " +
@@ -61,8 +87,14 @@ export async function startTray({
     );
   }
   if (typeof SysTray !== 'function') {
+    // The guard is deliberate: it is what turned a silent absence into a clear
+    // message when the interop shape was wrong. If the shape changes again, this
+    // must keep failing loudly, with the exports it actually saw.
+    const seen = Object.keys(mod ?? {}).join(', ') || '(no exports)';
     throw new TrayUnavailableError(
-      "the 'systray2' module did not export a SysTray class; run with --headless to skip the tray."
+      'the \'systray2\' module did not export a SysTray class ' +
+        `(exports seen: ${seen}); run with --headless to skip the tray, or reinstall it ` +
+        "with 'npm install systray2'."
     );
   }
 
