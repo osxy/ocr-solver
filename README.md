@@ -38,8 +38,10 @@ pages under [`docs/`](./docs/):
 **0.45.0 — a pre-release.** The offline solver, model tiers, Pushbullet listener and
 reply path are implemented and tested. The packaged Windows app, the installer, the
 per-user Startup shim and the launcher are executed on `windows-latest` in CI, and a fresh
-`node` process decrypts Windows secrets through DPAPI there; the native tray widget and
-the notification toast need an interactive desktop and remain unverified (see
+`node` process decrypts Windows secrets through DPAPI there; that runner also asserts the
+packaged `systray2` class now resolves (the tray had never loaded, because a
+CommonJS/Babel interop bug made the import resolve to an object). The native tray widget
+itself and the notification toast need an interactive desktop and remain unverified (see
 [Known limitations](#known-limitations)).
 
 The **Pushbullet ingress — reading a real push, fetching its image, solving it and
@@ -83,8 +85,9 @@ per-user Startup folder so the app starts at logon (20 s delay). Nothing is regi
 in Task Scheduler and nothing is written to `HKLM`.
 
 > The installer, the per-user Startup shim, the launcher and the uninstaller are executed
-> end to end on `windows-latest` in CI. The native tray widget and the notification toast
-> still need an interactive desktop and remain unverified. See
+> end to end on `windows-latest` in CI, and the packaged `systray2` class resolution is
+> asserted there. The native tray widget drawing and the notification toast still need an
+> interactive desktop and remain unverified. See
 > [Known limitations](#known-limitations).
 
 ## Run it
@@ -290,7 +293,7 @@ A reply that is not a solution is deliberate, not a bug:
 
 **The tray does not start.** Run `listen --headless` (the fallback that needs no display
 and no `systray2`), or set `ui.tray = false`. The error itself names `--headless` when
-`systray2` cannot be loaded.
+`systray2` cannot be loaded or its export shape is one the adapter does not recognize.
 
 **The HTTP ingress will not start.** With `[http] enabled = true` and no token the app
 refuses to start, naming `HTTP_AUTH_TOKEN` and `http_auth_token`. A `401` from a running
