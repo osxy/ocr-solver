@@ -93,6 +93,18 @@ the session ends; the automatic first-run prompt is tray-only. `web_ui.password`
 secret, not a config key, and gates a non-loopback bind (the option list above stops at
 the keys that can live in `config.toml`).
 
+## Stored review copies
+
+With `keep_images = true` the app keeps a **bounded WebP copy** of every solve's image
+(longest edge 512 px, re-encoded, not the original bytes) so the recent-solves page can
+show what was solved. It is **off by default**, like every other setting that retains or
+exposes data. The copies are pruned by the same `storage.retain_days` window and by
+`storage.max_images` (default 200, newest kept); `node src/cli.js images purge` deletes
+all of them on demand. On POSIX the images directory is mode `0700` and the files `0600`;
+on Windows `chmod` does nothing, so there the files are protected only by the per-user
+profile ACL — they are **not encrypted**. The thumbnail is served through the same
+access-gated web route as the statistics page.
+
 ## Secrets go in the credential store, or in the environment
 
 The Pushbullet token, the model key and the HTTP bearer token are **not** config keys. A
