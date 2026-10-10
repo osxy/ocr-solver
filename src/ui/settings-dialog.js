@@ -26,6 +26,10 @@ export async function defaultSettingsDialog({
   logger = null,
   input = process.stdin,
   output = process.stdout,
+  // #128: `null` (the default) keeps the old message. A plan carries the exact restart
+  // command when one can be named - this dialog runs in whichever process invoked it
+  // and cannot restart the service itself.
+  restartPlan = null,
 } = {}) {
   if (!editor || typeof editor.list !== 'function' || typeof editor.save !== 'function') {
     throw new Error('defaultSettingsDialog needs a settings editor');
@@ -135,6 +139,7 @@ export async function defaultSettingsDialog({
     if (result.backupPath) say(`previous config backed up to ${result.backupPath}`);
     if (result.restartRequired.length > 0) {
       say(`Restart the service for: ${result.restartRequired.join(', ')}`);
+      if (restartPlan?.display) say(`Restart it with: ${restartPlan.display}`);
     }
     if (result.live.length > 0) say(`Applied live: ${result.live.join(', ')}`);
     say('Saved.');

@@ -119,7 +119,11 @@ The logon task starts the app at logon. To start it now, run the launcher
 | **Solve last image** | Re-runs the pipeline on the newest image in the inbox — tuning without a live push |
 | **Open log** / **Open config** | Opens `app.log` / `config.toml` |
 | **Settings** | Opens the settings editor in the browser (below) |
+| **Restart** | Restarts the service, draining an in-flight solve first |
 | **Quit** | Shuts down cleanly |
+
+When a saved setting needs a restart, the settings page offers **Restart now** instead of only
+naming the setting, and the **Restart** item does the same thing.
 
 The icon is **normal (coloured)** while the listener is in contact with Pushbullet, and
 turns **grey after 10 minutes with no contact** — no socket event and no completed poll.

@@ -677,6 +677,43 @@ test('runApp wires the tray Settings item to the injected editor, which persists
   assert.equal(app.secrets.pushbullet.hint, 'o.r…', 'the app re-resolved the rotated secret');
 });
 
+// #128: the settings UI asks, the app performs. The plan travels to the dialog and a
+// `restarted` outcome is the only thing that reaches the restart handler. Remove either
+// the `restartPlan` pass-through or the `onRestart` call and this fails.
+test('a settings save that requests a restart reaches the injected restart handler', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'puzzlesolver-app-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const seenPlans = [];
+  let restarted = 0;
+  let nextRestarted = true;
+  const plan = { restartable: true, display: 'wscript.exe "C:\\x\\PuzzleSolver.vbs"' };
+  const app = await createApp(
+    firstRunOptions(dir, {
+      client: {},
+      responder: {},
+      listener: { start() {}, stop() {}, status: () => ({}) },
+      settingsDialog: async (options) => {
+        seenPlans.push(options.restartPlan);
+        return { saved: true, changed: [], restartRequired: ['solver.llm_text_model'], restarted: nextRestarted };
+      },
+      restartPlan: plan,
+      onRestart: async () => {
+        restarted += 1;
+      },
+    })
+  );
+  t.after(() => app.stop());
+
+  const outcome = await app.openSettings();
+  assert.equal(outcome.restarted, true);
+  assert.equal(restarted, 1, 'a requested restart reaches the restart handler');
+  assert.deepEqual(seenPlans[0], plan, 'the settings dialog receives the plan it can act on');
+
+  nextRestarted = false;
+  await app.openSettings();
+  assert.equal(restarted, 1, 'a save with no restart request must never restart');
+});
+
 // ---------------------------------------------------------------------------
 // Graceful shutdown
 // ---------------------------------------------------------------------------

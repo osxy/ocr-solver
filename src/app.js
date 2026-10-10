@@ -42,6 +42,7 @@ import { applyLiveSettings, createSettingsEditor } from './ui/settings.js';
 import { APP_VERSION } from './version.js';
 import { computeSettingsReview, planStartupReview, recordDismissal, recordReview } from './ui/settings-review.js';
 import { defaultWebSettingsDialog, defaultWebSetupDialog } from './ui/web-config.js';
+import { createShutdownHandler, planRestart } from './deploy/restart.js';
 import { WEB_UI_CREDENTIAL_SETTING, webUiAdmitsNonLoopback } from './ui/access.js';
 import { storeReport, loadReportCache, defaultAccuracyCachePath } from './accuracy.js';
 
@@ -205,6 +206,13 @@ export async function createApp({
   // The browser launcher the web UI uses. Injected so the startup and tray paths are
   // testable without a display, exactly like the tray's `openPath`.
   openBrowser = undefined,
+  // #128: how this process can start its successor. Injected so the decision and the
+  // settings dialog are testable without a launcher; `runApp` supplies the real one.
+  restartPlan = null,
+  // Called after the settings UI asked for a restart and the save was already applied.
+  // `runApp` points it at the graceful shutdown. A library caller leaves it null, and
+  // then a save that needs a restart simply reports it.
+  onRestart = null,
 
   // Dependency injection - everything below can be replaced by a test.
   store: providedStore = null,
@@ -235,6 +243,9 @@ export async function createApp({
   logPath = null,
 } = {}) {
   const logger = providedLogger ?? createLogger({ path: logPath ?? defaultLogPath({ platform, env, homedir }) });
+  // Computed once, from how this process was actually started. `planRestart` is pure
+  // and reads the launcher marker the shim set (#128).
+  const processRestartPlan = restartPlan ?? planRestart();
 
   let config = providedConfig;
   let resolvedConfigPath = configPath;
@@ -592,6 +603,24 @@ export async function createApp({
     return status();
   }
 
+  /**
+   * Stop accepting new work, without releasing the store or the worker yet. A restart
+   * drains the in-flight solve between this and `stop()`, so the successor starts only
+   * after the port and the database are actually released (#128, hazard 5).
+   */
+  async function quiesce() {
+    try {
+      listener?.stop();
+    } catch {
+      // already down
+    }
+    try {
+      await httpServer?.stop();
+    } catch {
+      // already down
+    }
+  }
+
   async function stop() {
     if (stopped) return;
     stopped = true;
@@ -706,6 +735,9 @@ export async function createApp({
         store,
         imageStore,
         corpusReport: loadReportCache(accuracyCachePath ?? defaultAccuracyCachePath(store.path))?.corpus ?? null,
+        // #128: the settings UI offers the restart only when this process can perform
+        // it. The web server answers the browser before the process goes down.
+        restartPlan: processRestartPlan,
       });
       // The editor presented the settings, so they are no longer "new". A dialog that
       // never came up (`failed`) did not present them, and a web UI whose page was never
@@ -734,6 +766,12 @@ export async function createApp({
         // A password set in this very session must be visible to the next open.
         webUiCredential = secrets.web_ui?.value ?? null;
       }
+      if (outcome?.restarted) {
+        // The browser already has its response; now take the service down and start the
+        // successor. `onRestart` is the graceful shutdown (hazard 3 then hazards 4/5).
+        if (typeof onRestart === 'function') await onRestart();
+        else logger.warn?.('a restart was requested but no restart handler is wired');
+      }
       return outcome;
     },
     /** Install/replace the notification sink; `null` disables toasts. */
@@ -745,6 +783,10 @@ export async function createApp({
     },
     start,
     stop,
+    quiesce,
+    // #128: the decision this process made about restarting itself, exposed so the
+    // tray can present it and `runApp` can act on exactly the same plan.
+    restartPlan: processRestartPlan,
     status,
   };
 }
@@ -754,6 +796,10 @@ export async function createApp({
  * The signal handlers close the listener socket and the database (DESIGN 5).
  */
 export async function runApp(options = {}) {
+  // `shutdown` is created after the tray is wired (it must be able to stop it), but
+  // the settings dialog is assembled before that. The closure reads the variable when
+  // a restart is actually requested, by which time it is assigned.
+  let shutdown = null;
   // Tray mode is decided inside `createApp` from the config it loads, because the
   // first-run dialog is part of assembly: it must run before the listener starts and
   // must not exist under `--headless`. The requested tray flag and the dialog seam
@@ -766,33 +812,15 @@ export async function runApp(options = {}) {
     // terminal editor is still reachable through `config edit`.
     setupDialog: options.setupDialog ?? defaultWebSetupDialog,
     settingsDialog: options.settingsDialog ?? defaultWebSettingsDialog,
+    // The settings UI may request a restart; this is the one path that performs it.
+    onRestart: options.onRestart ?? (() => shutdown?.('restart')),
   });
-  let closing = false;
   let tray = null;
 
   // The tray is opt-in at this API level (`tray: true`) and the CLI turns it on by
   // default. `ui.tray = false` in the config can still veto it. Keeping the default
   // off here is what lets tests and the corpus run drive runApp without a display.
   const wantTray = resolveTrayMode({ requested: options.tray === true, configTray: app.config.ui.tray });
-
-  const shutdown = async (signal) => {
-    if (closing) return;
-    closing = true;
-    app.logger?.info?.(`received ${signal}; shutting down`);
-    try {
-      await tray?.stop?.();
-    } catch {
-      // a dead tray must not block shutdown
-    }
-    try {
-      await app.stop();
-    } finally {
-      process.exit(0);
-    }
-  };
-
-  process.once('SIGINT', () => void shutdown('SIGINT'));
-  process.once('SIGTERM', () => void shutdown('SIGTERM'));
 
   if (wantTray) {
     // Tray mode gets the real notifier. Building it is free (the node-notifier import
@@ -823,10 +851,23 @@ export async function runApp(options = {}) {
       // this the feature exists in tests only, which is the failure #27 calls out.
       openSettings: options.openSettings ?? (() => app.openSettings()),
       accuracyProvider,
-      quit: () => shutdown('tray'),
+      // Both the Settings page and the tray item request the same restart; `shutdown`
+      // refuses it (without exiting) when `restartPlan` says no mechanism applies.
+      restart: () => shutdown?.('restart'),
+      restartPlan: app.restartPlan,
+      quit: () => shutdown?.('tray'),
     });
     app.logger?.info?.('tray started');
   }
+
+  // One shutdown path for SIGINT/SIGTERM, Quit and Restart. A restart quiesces the
+  // ingresses, drains the in-flight solve, releases the port and the database, starts
+  // exactly one successor and exits 0, so RestartOnFailure never fires (#128). If that
+  // successor cannot be started it exits non-zero instead, deliberately leaving the
+  // service to the scheduler's recovery rather than dead until the next logon (#135).
+  shutdown = createShutdownHandler({ app, tray, plan: app.restartPlan, logger: app.logger });
+  process.once('SIGINT', () => void shutdown('SIGINT'));
+  process.once('SIGTERM', () => void shutdown('SIGTERM'));
 
   await app.start();
   app.tray = tray;
