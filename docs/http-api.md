@@ -7,6 +7,18 @@ verifiable end to end.
 This page is the reference for the endpoint. The one-paragraph summary and the
 start-here instructions are in the [README](../README.md#solve-over-http).
 
+This endpoint is **not** the web UI. `[http]` configures the solve endpoint only,
+`http.enabled` never disables the settings/solve/statistics UI, and the UI has no enable
+flag. They are separate listeners with separate credentials ([the web UI](../README.md#the-web-ui),
+[remote access](./remote-access.md)):
+
+| | HTTP ingress (`http.*`) | Web UI (`web_ui.*`) |
+|---|---|---|
+| What it is | the `POST /v1/solve` endpoint | the settings / solve / statistics UI |
+| Default | `enabled = false`, deliberately | no `enabled` key exists; nothing gates it |
+| Bind / port | `http.bind` : `http.port` (`8765`) | `web_ui.bind` : `web_ui.port` (`0` = ephemeral loopback) |
+| Authentication | a bearer token, required | loopback only; `web_ui.password` for a non-loopback bind |
+
 ## Enable it
 
 Turn it on in `config.toml` and provide a token:

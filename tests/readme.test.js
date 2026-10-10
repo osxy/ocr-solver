@@ -28,7 +28,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync, statSync } from 'node:fs';
+import { readFileSync, existsSync, statSync, readdirSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 
 const repoRoot = join(import.meta.dirname, '..');
@@ -178,6 +178,28 @@ test('every relative link and anchor in the README resolves', () => {
     assert.ok(
       anchors.has(fragment),
       `README links to ${link}, but ${rawPath || 'README.md'} has no heading with that anchor`
+    );
+  }
+});
+
+/**
+ * Every docs/*.md topic page is reachable from the README, so a page cannot be added
+ * and then forgotten. The limit, stated so this does not read as more than it is: the
+ * HTTP-vs-web-UI confusion happened with every page already linked. A page being
+ * reachable says nothing about whether the text on it is right; the reader still has to
+ * read the page. This catches an orphaned page, not a wrong one.
+ */
+test('every top-level docs page is linked from the README', () => {
+  const docsDir = join(repoRoot, 'docs');
+  const pages = readdirSync(docsDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.md'))
+    .map((entry) => entry.name);
+
+  assert.ok(pages.length > 0, 'docs/ has no top-level .md pages; the test has lost its subject');
+  for (const page of pages) {
+    assert.ok(
+      readme.includes(`./docs/${page}`),
+      `docs/${page} is not linked from the README, so a reader never reaches it`
     );
   }
 });
