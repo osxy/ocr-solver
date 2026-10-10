@@ -871,18 +871,39 @@ export async function runApp(options = {}) {
     throw err;
   }
 
+  // #168: a stop request must be honoured from the moment the lock is held, not only
+  // once the app has finished assembling. A first-run app waits inside `createApp` for
+  // the setup dialog, so a watcher created after that would never see an update's
+  // request and the app could not be replaced until it was configured. The controller
+  // is filled in with the real shutdown handler once one exists; until then there is no
+  // in-flight work, so releasing the claim and exiting is the graceful outcome.
+  const lifecycle = { shutdown: null };
+  const stopWatcher = watchStopRequests({
+    lockPath: preLock.lockPath,
+    pid: process.pid,
+    onStop: () => {
+      if (lifecycle.shutdown) {
+        void lifecycle.shutdown('update');
+        return;
+      }
+      preLock.release?.();
+      process.exit(0);
+    },
+  });
+
   try {
-    return await runLockedApp(options, preLock);
+    return await runLockedApp(options, preLock, lifecycle, stopWatcher);
   } catch (err) {
     // An assembly or first-run failure must not leave the lock behind for a start that
     // never reached `app.stop()`. A crash that bypasses this is covered by the stale
     // pid check on the next start.
+    stopWatcher.stop();
     preLock.release?.();
     throw err;
   }
 }
 
-async function runLockedApp(options, preLock) {
+async function runLockedApp(options, preLock, lifecycle, stopWatcher) {
   // `shutdown` is created after the tray is wired (it must be able to stop it), but
   // the settings dialog is assembled before that. The closure reads the variable when
   // a restart is actually requested, by which time it is assigned.
@@ -958,18 +979,9 @@ async function runLockedApp(options, preLock) {
   // scheduler recovery, so that leaves the service down until the next logon rather than
   // reporting a dead process as alive (#135).
   shutdown = createShutdownHandler({ app, tray, plan: app.restartPlan, logger: app.logger });
+  lifecycle.shutdown = shutdown;
   process.once('SIGINT', () => void shutdown('SIGINT'));
   process.once('SIGTERM', () => void shutdown('SIGTERM'));
-
-  // #168: the updater asks the running app to stop through a request beside the lock,
-  // so it is replaced only after the ordinary graceful shutdown (an in-flight solve is
-  // not lost to a forced kill). The watcher is unref'ed and stops itself once the lock
-  // is released, so it can neither keep the process alive nor act on a stale request.
-  const stopWatcher = watchStopRequests({
-    lockPath: preLock.lockPath,
-    pid: process.pid,
-    onStop: () => void shutdown('update'),
-  });
 
   await app.start();
   app.tray = tray;
