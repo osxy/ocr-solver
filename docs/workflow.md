@@ -164,6 +164,12 @@ The release is the integration branch's merge into `main`: tag the merge commit 
 tag (the command block under [Running a milestone](#running-a-milestone)). For a patch release
 the integration branch is `hotfix/v<major>.<minor>.<patch>` and the tag is the same version.
 
+The `release` job decides the GitHub pre-release flag from the tag, never by hand:
+`packaging/release-flag.mjs` flags a tag with a semver pre-release suffix (`v0.46.0-pre.1`)
+and publishes a plain `vX.Y.Z` tag as a normal release. The choice is written into the
+version string, so "pre-release" is opt-in rather than a property of every 0.x tag (#216).
+An already-published release keeps the flag it shipped with.
+
 Because `main` is reached through a PR rather than a local merge, the `pre-push` hook is never
 in the way of the normal path. If you ever do need to update `main` locally, that is exactly
 the case the hook is there to stop; use the override only if you mean it.

@@ -35,23 +35,23 @@ pages under [`docs/`](./docs/):
 
 ## Status
 
-**0.45.2 — a pre-release.** The offline solver, model tiers, Pushbullet listener and
-reply path are implemented and tested. The packaged Windows app, the installer, the
-per-user Startup shim and the launcher are executed on `windows-latest` in CI, and a fresh
-`node` process decrypts Windows secrets through DPAPI there; that runner also asserts the
-packaged `systray2` class resolves and that Windows `LoadImage` accepts the shipped `.ico`
-the tray icon is handed to `systray2` as a file path. The native tray widget itself and
-the notification toast need an interactive desktop and remain unverified (see
-[Known limitations](#known-limitations)).
+**0.45.2 released.** The offline solver, model tiers, Pushbullet listener and reply path
+are implemented and tested. The **Pushbullet ingress has been verified against the real
+Pushbullet service**: a puzzle pushed from a phone was read, solved and answered in the
+conversation, and one that could not be solved was acknowledged rather than answered
+wrongly ([issue #3](https://github.com/osxy/ocr-solver/issues/3)). The packaged Windows
+app, the installer, the per-user Startup shim and the launcher are executed on
+`windows-latest` in CI, and a fresh `node` process decrypts Windows secrets through DPAPI
+there; that runner also asserts the packaged `systray2` class resolves and that Windows
+`LoadImage` accepts the shipped `.ico` the tray icon is handed to `systray2` as a file
+path. The native tray widget itself and the notification toast need an interactive
+desktop and remain unverified (see [Known limitations](#known-limitations)).
 
-The **Pushbullet ingress — reading a real push, fetching its image, solving it and
-replying — has never been executed against the real Pushbullet service**, because no
-account or token exists (tracked and blocked as
-[issue #3](https://github.com/osxy/ocr-solver/issues/3)). That is the app's primary
-user-facing path, so **0.45.2 remains a pre-release**: the parts a runner can reach are
-tested against fakes, but the main ingress is not *observed* end to end. Work is tracked
-in the [issue tracker](https://github.com/osxy/ocr-solver/issues); the design and its
-reasoning live in [DESIGN.md](./DESIGN.md).
+Releases carry a pre-release flag only when the tag has a semver pre-release suffix
+(`v0.46.0-pre.1`); a plain `vX.Y.Z` tag is a normal release. The rule is in
+[the release playbook](./docs/workflow.md#cutting-a-release). Work is tracked in the
+[issue tracker](https://github.com/osxy/ocr-solver/issues); the design and its reasoning
+live in [DESIGN.md](./DESIGN.md).
 
 ## Install
 
@@ -346,10 +346,6 @@ the Startup shim
 
 ## Known limitations
 
-- **Pre-release.** 0.45.2 is a pre-release: expect rough edges and no stability promise.
-  The **Pushbullet ingress has never run against the real Pushbullet service**, so the
-  app's primary path is exercised against fakes rather than observed end to end (see
-  [Status](#status)).
 - **The native tray widget, the notification toast, the browser hand-off and the
   unprivileged install path remain unverified on Windows.** The packaged runtime, the app,
   `sharp` and the traineddata are smoke-tested on `windows-latest`, and the installer,

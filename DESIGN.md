@@ -4,8 +4,8 @@ A small Windows background app that watches Pushbullet for incoming puzzle image
 reads the image, solves the puzzle, and answers back on Pushbullet.
 
 Status: **v0.45.2 released** (offline solver + model reasoner tiers, verified live; the
-Pushbullet listener, image fetcher and responder are built and tested offline, but the
-live Pushbullet ingress has never run against the real service — issue #3).
+Pushbullet listener, image fetcher and responder are built, tested offline, and verified
+against the real service end to end — issue #3 closed).
 Decisions confirmed — see §13.
 
 Component headers carry a **✅ built** marker once the component exists and its offline
@@ -365,7 +365,7 @@ applies to the next puzzle without a restart, with built-in fallbacks for packag
 > the corpus puzzles (`hond blauw kat`, `peer arm fiets`, `negen min vier`). Using the corpus
 > puzzles as examples would inflate measured accuracy on the only test set available.
 
-### 4.9 Listener — `src/pushbullet/listener.js` ✅ built (M2, live Pushbullet verification outstanding — issue #3)
+### 4.9 Listener — `src/pushbullet/listener.js` ✅ built (M2, verified live)
 
 Pushbullet has **no webhooks**. Two mechanisms, used together:
 
@@ -379,13 +379,13 @@ Pushbullet has **no webhooks**. Two mechanisms, used together:
 Keeps a persisted watermark, deduplicates by push `iden`, reconnects with exponential backoff
 and jitter, and (by default) ignores pre-existing history rather than answering a backlog.
 
-### 4.10 Image fetcher — `src/pushbullet/files.js` ✅ built (M2, live Pushbullet verification outstanding — issue #3)
+### 4.10 Image fetcher — `src/pushbullet/files.js` ✅ built (M2, verified live)
 
 `file_url` is a pre-signed S3 URL, so a plain `fetch` works. Verifies magic bytes and that
 Pillow-equivalent decoding succeeds, enforces a size cap, saves to
 `%LOCALAPPDATA%\PuzzleSolver\inbox\<iden>.<ext>`, and prunes by age (default 7 days).
 
-### 4.11 Responder — `src/pushbullet/respond.js` ✅ built (M2, live Pushbullet verification outstanding — issue #3)
+### 4.11 Responder — `src/pushbullet/respond.js` ✅ built (M2, verified live)
 
 **Delivery path confirmed: the puzzle arrives as a file push from another user or device, and
 a new note push back is an acceptable answer.** The Pushbullet API offers a true threaded reply
@@ -1655,8 +1655,11 @@ home. Decided here, additively:
 - **No third-party release action.** The Release is created with the runner's preinstalled `gh` and
   the default token, so there is nothing extra to pin; `contents: write` is set on the release job
   only, and the rest of the workflow is `contents: read`.
-- **Pre-1.0 tags (`v0.*`) are published as GitHub pre-releases**, so the first build is not offered
-  as the project's "latest".
+- **A tag with a semver pre-release suffix is published as a GitHub pre-release.** The
+  `release` job takes the flag from `packaging/release-flag.mjs`, so a plain `vX.Y.Z` tag
+  is a normal release and only a suffixed one (`v0.46.0-pre.1`) is flagged. The choice is
+  in the version string, not a `v0.*` range that flagged every pre-1.0 release for a
+  reason that is gone (#216).
 - **`main`/PR runs upload a workflow artifact but never publish.** Only a `v*` tag creates a
   Release; workflow artifacts expire after 14 days, release assets do not.
 - **No credentials can travel.** The payload is copied from an explicit allowlist (`src/`,
