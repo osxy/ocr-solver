@@ -3,11 +3,9 @@
  *
  * **The updater has no network access of its own.** It takes the archive the user
  * already downloaded and verified (the README's ritual), or an already-extracted copy
- * of it, and applies it. There is no GitHub API call and no `/releases/latest`: every
- * release here is a pre-release, so a "latest" lookup would report "up to date"
- * forever, and a script that fetches and runs remote code is exactly the thing the
- * checksum ritual exists to guard. Falling back to the local artifact removes the whole
- * branch of failure modes.
+ * of it, and applies it. There is no GitHub API call and no `/releases/latest`: a script
+ * that fetches and runs remote code is exactly the thing the checksum ritual exists to
+ * guard. Falling back to the local artifact removes the whole branch of failure modes.
  *
  * Two decisions live here, where they are pure and tested offline:
  *
@@ -49,13 +47,15 @@ export function readPayloadVersion(dir, { readFile = readFileSync } = {}) {
  * `compareVersions` returns `null` for anything that is not `major.minor.patch`; a
  * version that cannot be read is treated as a reason to refuse, not as "equal", so an
  * unreadable payload cannot silently overwrite a good install. `force` is the explicit
- * override for a repair of the same version.
+ * override for a deliberate repair - the same version, or an install too broken to
+ * report one - but **never an older payload**: a downgrade is silent and worse than
+ * refusing, and `-Force` is not a downgrade switch (#223).
  */
 export function decideUpdate({ installedVersion, incomingVersion, force = false } = {}) {
   const comparison = compareVersions(incomingVersion, installedVersion);
   if (comparison === null) return { allowed: force, reason: 'unreadable-version' };
   if (comparison === 0) return { allowed: force, reason: 'same-version' };
-  if (comparison < 0) return { allowed: force, reason: 'older' };
+  if (comparison < 0) return { allowed: false, reason: 'older' };
   return { allowed: true, reason: 'newer' };
 }
 

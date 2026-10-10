@@ -2,10 +2,9 @@
 #
 # Applies a release the user already downloaded over the installed copy. It has **no
 # network access of its own** (issue #168): it does not call the GitHub API and never
-# fetches anything, so there is no `/releases/latest` trap (every release here is a
-# pre-release, so "latest" returns nothing) and no script that downloads and runs remote
-# code. The user verifies the download as the README already tells them to; this script
-# re-verifies the checksum when the `.sha256` sidecar sits beside the archive.
+# fetches anything, and it never downloads and runs remote code. The user verifies the
+# download as the README already tells them to; this script re-verifies the checksum when
+# the `.sha256` sidecar sits beside the archive.
 #
 # The three things update.ps1 cannot delegate to `install.ps1`:
 #
