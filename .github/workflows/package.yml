@@ -160,13 +160,17 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           name: windows-package
           path: dist
 
-      # `gh` is preinstalled on the runner, so publishing needs no third-party action
-      # to pin. The default GITHUB_TOKEN is scoped to this job only.
+      # The Release itself is created with the runner's preinstalled `gh`, so no
+      # third-party release action is pinned. The default GITHUB_TOKEN is scoped to this
+      # job only. `checkout` is for the flag script: a `vX.Y.Z` tag is a normal release,
+      # and only a semver pre-release suffix is flagged (#216).
       - name: Create the Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -174,10 +178,7 @@ jobs:
         run: |
           set -euo pipefail
           tag="$GITHUB_REF_NAME"
-          # Pre-1.0 tags are pre-releases: GitHub should not offer the first 0.x build
-          # as the project's "latest".
-          pre=""
-          case "$tag" in v0.*) pre="--prerelease" ;; esac
+          pre=$(node packaging/release-flag.mjs)
           gh release create "$tag" \
             --title "PuzzleSolver $tag" \
             --generate-notes \
