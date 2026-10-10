@@ -116,12 +116,19 @@ test('emit writes a checksum that verify accepts, and verify fails when the file
 // Payload manifest
 // ---------------------------------------------------------------------------
 
-test('the required payload includes the app, the Windows sharp binary and the traineddata', () => {
+test('the required payload includes the app, the Windows sharp binary, the traineddata and the tray icons', () => {
   assert.ok(REQUIRED_PAYLOAD.includes('node.exe'));
   assert.ok(REQUIRED_PAYLOAD.includes('app/src/cli.js'));
   assert.ok(
     REQUIRED_PAYLOAD.includes('node_modules/@tesseract.js-data/nld/4.0.0/nld.traineddata.gz'),
     'the offline language file must travel in the zip'
+  );
+  // A tray icon that did not ship would leave a blank tile in the release exactly as
+  // it is now, and `npm test` cannot see the payload (#185).
+  assert.ok(
+    REQUIRED_PAYLOAD.includes('app/src/ui/icons/tray-normal.ico') &&
+      REQUIRED_PAYLOAD.includes('app/src/ui/icons/tray-grey.ico'),
+    'the Windows tray icons must be required in the payload'
   );
   assert.ok(!REQUIRED_PAYLOAD.some((entry) => entry.includes('config/')), 'config/ must not ship');
   assert.ok(FORBIDDEN_PAYLOAD.includes('config/llm.env'));
