@@ -232,7 +232,7 @@ the old code. Behaviour that took live testing to find must not be able to come 
 ## 5. Tests
 
 ```bash
-npm test              # 809 tests (803 pass, 6 skip), fully offline: no network, no token, no key
+npm test              # 810 tests (804 pass, 6 skip), fully offline: no network, no token, no key
 npm run test:unit     # fast subset
 npm run test:corpus   # real images through real OCR, ~4s
 npm run test:live     # opt-in; skips itself unless LLM_API_KEY is set
