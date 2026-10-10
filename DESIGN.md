@@ -616,9 +616,15 @@ path testable on Linux without `systray2` or a display; the native tray widget r
 changing anything meant hand-editing TOML, and the token was not even in that file. The editor
 is `src/ui/settings.js` (schema + logic), `src/ui/settings-dialog.js` (the terminal prompt) and
 `src/config-cli.js` (`config list|get|set|edit`), not a third prompt implementation:
-`createSettingsEditor` builds on `src/ui/setup.js` — the same `hasInternalWhitespace` check and
-the same **Test connection** probes (through `createSetup`'s `testConnection`), so first-run and
-settings cannot drift.
+`createSettingsEditor` builds on `src/ui/setup.js` — the same **Test connection** probes
+(through `createSetup`'s `testConnection`) and, for a pasted token, the same
+`hasInternalWhitespace` check, so first-run and settings cannot drift. The whitespace rule is
+per-descriptor, because its reason is about pasting rather than about values: a token or key
+from a browser or shell carries a stray newline, so `pushbullet.token`, `llm.api_key` and
+`http.token` still refuse internal whitespace. **The web UI passphrase is the exception
+(#147)** — it is the one secret a human composes rather than pastes, so `allowInternalSpaces`
+drops only the space from the check; a tab or line break still fails, because the login form's
+single-line password field cannot reproduce it. Ends are trimmed for every secret.
 
 The two failure modes the issue names are handled by construction rather than by care:
 

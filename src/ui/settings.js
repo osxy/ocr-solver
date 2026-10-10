@@ -132,7 +132,10 @@ export const SETTINGS = Object.freeze([
   Object.freeze({ id: 'web_ui.allowed_hosts', label: 'Web UI extra Host names (blank = default deny)', path: ['web_ui', 'allowed_hosts'], type: 'string-array', allowEmpty: true, restart: true, securityRelevant: true, since: '0.3.0' }),
   // The only secret whose stored value is not the entered value: `prepare` hashes it to
   // a scrypt verifier first, so the credential store never holds the password (#65).
-  Object.freeze({ id: WEB_UI_CREDENTIAL_SETTING, label: 'Web UI remote-access password', secret: 'web_ui', type: 'secret', restart: true, testable: false, prepare: hashWebUiPassword, securityRelevant: true, since: '0.3.0' }),
+  // #147: also the only secret a human *composes* rather than pastes, so a space is a
+  // normal part of the value; `allowInternalSpaces` exempts it from the pasted-token
+  // whitespace rule. A tab or line break still stays refused (see `parseSettingValue`).
+  Object.freeze({ id: WEB_UI_CREDENTIAL_SETTING, label: 'Web UI remote-access password', secret: 'web_ui', type: 'secret', allowInternalSpaces: true, restart: true, testable: false, prepare: hashWebUiPassword, securityRelevant: true, since: '0.3.0' }),
 
   Object.freeze({ id: 'ui.tray', label: 'Show the tray', path: ['ui', 'tray'], type: 'boolean', restart: true, since: '0.1.0' }),
   Object.freeze({ id: 'ui.notify_on_unresolved', label: 'Notify on an unresolved puzzle', path: ['ui', 'notify_on_unresolved'], type: 'boolean', restart: false, since: '0.1.0' }),
@@ -235,7 +238,14 @@ export function parseSettingValue(setting, text) {
     case 'secret': {
       const value = String(text ?? '').trim();
       if (value === '') throw new SettingValueError(`${setting.id} must not be empty`);
-      if (hasInternalWhitespace(value)) throw new SettingValueError(`${setting.id} contains whitespace`);
+      // A token or key is pasted from a browser or a shell, so a stray newline or space
+      // means the paste, not the credential. `web_ui.password` (#147) is the one secret
+      // a human composes, and a space is ordinary in a passphrase, so its descriptor
+      // drops only the space from this check. A tab or line break stays refused even
+      // there: the login form's single-line password field cannot reproduce one, and a
+      // credential nobody can submit is a locked door.
+      const checked = setting.allowInternalSpaces ? value.replaceAll(' ', '') : value;
+      if (hasInternalWhitespace(checked)) throw new SettingValueError(`${setting.id} contains whitespace`);
       // A descriptor may carry a setting-specific check (the HTTP bearer token must
       // pass the same strength rule the server enforces at startup, #47). Rejecting
       // it here is what keeps the editor from storing a token the app then refuses to
