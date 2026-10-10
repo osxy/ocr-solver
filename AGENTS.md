@@ -69,8 +69,9 @@ cycle (issue #106). A milestone branch keeps unreleased state off `main` entirel
   reaches it through a pull request.
 - Keep the milestone branch current with `main`, so a hotfix released from `main` does not return as
   a conflict at release time.
-- **Hotfixes** to a released version go `hotfix/<slug>` → pull request to `main` → tag a patch
-  release, and are then merged or cherry-picked into the open milestone branch.
+- **Hotfixes** to a released version get their own `hotfix/vX.Y.Z` integration branch (below): a
+  fix branches off it and its pull request targets it, and the hotfix branch merges to `main` as the
+  patch release.
 - **A `Closes #n` reference does not fire when a pull request merges into the milestone branch** — GitHub
   only auto-closes against the default branch. Close the issue by hand as the pull request merges, or it
   will sit open with its work already in the milestone.
@@ -129,6 +130,47 @@ is filed.
 blocked by the page's own CSP. Both had passed a green suite and a design review, neither was visible
 from a diff, and both would have shipped had the review run early or not at all.
 
+### Hotfixes: the same shape, so a set of post-release fixes lands as one release
+
+A hotfix is urgent and small, which is exactly why it kept merging to `main` one fix at a time. The
+set of post-release fixes accumulated on the released branch unbranched, so there was no single state
+to prepare, test or tag as the patch release. A hotfix therefore gets the milestone's shape:
+
+- **A hotfix gets a `hotfix/v<major>.<minor>.<patch>` integration branch** — e.g. `hotfix/v0.45.2` —
+  created from `main` when a fix is needed on a released version.
+- **Each fix branches off the hotfix branch**, `hotfix/<short-slug>`, and its pull request targets
+  `hotfix/v0.45.2`. Both carry the `hotfix/` prefix; the `v` in the integration branch is what makes
+  it the branch that becomes a release.
+- **The version bump, the README install link and the release notes live on the hotfix branch.**
+- **When the fixes are in, the hotfix branch merges to `main`.** That merge *is* the patch release:
+  tag the merge commit and push the tag.
+- **The hotfix branch is protected like `main` and a milestone branch.** The `pre-push` hook refuses
+  `hotfix/v*`, so work reaches it through pull requests — but an ordinary `hotfix/<slug>` item branch
+  stays pushable, because that is how a fix gets reviewed.
+
+```bash
+git switch -c hotfix/v0.45.2 main                       # when the hotfix opens
+git switch -c hotfix/browser-handoff hotfix/v0.45.2     # per fix
+gh pr create --base hotfix/v0.45.2                      # into the hotfix, not main
+# ...work, verified and merged...
+gh pr create --base main --head hotfix/v0.45.2          # the release merge
+git switch main && git pull
+git tag -a v0.45.2 -m 'PuzzleSolver v0.45.2' && git push origin v0.45.2
+```
+
+**Why:** fixes merged after a release were accumulating on `main` with no branch to land on, so the
+patch release could not be prepared, tested or tagged at a single commit. A hotfix branch gives the
+set of post-release fixes one place to land before it becomes the next release.
+
+**Consequences that are easy to miss:**
+
+- **CI must cover the hotfix branch.** The workflows answer pull requests into `main`, `milestone/**`
+  **and** `hotfix/**`. A pull request's workflow file comes from its **base** branch, so one that
+  watched only `main` would leave a fix into `hotfix/v0.45.2` with no checks at all — silently
+  unverified rather than red.
+- **A `Closes #n` reference does not fire when a pull request merges into the hotfix branch**, for the
+  same reason it does not for a milestone: GitHub only auto-closes against the default branch.
+
 ### Merging
 
 Merging through a PR is expected. Say in the PR description *what was verified and how* —
@@ -155,8 +197,8 @@ this file.
 
 ## 2. The `pre-push` hook
 
-`scripts/git-hooks/pre-push` refuses to push to `main`, `master`, or a `milestone/*` branch.
-Enable it in a clone with:
+`scripts/git-hooks/pre-push` refuses to push to `main`, `master`, a `milestone/*` branch, or a
+`hotfix/v*` integration branch. Enable it in a clone with:
 
 ```bash
 git config core.hooksPath scripts/git-hooks

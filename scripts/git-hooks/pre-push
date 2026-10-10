@@ -11,11 +11,13 @@
 # Git passes one line per ref being pushed on stdin:
 #     <local ref> <local sha> <remote ref> <remote sha>
 
-# Exact protected names, plus the `milestone/*` pattern. A milestone branch is the
-# integration point the release inherits, so it is protected the same way (AGENTS.md §1).
+# Exact protected names, plus the `milestone/*` and `hotfix/v*` patterns. Both are the
+# integration points a release inherits, so they are protected the same way (AGENTS.md §1).
+# `hotfix/v*` is deliberately narrower than `hotfix/*`: the `hotfix/<slug>` item branches
+# stay pushable, because that is how a fix reaches review.
 PROTECTED_BRANCHES="main master"
 
-# True when $1 is a protected branch: an exact name above, or the milestone/* pattern.
+# True when $1 is a protected branch: an exact name above, or one of those patterns.
 is_protected() {
   branch=$1
   for name in $PROTECTED_BRANCHES; do
@@ -23,6 +25,7 @@ is_protected() {
   done
   case "$branch" in
     milestone/*) return 0 ;;
+    hotfix/v*) return 0 ;;
   esac
   return 1
 }

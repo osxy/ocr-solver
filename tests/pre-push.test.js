@@ -2,10 +2,10 @@
  * Tests for scripts/git-hooks/pre-push (AGENTS.md §1/§2).
  *
  * The hook is the only thing enforcing "never push to a protected branch" outside the
- * document itself, and it had no test while its matching logic changed from the exact
- * names `main master` to those plus the `milestone/*` pattern. It is run as a
- * subprocess with the stdin git hands it, so what is asserted is the real exit status
- * and the real message, not a reimplementation of the pattern.
+ * document itself, and it had no test while its matching logic grew from the exact
+ * names `main master` to those plus the `milestone/*` and `hotfix/v*` patterns. It is
+ * run as a subprocess with the stdin git hands it, so what is asserted is the real exit
+ * status and the real message, not a reimplementation of the pattern.
  *
  * Nothing here touches git or the network.
  */
@@ -56,10 +56,25 @@ test('the hook refuses a push to a milestone branch', (t) => {
   assert.notEqual(result.status, 0, 'a milestone branch is protected like main');
 });
 
+test('the hook refuses a push to a hotfix integration branch', (t) => {
+  if (noSh) return t.skip('no POSIX sh available to run the hook');
+  const result = push('refs/heads/hotfix/v0.45.2');
+  assert.notEqual(result.status, 0, 'a hotfix integration branch becomes a release and is protected');
+});
+
 test('the hook allows an ordinary feature branch', (t) => {
   if (noSh) return t.skip('no POSIX sh available to run the hook');
   const result = push('refs/heads/feat/thing');
   assert.equal(result.status, 0, `feat/thing must be allowed to push: ${result.stderr}`);
+});
+
+test('the hook allows an ordinary hotfix item branch', (t) => {
+  if (noSh) return t.skip('no POSIX sh available to run the hook');
+  // `hotfix/<slug>` is where a fix is written and reviewed; only the `hotfix/v*`
+  // integration branch is protected. Blocking all `hotfix/*` would make the
+  // documented workflow impossible.
+  const result = push('refs/heads/hotfix/browser-handoff');
+  assert.equal(result.status, 0, `hotfix/browser-handoff must be allowed to push: ${result.stderr}`);
 });
 
 test('ALLOW_MAIN_PUSH=1 allows a protected push', (t) => {
@@ -79,4 +94,8 @@ test('the refusal message names the branch it refused', (t) => {
   assert.match(milestone.stderr, /refusing to push to 'milestone\/v0\.5'/);
   // The guidance must point at the pull-request path for that branch, not at nothing.
   assert.match(milestone.stderr, /pull request against 'milestone\/v0\.5'/);
+
+  const hotfix = push('refs/heads/hotfix/v0.45.2');
+  assert.match(hotfix.stderr, /refusing to push to 'hotfix\/v0\.45\.2'/);
+  assert.match(hotfix.stderr, /pull request against 'hotfix\/v0\.45\.2'/);
 });
