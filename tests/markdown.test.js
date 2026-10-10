@@ -1,15 +1,17 @@
 /**
- * Guards for the README's shape, so the second rewrite does not have to happen.
+ * Guards for the repository's markdown: the README's shape, so the second rewrite does
+ * not have to happen, plus hygiene for every tracked `.md` file. A rebase once committed
+ * unresolved conflict markers into AGENTS.md, and nothing read that file (#180).
  *
  * The README is the front door: what it is, install, run, the failures people hit, the
  * known limitations, and pointers. Everything else belongs in DESIGN.md or docs/ (the
- * rule is written down in AGENTS.md §10). These seven tests are the ratchet:
+ * rule is written down in AGENTS.md §10). The ratchet:
  *
  *   1. a length budget, so a milestone cannot append its mode and its evidence here;
  *   2. every relative link and anchor resolves, so moving detail to docs/ cannot leave
  *      a silently dead pointer behind;
- *   3. every code fence is closed, so a stray marker cannot turn the tail of the file
- *      into a wall of grey monospace;
+ *   3. every code fence in the README and in AGENTS.md is closed, so a stray marker
+ *      cannot turn the tail of the file into a wall of grey monospace;
  *   4. `## License` is the terminal section, so material appended after it is visible
  *      even when it is not another heading;
  *   5. every docs/*.md page is linked from the README, so a page cannot be added and
@@ -19,7 +21,9 @@
  *   7. every `section.key` the docs' TOML blocks show exists in the settings registry,
  *      so a page cannot document a setting the editor cannot set;
  *   8. every setting in the registry is documented in the configuration reference, the
- *      reverse of 7, so a registry key the docs never show cannot hide (#138).
+ *      reverse of 7, so a registry key the docs never show cannot hide (#138);
+ *   9. no tracked markdown file carries unresolved conflict markers, so a merge artefact
+ *      cannot be committed and then read as prose.
  *
  * The budget numbers are deliberately stated here and in AGENTS.md §10. When the README
  * legitimately grows, raise them in one deliberate commit and say why in the message -
@@ -38,6 +42,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync, statSync, readdirSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { parse as parseToml } from 'smol-toml';
 import { SETTINGS } from '../src/ui/settings.js';
 import { DEFAULTS } from '../src/config.js';
@@ -45,6 +50,8 @@ import { DEFAULTS } from '../src/config.js';
 const repoRoot = join(import.meta.dirname, '..');
 const readmePath = join(repoRoot, 'README.md');
 const readme = readFileSync(readmePath, 'utf8');
+const agentsPath = join(repoRoot, 'AGENTS.md');
+const agents = readFileSync(agentsPath, 'utf8');
 
 /**
  * README.md plus every top-level docs page, as `{ name, text }`. Shared by the prose
@@ -147,14 +154,16 @@ function fenceMarkers(text) {
  * even while the first block is never closed). Tracking open/closed catches that; parity
  * alone does not. Both assertions are kept so the common failure names itself: a deleted
  * marker is odd, a misordered one is even.
+ *
+ * Shared by the README and AGENTS.md so the two cannot drift into different checks.
  */
-test('every code fence in the README is balanced and correctly ordered', () => {
-  const fences = fenceMarkers(readme);
+function assertFencesBalanced(name, text) {
+  const fences = fenceMarkers(text);
 
   assert.equal(
     fences.length % 2,
     0,
-    `README has ${fences.length} fence markers (odd); one is unclosed, so GitHub renders the tail of the file as code.`
+    `${name} has ${fences.length} fence markers (odd); one is unclosed, so GitHub renders the tail of the file as code.`
   );
 
   let openAt = null;
@@ -170,6 +179,70 @@ test('every code fence in the README is balanced and correctly ordered', () => {
     );
     openAt = null;
   }
+}
+
+test('every code fence in the README is balanced and correctly ordered', () => {
+  assertFencesBalanced('README.md', readme);
+});
+
+test('every code fence in AGENTS.md is balanced and correctly ordered', () => {
+  assertFencesBalanced('AGENTS.md', agents);
+});
+
+/**
+ * Every `.md` file git tracks, as `{ name, path }`, or null when git is unavailable. The
+ * working tree is not the subject: a marker that was never committed is not shipped, and
+ * an untracked scratch file must not fail the suite. `tracked.test.js` skips for the same
+ * reason.
+ */
+function trackedMarkdownFiles() {
+  try {
+    return execFileSync('git', ['ls-files', '-z', '--', '*.md'], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+      .split('\0')
+      .filter(Boolean)
+      .map((name) => ({ name, path: join(repoRoot, name) }));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A rebase once committed `<<<<<<< HEAD` / `=======` / `>>>>>>>` into AGENTS.md, with two
+ * competing test-count lines inside the block, and nothing caught it: the fence, terminal
+ * and link guards read only README.md and docs/*.md (#180). The marker lines are never
+ * legitimate prose, so the check is a scan and the failure names the file and line.
+ *
+ * `=======` is deliberately not a marker on its own: a run of `=` at column zero is also a
+ * Setext H1 underline. It is checked only in a file that also carries `<<<<<<<` or
+ * `>>>>>>>`, which every real conflict block has.
+ */
+test('no tracked markdown file carries unresolved conflict markers', (t) => {
+  const files = trackedMarkdownFiles();
+  if (files == null) {
+    t.skip('git is not available; the tracked markdown set cannot be read');
+    return;
+  }
+  assert.ok(files.length > 0, 'git tracks no markdown files; the test has lost its subject');
+
+  const found = [];
+  for (const file of files) {
+    const lines = readFileSync(file.path, 'utf8').split('\n');
+    const hasBlock = lines.some((line) => /^(?:<{7}|>{7}|\|{7})/.test(line));
+    lines.forEach((line, index) => {
+      const isMarker = /^(?:<{7}|>{7}|\|{7})/.test(line) || (hasBlock && /^={7}\s*$/.test(line));
+      if (isMarker) found.push(`${file.name}:${index + 1}: ${line.trimEnd()}`);
+    });
+  }
+
+  assert.deepEqual(
+    found,
+    [],
+    `these tracked markdown files contain unresolved conflict markers:\n  ${found.join('\n  ')}`
+  );
 });
 
 /**

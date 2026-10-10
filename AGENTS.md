@@ -232,11 +232,15 @@ the old code. Behaviour that took live testing to find must not be able to come 
 ## 5. Tests
 
 ```bash
-npm test              # 846 tests (840 pass, 6 skip), fully offline: no network, no token, no key
+npm test              # offline: no network, no token, no key
 npm run test:unit     # fast subset
 npm run test:corpus   # real images through real OCR, ~4s
 npm run test:live     # opt-in; skips itself unless LLM_API_KEY is set
 ```
+
+`npm test` prints its own pass/skip summary; do not copy that number into a document. A
+test count in prose goes stale the moment it is rebased — two individually-correct counts
+merge into a third nobody recomputed (§10).
 
 The offline suite must stay runnable with **no credentials of any kind** — that is what makes
 it usable in CI and by a contributor who has no provider account. Live tests must always skip
@@ -386,7 +390,7 @@ repository trivia; this rule is what stops a third.
 | **`AGENTS.md`** | how to work on the repo |
 
 **The README has a stated length budget: 430 lines and 3,400 words**, enforced by
-`tests/readme.test.js` ("the README stays within its length budget"). If a change would
+`tests/markdown.test.js` ("the README stays within its length budget"). If a change would
 cross it, move detail to `DESIGN.md` or `docs/` — do not raise the budget to make room
 without saying why in the commit message.
 
@@ -399,11 +403,11 @@ as a deletion.
 `config.toml` block, a `config set` command, or individual setting keys must also say the
 same settings can be changed in the web UI — the tray's **Settings** item, or
 `config edit --gui`. The editor is the path most users take, and a page that describes a
-key without it reads as "edit this file by hand." Enforced by `tests/readme.test.js`
+key without it reads as "edit this file by hand." Enforced by `tests/markdown.test.js`
 ("a page that describes configuration also says the settings editor can change it", and
 its stronger half, "every config key the docs show exists in the settings registry").
 
-**Never hand-maintain a test count in a user-facing document.** `npm test` prints its
-own number; a count copied into prose goes stale faster than it can be re-measured (it
-was wrong three times in one session). Report the count when you are asked for it, from
-the run you actually did.
+**Never hand-maintain a test count in a document.** `npm test` prints its own number; a
+count copied into prose goes stale faster than it can be re-measured (this document's own
+§5 was wrong three times in one day before it was removed). Report the count when you are
+asked for it, from the run you actually did.
