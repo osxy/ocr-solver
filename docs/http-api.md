@@ -18,8 +18,21 @@ bind = "127.0.0.1"      # loopback only; see the warning below before changing t
 port = 8765
 ```
 
+The token is a secret, so like the Pushbullet token and the model key it goes in the
+**credential store**, never in `config.toml`. The settings editor's **HTTP bearer token**
+row (tray **Settings**, or `config edit --gui`) writes it there, and so does the command
+line:
+
+```bash
+node src/cli.js config set http.token a-long-random-string
+```
+
+A headless or unattended service reads `HTTP_AUTH_TOKEN` from the environment instead.
+That variable must be **persistent** — `setx`, or System Properties → Environment
+Variables — because the logon task does not see a session `$env:` assignment:
+
 ```powershell
-$env:HTTP_AUTH_TOKEN = "a-long-random-string"
+setx HTTP_AUTH_TOKEN "a-long-random-string"
 ```
 
 The token must be at least 16 characters and not an obvious weak value. There is **no
@@ -29,13 +42,20 @@ than listen unprotected. Generate one with `openssl rand -hex 24`.
 ## Post an image
 
 Start the service (`listen --headless` is the usual unattended form) and post an image.
-The simplest form needs only the auth header:
+The simplest form needs only the auth header. **`setx` does not reach the shell you are
+typing in**, and the service reads the credential store — not your shell — so put the
+token in the current shell too before the `curl`. The two assignments serve different
+purposes:
 
 ```bash
+export HTTP_AUTH_TOKEN="a-long-random-string"    # this shell only
 curl -sS -X POST http://127.0.0.1:8765/v1/solve \
   -H "Authorization: Bearer $HTTP_AUTH_TOKEN" \
   --data-binary @puzzle.png
 ```
+
+On Windows PowerShell the session form is
+`$env:HTTP_AUTH_TOKEN = "a-long-random-string"`.
 
 The content type is **conventional, not required**: the server recognises the image
 from its magic bytes, so a missing `Content-Type` (curl's default

@@ -211,13 +211,20 @@ decision, and it requires a credential.
 
 ### Solve over HTTP
 
-Turn on `[http]` and set `HTTP_AUTH_TOKEN`, then post an image:
+Turn on `[http]` and store the bearer token the way the other secrets are stored — the
+tray's **Settings** editor, or `node src/cli.js config set http.token a-long-random-string`,
+writes it to the credential store. Then post an image:
 
 ```bash
+export HTTP_AUTH_TOKEN="a-long-random-string"   # this shell only
 curl -sS -X POST http://127.0.0.1:8765/v1/solve \
   -H "Authorization: Bearer $HTTP_AUTH_TOKEN" \
   --data-binary @puzzle.png
 ```
+
+The service reads the credential store, not this shell variable; a headless or unattended
+run needs a **persistent** `HTTP_AUTH_TOKEN` (`setx`, or System Properties) instead,
+because the logon task does not see a session assignment.
 
 The response carries `answer`, `method`, `confident` and `cost`, or a `422` when no tier
 produced a validated answer. The full contract — accepted bodies, status codes, the
