@@ -735,6 +735,59 @@ test('stop closes the listener socket and the database, and is idempotent', asyn
   await assert.doesNotReject(() => app.stop(), 'stop must be idempotent');
 });
 
+// #167: the ordinary double-start. The second start must be refused before it starts a
+// listener - two listeners both answer every Pushbullet push. `--headless` and the tray
+// both reach `start()`, so this one guard covers both. Remove the lock from `start()`
+// and this test fails on the listener count, not on the error name.
+test('a second start on the same state path is refused and starts no listener (#167)', async (t) => {
+  const fake = await startFakePushbullet();
+  const dir = mkdtempSync(join(tmpdir(), 'puzzlesolver-instance-'));
+  const inboxDir = join(dir, 'inbox');
+  mkdirSync(inboxDir, { recursive: true });
+  t.after(async () => {
+    await fake.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const starts = [];
+  const makeListener = () => ({
+    start: async () => { starts.push(1); },
+    stop() {},
+    status: () => ({}),
+  });
+  const base = {
+    env: {},
+    providers: [],
+    client: fakeClient(fake),
+    reasoner: null,
+    solveImage: scriptedSolve(),
+    createWorker: async () => ({ terminate: async () => {} }),
+    inboxDir,
+    statePath: join(dir, 'state.db'),
+    logger: collectingLogger(),
+  };
+
+  const first = await createApp({ ...base, listener: makeListener() });
+  t.after(() => first.stop());
+  await first.start();
+  assert.equal(starts.length, 1);
+
+  const second = await createApp({ ...base, listener: makeListener() });
+  t.after(() => second.stop());
+  await assert.rejects(
+    () => second.start(),
+    (err) => err.name === 'AlreadyRunningError' && /already running/.test(err.message)
+  );
+  assert.equal(starts.length, 1, 'the refused start must not have started a second listener');
+
+  // The lock is released on stop, so a legitimate start after the first stops works and
+  // a dead holder is not a permanent refusal.
+  await first.stop();
+  await second.start();
+  assert.equal(starts.length, 2, 'after the first stopped, the second may start');
+  await second.stop();
+});
+
 test('runApp installs SIGINT/SIGTERM handlers and starts listening', async (t) => {
   const fake = await startFakePushbullet();
   const dir = mkdtempSync(join(tmpdir(), 'puzzlesolver-app-'));

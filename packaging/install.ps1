@@ -10,6 +10,12 @@
 # Executed on windows-latest since #59. What remains unverified is the *unprivileged*
 # path, because the runner is an administrator (issue #163).
 
+param(
+    # Unattended or scripted installs: install only, do not start the app (and therefore
+    # do not open the first-run setup page). All other runs start the app themselves.
+    [switch]$NoStart
+)
+
 $ErrorActionPreference = 'Stop'
 
 $InstallDir = Join-Path $env:LOCALAPPDATA 'Programs\PuzzleSolver'
@@ -39,4 +45,27 @@ if ($LASTEXITCODE -ne 0) {
     throw "PuzzleSolver install failed: node.exe exited with $LASTEXITCODE. Files are in $InstallDir; run PuzzleSolver.vbs to start the app, but it will not start at logon."
 }
 
-Write-Host "Installed to $InstallDir. It starts at logon; run PuzzleSolver.vbs to start it now."
+# Start the app now, so install is one step. Two details matter:
+#
+#  - It starts PuzzleSolver.vbs, not the per-user Startup shim. The shim sleeps 20 s
+#    before delegating (the logon delay); going through it would make the installer
+#    appear to hang and then start long after it said it had.
+#  - It is detached: Start-Process returns as soon as wscript.exe is created, so the
+#    installer exits and the app keeps running. The launcher runs node with a hidden
+#    window, so no console flashes.
+#
+# The `-NoStart` switch is the escape hatch for a scripted install (a package manager,
+# an image build, a machine with no interactive desktop), where opening the first-run
+# setup page in a browser is wrong. It is off by default because install-and-go is the
+# ordinary user path: on a fresh install the app opens its setup page and asks for the
+# Pushbullet token (#56).
+if ($NoStart) {
+    Write-Host "Installed to $InstallDir. It starts at logon; the app was not started now (-NoStart)."
+} else {
+    $Launcher = Join-Path $InstallDir 'PuzzleSolver.vbs'
+    $Wscript = Join-Path $env:SystemRoot 'System32\wscript.exe'
+    if (-not (Test-Path $Wscript)) { $Wscript = 'wscript.exe' }
+    # Quote the launcher: %LOCALAPPDATA% can contain a space (e.g. a username with one).
+    Start-Process -FilePath $Wscript -ArgumentList "`"$Launcher`""
+    Write-Host "Installed to $InstallDir. It starts at logon, and it is starting now."
+}

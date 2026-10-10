@@ -79,10 +79,11 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
 It installs per-user — no administrator prompt, nothing in `Program Files` or `HKLM`:
-it copies the app to `%LOCALAPPDATA%\Programs\PuzzleSolver`, writes
-`PuzzleSolver.vbs` (a launcher with no console window), and drops a small shim in your
-per-user Startup folder so the app starts at logon (20 s delay). Nothing is registered
-in Task Scheduler and nothing is written to `HKLM`.
+it copies the app to `%LOCALAPPDATA%\Programs\PuzzleSolver`, writes `PuzzleSolver.vbs`
+(a launcher with no console window), drops a shim in your per-user Startup folder so the
+app starts at logon (20 s delay), and **starts the app now** — a fresh install goes
+straight to the setup page below. For an unattended install, `.\install.ps1 -NoStart`
+starts nothing. Nothing is registered in Task Scheduler or `HKLM`.
 
 > The installer, the per-user Startup shim, the launcher and the uninstaller are executed
 > end to end on `windows-latest` in CI, and the packaged `systray2` class resolution is
@@ -94,8 +95,8 @@ in Task Scheduler and nothing is written to `HKLM`.
 
 ### First run: the app asks
 
-Start it — at logon, or now by running
-`%LOCALAPPDATA%\Programs\PuzzleSolver\PuzzleSolver.vbs` — and **it opens a setup page in
+The installer starts it, and the per-user Startup entry starts it at logon. Running
+`%LOCALAPPDATA%\Programs\PuzzleSolver\PuzzleSolver.vbs` yourself **opens a setup page in
 your browser**: paste the Pushbullet token, optionally the model API key, and press
 **Test connection**. What you enter is written straight to the DPAPI credential store,
 `%APPDATA%\PuzzleSolver\credentials.dpapi`. Cancel it and the service does not start.
@@ -112,8 +113,9 @@ against, is in
 
 ### Tray / service mode (the Windows default)
 
-The per-user Startup entry starts the app at logon. To start it now, run the launcher
-`%LOCALAPPDATA%\Programs\PuzzleSolver\PuzzleSolver.vbs`. The tray menu:
+The per-user Startup entry starts the app at logon, and the installer starts it now.
+`PuzzleSolver.vbs` is safe to double-click: a second copy takes a lock beside `state.db`
+and exits without starting a listener. The tray menu:
 
 | Item | What it does |
 |---|---|
@@ -371,9 +373,10 @@ delete `%LOCALAPPDATA%\Programs\PuzzleSolver`, `%LOCALAPPDATA%\PuzzleSolver` and
 - **The native tray widget, the notification toast and the browser hand-off remain
   unverified on Windows.** The packaged `node.exe`, the app, `sharp`'s win32-x64 binary
   and the traineddata are smoke-tested on `windows-latest` by the package job, and the
-  deploy job executes `install.ps1`, inspects the per-user Startup shim, runs the packaged
-  app's `--headless` start-and-refuse, checks `PuzzleSolver.vbs` launching a process, runs
-  `uninstall.ps1`, and proves a failing installer exits non-zero without printing success.
+  deploy job executes `install.ps1` (with and without `-NoStart`), observes the app it
+  starts, inspects the per-user Startup shim, runs the packaged app's `--headless`
+  start-and-refuse, checks `PuzzleSolver.vbs` launching a process, runs `uninstall.ps1`,
+  and proves a failing installer exits non-zero without printing success.
   What a runner cannot provide is an interactive desktop: `systray2` needs a window
   station, so the **native tray widget** and the **notification toast** are still
   unverified, as is the `explorer.exe` browser hand-off for the settings UI (issue #56).
@@ -383,6 +386,9 @@ delete `%LOCALAPPDATA%\Programs\PuzzleSolver`, `%LOCALAPPDATA%\PuzzleSolver` and
   process decrypts it from disk. What DPAPI cannot protect is a process running as the
   same user (see [First run](#first-run-the-app-asks)). `--headless` remains the
   supported fallback for an unattended machine.
+- **A second start exits without listening.** The app takes a lock beside `state.db`, so a
+  double-click (or the installer on a machine already running) refuses instead of starting
+  a second listener that would answer every puzzle twice.
 - **The web UI is plain HTTP and its non-loopback credential is transport-unprotected.**
   A remote-access password is verified as a `scrypt` verifier and failed logins are
   throttled, but the HTTP connection itself is not encrypted and the session token cannot
