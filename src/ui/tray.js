@@ -15,7 +15,7 @@
 import { iconState } from './watchdog.js';
 import { formatTray } from '../accuracy.js';
 
-/** The eight documented actions, in order (DESIGN 4.14). */
+/** The nine documented actions, in order (DESIGN 4.14). */
 export const TRAY_MENU = Object.freeze([
   Object.freeze({ id: 'status', title: 'Status' }),
   Object.freeze({ id: 'accuracy', title: 'Accuracy' }),
@@ -24,6 +24,7 @@ export const TRAY_MENU = Object.freeze([
   Object.freeze({ id: 'open-log', title: 'Open log' }),
   Object.freeze({ id: 'open-config', title: 'Open config' }),
   Object.freeze({ id: 'settings', title: 'Settings' }),
+  Object.freeze({ id: 'restart', title: 'Restart' }),
   Object.freeze({ id: 'quit', title: 'Quit' }),
 ]);
 
@@ -36,6 +37,11 @@ export function createTrayController({
   // Opens the settings editor; injected so the controller stays free of prompts and
   // of the config file. `runApp` supplies the terminal editor.
   openSettings = null,
+  // The tray Restart item (#128): `restart` performs the process restart, `restartPlan`
+  // says whether that is possible here and what to print when it is not. Both injected
+  // so the controller stays free of processes and of the deployment layout.
+  restart = null,
+  restartPlan = null,
   quit = null,
   notify = null,
   logger = null,
@@ -179,6 +185,19 @@ export function createTrayController({
           logger?.warn?.(`settings editor failed: ${err?.message ?? err}`);
           return { id, opened: false, reason: 'error', detail: err?.message ?? String(err) };
         }
+      }
+      case 'restart': {
+        // No mechanism (a shell run, a dev checkout): do not pretend. Say the exact
+        // command to type instead of a dead action that fails quietly (hazard 6).
+        if (!restartPlan?.restartable || !restart) {
+          const display = restartPlan?.display ?? null;
+          logger?.info?.(`tray: restart is not available here${display ? `; run: ${display}` : ''}`);
+          if (display) await notify?.({ title: 'PuzzleSolver: restart', message: `Cannot restart here. Run: ${display}` });
+          return { id, restarted: false, reason: 'unavailable', display };
+        }
+        logger?.info?.('tray: restart requested');
+        await restart();
+        return { id, restarted: true, display: restartPlan.display };
       }
       case 'quit':
         logger?.info?.('tray: quit requested');

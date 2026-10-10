@@ -557,3 +557,114 @@ test('renderSettingsPage is the whole renderer and escapes untrusted text', () =
   assert.equal(html.includes('onfocus="alert(1)"'), false);
   assert.equal(html.includes('onload="evil"'), false);
 });
+
+// ---------------------------------------------------------------------------
+// The restart offer (#128)
+// ---------------------------------------------------------------------------
+
+function restartController(result) {
+  return { list: () => [], reset: () => {}, save: async () => result };
+}
+
+const restartSave = {
+  saved: true,
+  changed: ['solver.llm_text_model'],
+  restartRequired: ['solver.llm_text_model'],
+  live: [],
+};
+
+const restartablePlan = { restartable: true, display: 'wscript.exe "C:\\x\\PuzzleSolver.vbs"' };
+
+async function waitForClosed(server) {
+  for (let i = 0; i < 400 && server.server.listening; i++) await new Promise((r) => setTimeout(r, 5));
+}
+
+async function saveForRestart(t, server) {
+  const { session } = await openSession(t, server);
+  const save = await request(`http://127.0.0.1:${server.port}/save`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: formBody({ session }),
+  });
+  return { session, save };
+}
+
+test('a save that needs a restart keeps the session open and offers a real POST (#128)', async (t) => {
+  const server = await startUi(t, { controller: restartController(restartSave), restartPlan: restartablePlan });
+  const { session, save } = await saveForRestart(t, server);
+  assert.equal(save.status, 200);
+  assert.match(save.text, /Restart now/);
+  assert.match(save.text, /action="\/restart"/);
+  assert.match(save.text, /action="\/dismiss"/);
+  // The session is deliberately still up: the restart decision is what the app waits on.
+  assert.equal(server.server.listening, true);
+  assert.equal(session.length > 0, true);
+});
+
+test('/restart answers first, then resolves the outcome as restarted and closes (#128)', async (t) => {
+  const server = await startUi(t, { controller: restartController(restartSave), restartPlan: restartablePlan });
+  const { session } = await saveForRestart(t, server);
+  const restart = await request(`http://127.0.0.1:${server.port}/restart`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: formBody({ session }),
+  });
+  assert.equal(restart.status, 200);
+  assert.match(restart.text, /Restarting/);
+  const outcome = await server.waitForOutcome();
+  assert.equal(outcome.saved, true, 'the restart is a decision on a successful save');
+  assert.equal(outcome.restarted, true);
+  await waitForClosed(server);
+  assert.equal(server.server.listening, false);
+});
+
+test('/dismiss keeps the save and does not ask for a restart (#128)', async (t) => {
+  const server = await startUi(t, { controller: restartController(restartSave), restartPlan: restartablePlan });
+  const { session } = await saveForRestart(t, server);
+  const dismiss = await request(`http://127.0.0.1:${server.port}/dismiss`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: formBody({ session }),
+  });
+  assert.equal(dismiss.status, 200);
+  const outcome = await server.waitForOutcome();
+  assert.equal(outcome.saved, true);
+  assert.equal(outcome.restarted, false);
+  await waitForClosed(server);
+});
+
+test('a restart that times out is still a successful save, not a cancel (#128)', async (t) => {
+  const server = await startUi(t, {
+    controller: restartController(restartSave),
+    restartPlan: restartablePlan,
+    timeoutMs: 1000,
+  });
+  await saveForRestart(t, server);
+  const outcome = await server.waitForOutcome();
+  assert.equal(outcome.saved, true);
+  assert.equal(outcome.restarted, false);
+  assert.match(outcome.detail, /restart offer timed out/);
+});
+
+test('without a restart mechanism the page prints the command and closes on save (#128 hazard 6)', async (t) => {
+  const server = await startUi(t, {
+    controller: restartController(restartSave),
+    restartPlan: { restartable: false, display: 'node "/app/src/cli.js" listen' },
+  });
+  const { save } = await saveForRestart(t, server);
+  assert.equal(save.status, 200);
+  assert.match(save.text, /node &quot;\/app\/src\/cli\.js&quot; listen/);
+  assert.equal(save.text.includes('/restart'), false, 'no dead button when nothing can restart');
+  await waitForClosed(server);
+});
+
+test('/restart is refused when no save is waiting on it (#128)', async (t) => {
+  const server = await startUi(t, { controller: restartController(restartSave), restartPlan: restartablePlan });
+  const { session } = await openSession(t, server);
+  const res = await request(`http://127.0.0.1:${server.port}/restart`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: formBody({ session }),
+  });
+  assert.equal(res.status, 404);
+});

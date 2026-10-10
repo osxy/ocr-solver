@@ -267,3 +267,41 @@ test('#87: config edit --gui that is never fetched keeps the badges but silences
   assert.equal(after.get(REVIEWED_VERSION_KEY), '0.2.0', 'a UI that never rendered must not clear the badges');
   assert.equal(after.get(PROMPTED_VERSION_KEY), APP_VERSION, 'but the prompt baseline advances');
 });
+
+// #128 hazard 6: the headless/CLI path cannot restart the service, so it prints the
+// exact command when a shim was detected. Remove the `printedRestartPlan.display`
+// print and this named test fails.
+test('config set prints the exact restart command when a shim was detected', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'puzzlesolver-config-cli-128-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const stdout = captureStream();
+  const stderr = captureStream();
+  const code = await runConfigCommand(['set', 'solver.self_consistency_n', '5', '--config', join(dir, 'config.toml')], {
+    stdout,
+    stderr,
+    env: {},
+    platform: 'linux',
+    homedir: () => join(dir, 'home'),
+    restartPlan: { restartable: true, display: 'wscript.exe "C:\\x\\PuzzleSolver.vbs"' },
+  });
+  assert.equal(code, 0, stderr.text);
+  assert.match(stdout.text, /Restart the service for: solver\.self_consistency_n/);
+  assert.match(stdout.text, /Restart it with: wscript\.exe "C:\\x\\PuzzleSolver\.vbs"/);
+});
+
+test('config set prints no command when no shim was detected', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'puzzlesolver-config-cli-128b-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const stdout = captureStream();
+  const stderr = captureStream();
+  await runConfigCommand(['set', 'solver.self_consistency_n', '5', '--config', join(dir, 'config.toml')], {
+    stdout,
+    stderr,
+    env: {},
+    platform: 'linux',
+    homedir: () => join(dir, 'home'),
+    restartPlan: { restartable: false, display: 'node cli.js listen' },
+  });
+  assert.match(stdout.text, /Restart the service for: solver\.self_consistency_n/);
+  assert.equal(stdout.text.includes('Restart it with'), false, 'a command that is not the service must not be printed');
+});

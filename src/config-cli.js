@@ -23,6 +23,7 @@ import { computeSettingsReview, recordDismissal, recordReview } from './ui/setti
 import { APP_VERSION } from './version.js';
 import { defaultSettingsDialog } from './ui/settings-dialog.js';
 import { defaultWebSettingsDialog } from './ui/web-config.js';
+import { planRestart } from './deploy/restart.js';
 
 const USAGE = `Usage: node src/cli.js config <action> [options]
 
@@ -78,6 +79,10 @@ export async function runConfig(
     dialog = defaultSettingsDialog,
     guiDialog = defaultWebSettingsDialog,
     openBrowser = undefined,
+    // #128: injected so the printed command is testable. `config edit` runs in its own
+    // process and does not own the service, so it can print the restart command but
+    // must never offer a button that would restart the editor instead.
+    restartPlan = null,
   } = {}
 ) {
   const opts = parse(argv);
@@ -176,6 +181,18 @@ export async function runConfig(
     };
   }
 
+  // The restart decision for *this* process. It is never `restartable` here: the
+  // command did not start the service, so it can only tell the user what to run. The
+  // display is kept only when a real shim was found, so a dev run prints no misleading
+  // `config edit` command as if it restarted the service.
+  const detectedRestart = restartPlan ?? planRestart({ platform, env });
+  const printedRestartPlan = {
+    ...detectedRestart,
+    restartable: false,
+    display: detectedRestart.restartable ? detectedRestart.display : null,
+    reason: 'separate-process',
+  };
+
   function writeResult(result) {
     if (opts.json) {
       stdout.write(`${JSON.stringify(safeResult(result), null, 2)}\n`);
@@ -185,6 +202,8 @@ export async function runConfig(
     if (result.backupPath) stdout.write(`Previous config backed up to ${result.backupPath}\n`);
     if (result.restartRequired.length > 0) {
       stdout.write(`Restart the service for: ${result.restartRequired.join(', ')}\n`);
+      // Hazard 6: the exact command, where one can be named.
+      if (printedRestartPlan.display) stdout.write(`Restart it with: ${printedRestartPlan.display}\n`);
     }
     if (result.live.length > 0) stdout.write(`Applied live: ${result.live.join(', ')}\n`);
   }
@@ -267,6 +286,9 @@ export async function runConfig(
         logger,
         // #67: the editor is the review; the web shell can name the new settings.
         settingsReview: review,
+        // #128: print the restart command on the done page; never offer the button from
+        // this process (see `printedRestartPlan`).
+        restartPlan: printedRestartPlan,
         // #65: the GUI is gated by the same access rule and refuses to start on a
         // non-loopback range without a configured credential, exactly like the tray.
         ...(opts.gui

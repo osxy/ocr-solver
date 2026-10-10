@@ -13,7 +13,12 @@ value (wrong type, unknown enum, negative interval) fails loudly and names the k
 `DEFAULTS` in [`src/config.js`](../src/config.js) is the full schema; `DESIGN.md` §4.13
 explains the defaults.
 
-## Every option, with its default
+## Every `config.toml` key, with its default
+
+This is **every key that can live in `config.toml`**, with its default. The three
+secret-shaped settings (`pushbullet.token`, `llm.api_key`, `http.token`) and
+`web_ui.password` are not config keys and live in the credential store — see
+[Secrets](#secrets-go-in-the-credential-store-or-in-the-environment) below.
 
 ```toml
 [pushbullet]
@@ -29,10 +34,19 @@ llm_base_url = "https://api.openai.com/v1"
 self_consistency_n = 3          # samples for the voting classes (ordinal-pick, unknown)
 breaker_threshold = 3           # consecutive model failures before a tier is skipped
 breaker_cooldown_sec = 600
+cost_tier = ""                  # auto-router band; "" sends none (see openrouter.md)
+allowed_models = []             # auto-router allowlist, wildcards; [] = no restriction
+excluded_models = []            # auto-router denylist, wildcards
+[ocr]
+languages = ["nld"]             # restart-bound; only installed @tesseract.js-data/<lang> packages work
+min_confidence = 0              # drop a transcript below this Tesseract confidence (live)
+variants = ["adaptive_25_020", "adaptive_25_020_c8", "adaptive_15_020"]  # preprocessing runs (live)
 [reply]
 enabled = true
+strategy = "note-push"          # note-push | sms-thread | clipboard+notify
 require_confidence = true       # only send answers every tier agreed on
 title = "Antwoord"
+prefix = ""                     # optional text before every answer
 unresolved_title = "Puzzel niet opgelost"
 unresolved_text = """
 Deze puzzel kon niet automatisch worden opgelost, dus er is geen antwoord gegeven.
@@ -45,6 +59,10 @@ retain_days = 7
 log_images = false              # opt-in reference to an UNRESOLVED image only
 keep_images = false             # opt-in bounded review copy of EVERY solve's image
 max_images = 200                # count cap when keep_images = true (age = retain_days)
+[ui]
+tray = true                     # show the tray icon in desktop mode
+notify_on_unresolved = true     # desktop notification for a puzzle left unresolved
+stats_recent_solves = 5         # recent solves listed on the statistics page
 [image]
 max_width = 2000                # the shared gate rejects wider images as a 413
 max_pixels = 1000000            # ~14x the largest corpus puzzle; bounds buildVariants
@@ -185,9 +203,10 @@ disclosure: every row is still on the page. Each row keeps its `[live]` / `[rest
 tag and the `[security]` marker, and each group's header counts how many of its rows
 need a restart, so the lifecycle information is not lost to the grouping.
 
-Secrets go to the credential store, never to `config.toml`. That covers all three of
-them: `config set pushbullet.token o.xxxxxxxx`, `config set llm.api_key sk-xxxxxxxx` and
-`config set http.token a-long-random-enough-token` each write the credential store (the DPAPI
+Secrets go to the credential store, never to `config.toml`. That covers all four of
+them: `config set pushbullet.token o.xxxxxxxx`, `config set llm.api_key sk-xxxxxxxx`,
+`config set http.token a-long-random-enough-token` and `config set web_ui.password
+<passphrase>` each write the credential store (the DPAPI
 blob on Windows, `credentials.json` elsewhere) and leave
 the TOML file alone (or uncreated). A write **re-reads the store immediately before merging**
 (read-modify-write), so a `config set` from a second process while the tray service is running is
@@ -222,15 +241,23 @@ applies:
   `image.max_pixels`. These
   are re-read from the shared config object for every solve, push or HTTP request, so a
   save takes effect without a restart.
-- **restart** — the models and base URL, `offline_only`, `escalate_to_vision`,
-  `self_consistency_n`, the breaker knobs (`breaker_threshold`, `breaker_cooldown_sec`),
-  the reply switch/wording/budgets, `poll_interval_sec`, `history_mode`, `ocr.languages`,
-  `storage.retain_days`, `ui.tray`, `ui.stats_recent_solves`, the whole `http.*` and `web_ui.*`
-  blocks, and **all
-  three secrets**,
+- **restart** — `solver.offline_only`, `solver.escalate_to_vision`,
+  `solver.self_consistency_n`, the breaker knobs (`solver.breaker_threshold`,
+  `solver.breaker_cooldown_sec`), the model settings and base URL
+  (`solver.llm_text_model`, `solver.llm_vision_model`, `solver.llm_base_url`), the
+  auto-router policy (`solver.cost_tier`, `solver.allowed_models`,
+  `solver.excluded_models`), the reply switch, wording and budgets (`reply.*`),
+  `pushbullet.poll_interval_sec`, `pushbullet.history_mode`, `ocr.languages`,
+  `storage.retain_days`, `storage.max_images`, `ui.tray`, `ui.stats_recent_solves`, the
+  whole `http.*` and `web_ui.*` blocks, and **all four secrets** (`pushbullet.token`,
+  `llm.api_key`, `http.token`, `web_ui.password`),
   because the listener, reasoner, responder or HTTP server capture them when they are
   built. The running service keeps the old value until it is restarted; the editor says
   so rather than appearing to save something that does nothing.
 
 `ocr.languages` is restart-bound even though it sits next to `ocr.min_confidence`: the
-Tesseract worker is created once at startup, and the bundled traineddata is `nld` only.
+Tesseract worker is created once at startup from this list. Each language must have its
+traineddata **installed** as an `@tesseract.js-data/<lang>` package — the app never
+downloads it at runtime — so only the bundled `nld` works out of the box. A configured
+language with no installed data is refused **by name** when the config is loaded and again
+when the worker is built; it is never silently read as `nld`.

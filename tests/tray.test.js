@@ -28,10 +28,10 @@ function fakeListener(overrides = {}) {
   };
 }
 
-test('the menu is the eight documented actions, in order', () => {
+test('the menu is the nine documented actions, in order', () => {
   assert.deepEqual(
     TRAY_MENU.map((i) => i.id),
-    ['status', 'accuracy', 'pause', 'solve-last', 'open-log', 'open-config', 'settings', 'quit']
+    ['status', 'accuracy', 'pause', 'solve-last', 'open-log', 'open-config', 'settings', 'restart', 'quit']
   );
   assert.deepEqual(TRAY_MENU.map((i) => i.title), [
     'Status',
@@ -41,6 +41,7 @@ test('the menu is the eight documented actions, in order', () => {
     'Open log',
     'Open config',
     'Settings',
+    'Restart',
     'Quit',
   ]);
 });
@@ -169,6 +170,44 @@ test('quit forwards exactly once', async () => {
   const c = createTrayController({ listener: fakeListener(), watchdog: createWatchdog(), quit: async () => { quits += 1; } });
   assert.deepEqual(await c.handleClick('quit'), { id: 'quit', quitting: true });
   assert.equal(quits, 1);
+});
+
+// #128: the Restart item is coherent exactly when the plan says a mechanism applies.
+// Removing the `restartPlan?.restartable` gate would make it exit whenever clicked.
+test('restart calls the injected restart only when the plan is restartable', async () => {
+  let restarts = 0;
+  const c = createTrayController({
+    listener: fakeListener(),
+    watchdog: createWatchdog(),
+    restart: async () => { restarts += 1; },
+    restartPlan: { restartable: true, display: 'wscript.exe "C:\\x\\PuzzleSolver.vbs"' },
+  });
+  assert.deepEqual(await c.handleClick('restart'), {
+    id: 'restart',
+    restarted: true,
+    display: 'wscript.exe "C:\\x\\PuzzleSolver.vbs"',
+  });
+  assert.equal(restarts, 1);
+});
+
+// Hazard 6: no mechanism means no fake success. The command is reported so the user
+// is never left with a click that quietly does nothing.
+test('restart reports the exact command when no mechanism applies, and never restarts', async () => {
+  let restarts = 0;
+  const notices = [];
+  const c = createTrayController({
+    listener: fakeListener(),
+    watchdog: createWatchdog(),
+    restart: async () => { restarts += 1; },
+    restartPlan: { restartable: false, display: 'node "/app/src/cli.js" listen' },
+    notify: async (n) => notices.push(n),
+  });
+  const result = await c.handleClick('restart');
+  assert.equal(result.restarted, false);
+  assert.equal(result.reason, 'unavailable');
+  assert.equal(result.display, 'node "/app/src/cli.js" listen');
+  assert.equal(restarts, 0, 'a click that cannot restart must not call the restart');
+  assert.match(notices[0].message, /node "\/app\/src\/cli\.js" listen/);
 });
 
 test('an unknown action is reported, not silently ignored', async () => {

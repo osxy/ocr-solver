@@ -47,6 +47,9 @@ node src/cli.js config set web_ui.password 'a long passphrase'
 node src/cli.js config edit --gui        # or set it in the Settings page
 ```
 
+The passphrase may contain spaces (unlike the token fields), and leading or trailing
+whitespace is trimmed.
+
 That stores a **salt + `scrypt` verifier** in the credential store (`credentials.json`, or the
 DPAPI blob on Windows — never the password,
 never `config.toml`); a non-loopback client must sign in, and failed logins are

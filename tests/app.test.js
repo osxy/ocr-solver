@@ -677,6 +677,43 @@ test('runApp wires the tray Settings item to the injected editor, which persists
   assert.equal(app.secrets.pushbullet.hint, 'o.r…', 'the app re-resolved the rotated secret');
 });
 
+// #128: the settings UI asks, the app performs. The plan travels to the dialog and a
+// `restarted` outcome is the only thing that reaches the restart handler. Remove either
+// the `restartPlan` pass-through or the `onRestart` call and this fails.
+test('a settings save that requests a restart reaches the injected restart handler', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'puzzlesolver-app-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const seenPlans = [];
+  let restarted = 0;
+  let nextRestarted = true;
+  const plan = { restartable: true, display: 'wscript.exe "C:\\x\\PuzzleSolver.vbs"' };
+  const app = await createApp(
+    firstRunOptions(dir, {
+      client: {},
+      responder: {},
+      listener: { start() {}, stop() {}, status: () => ({}) },
+      settingsDialog: async (options) => {
+        seenPlans.push(options.restartPlan);
+        return { saved: true, changed: [], restartRequired: ['solver.llm_text_model'], restarted: nextRestarted };
+      },
+      restartPlan: plan,
+      onRestart: async () => {
+        restarted += 1;
+      },
+    })
+  );
+  t.after(() => app.stop());
+
+  const outcome = await app.openSettings();
+  assert.equal(outcome.restarted, true);
+  assert.equal(restarted, 1, 'a requested restart reaches the restart handler');
+  assert.deepEqual(seenPlans[0], plan, 'the settings dialog receives the plan it can act on');
+
+  nextRestarted = false;
+  await app.openSettings();
+  assert.equal(restarted, 1, 'a save with no restart request must never restart');
+});
+
 // ---------------------------------------------------------------------------
 // Graceful shutdown
 // ---------------------------------------------------------------------------
@@ -890,4 +927,38 @@ test('createApp wires the platform default log path when no logger is injected',
   assert.equal(app.logger.path, expected, 'the real default path must be wired, not a test path');
   assert.equal(app.logger.path, join(localAppData, 'PuzzleSolver', 'logs', 'app.log'));
   assert.ok(app.logger.path.startsWith(localAppData), 'the log path must stay under the temp LOCALAPPDATA');
+});
+
+test('#143: the app builds the OCR worker from the configured languages', async (t) => {
+  const fake = await startFakePushbullet();
+  const dir = mkdtempSync(join(tmpdir(), 'puzzlesolver-app-'));
+  const inboxDir = join(dir, 'inbox');
+  mkdirSync(inboxDir, { recursive: true });
+  t.after(async () => {
+    await fake.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const calls = [];
+  const app = await createApp({
+    config: validateConfig({ ocr: { languages: ['nld'] } }).config,
+    env: {},
+    providers: [],
+    client: fakeClient(fake),
+    reasoner: null,
+    solveImage: scriptedSolve(),
+    // The seam `runApp` uses for the real factory; it must receive the configured
+    // languages, not be called with no arguments (#143).
+    createWorker: async (options) => {
+      calls.push(options);
+      return { terminate: async () => {} };
+    },
+    inboxDir,
+    statePath: join(dir, 'state.db'),
+    logger: collectingLogger(),
+    now: () => Date.now() / 1000,
+  });
+  t.after(() => app.stop());
+
+  assert.deepEqual(calls, [{ languages: ['nld'] }], 'the worker is built from config.ocr.languages (#143)');
 });

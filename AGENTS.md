@@ -71,12 +71,63 @@ cycle (issue #106). A milestone branch keeps unreleased state off `main` entirel
   a conflict at release time.
 - **Hotfixes** to a released version go `hotfix/<slug>` → pull request to `main` → tag a patch
   release, and are then merged or cherry-picked into the open milestone branch.
-- Pull requests merged into the milestone branch close their issues, so milestone progress is visible
-  **before** the release exists.
+- **A `Closes #n` reference does not fire when a pull request merges into the milestone branch** — GitHub
+  only auto-closes against the default branch. Close the issue by hand as the pull request merges, or it
+  will sit open with its work already in the milestone.
+
+**Creating the milestone branch is the one exception to the hook.** The `pre-push` hook refuses
+`milestone/*` from a clone, deliberately — work reaches the milestone through a pull request. The
+branch itself is not work, so it is created with the API (`POST /repos/:owner/:repo/git/refs`)
+instead of by pushing; from then on every change branches off it and is pushed normally, and only
+the release merge into `main` is a separate, deliberate pull request.
 
 **v0.4 is the last milestone done the old way.** It branches off `main` and bumps `package.json`
 there, because it was already in flight when this rule was written. Do not "fix" `main` during v0.4.
 The rule applies from the next milestone onward.
+
+### The peer review is the last item of a milestone
+
+**A milestone's peer review runs after every other item in it has been merged**, and it gates the
+release. The ordering is not cosmetic: a review is only worth running against a finished state, and one
+that runs early reviews a moving target while giving the release a false sense of coverage.
+
+- **Every milestone item is merged before the review starts.** If new work is added to the milestone
+  after the review has begun, the review is **restarted** — a release must not ship work the review never
+  saw.
+- **The reviewer is a different model from the one that wrote the code, and it fixes nothing.** Every
+  finding goes back to the regular model, one branch per finding, through the normal verify-and-merge
+  gate. A reviewer that also fixes is not a reviewer.
+- **Nothing is released until every finding is fixed and merged.** Fixing findings *after* the review is
+  expected: the review is the last *original* work, and its findings are the last *fixes*.
+- **A finding may add scope.** That scope is either fixed in this milestone or moved to the next one
+  **explicitly** — never quietly dropped, and never merged unreviewed.
+- **A milestone with more than one review orders them**, so each reviews a state that has absorbed the
+  previous one's fixes. In v0.45 the documentation review (#131) runs after the code review (#130) for
+  exactly that reason.
+- The milestone branch merges to `main` only once the findings are in.
+
+**The fixes are a phase of the milestone, not an afterthought.** The sequence is `original work →
+peer review → every finding fixed and merged → release`. The review is the last *original* work; the
+fixes are the last *work*. Both phases belong to the milestone, and it is not finished when the review
+is filed.
+
+- **Which path a finding takes is already decided for you.** Reviewers classify each finding as a
+  **defect in delivered work** or **new scope**. A defect is fixed in this milestone — no exceptions.
+  New scope may be deferred, and the deferral is recorded as its own issue rather than left in a
+  comment. Silence is not a decision: a finding that is neither fixed nor recorded has been dropped.
+- **The fixes go back through the same gate as everything else**: one branch per finding, verified,
+  mutation-tested where a guard is involved, merged into the milestone branch — not hot commits made
+  because the release is waiting. A fix that skips verification is a second defect.
+- **The release waits for them.** Not "fixed after the tag", not "known issues in the notes". A release
+  that ships its own review findings unfixed has published work it knows to be wrong, which is the thing
+  the whole review cycle exists to prevent.
+- **A fix that turns out to be too large** is deferred explicitly, like any other new scope — and the
+  reason is written down. "Too big" is a legitimate answer; treating it as one is what keeps the rest of
+  the answers honest.
+
+**Why:** v0.3's review found a DPAPI proof that never called `Unprotect`, and v0.4's found thumbnails
+blocked by the page's own CSP. Both had passed a green suite and a design review, neither was visible
+from a diff, and both would have shipped had the review run early or not at all.
 
 ### Merging
 
@@ -181,7 +232,7 @@ the old code. Behaviour that took live testing to find must not be able to come 
 ## 5. Tests
 
 ```bash
-npm test              # 760 tests (754 pass, 6 skip), fully offline: no network, no token, no key
+npm test              # 816 tests (810 pass, 6 skip), fully offline: no network, no token, no key
 npm run test:unit     # fast subset
 npm run test:corpus   # real images through real OCR, ~4s
 npm run test:live     # opt-in; skips itself unless LLM_API_KEY is set
@@ -349,7 +400,8 @@ as a deletion.
 same settings can be changed in the web UI — the tray's **Settings** item, or
 `config edit --gui`. The editor is the path most users take, and a page that describes a
 key without it reads as "edit this file by hand." Enforced by `tests/readme.test.js`
-("a page that describes configuration also says the settings editor can change it").
+("a page that describes configuration also says the settings editor can change it", and
+its stronger half, "every config key the docs show exists in the settings registry").
 
 **Never hand-maintain a test count in a user-facing document.** `npm test` prints its
 own number; a count copied into prose goes stale faster than it can be re-measured (it
