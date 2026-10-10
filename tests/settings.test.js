@@ -351,7 +351,10 @@ test('#35: every new non-secret setting round-trips through the real loader', as
     ['solver.tier0', 'false'],
     ['solver.breaker_threshold', '5'],
     ['solver.breaker_cooldown_sec', '120'],
-    ['ocr.languages', 'nld, eng'],
+    // #143: only a language with bundled traineddata is a valid value, and only `nld`
+    // ships. An installed-and-configured `eng` would round-trip the same way; the
+    // refusal of an unbundled one is asserted in tests/ocr-languages.test.js.
+    ['ocr.languages', 'nld'],
     ['ocr.min_confidence', '42'],
     ['image.max_width', '1234'],
     ['image.max_pixels', '7654321'],
@@ -376,7 +379,7 @@ test('#35: every new non-secret setting round-trips through the real loader', as
   assert.equal(config.solver.tier0, false);
   assert.equal(config.solver.breaker_threshold, 5);
   assert.equal(config.solver.breaker_cooldown_sec, 120);
-  assert.deepEqual(config.ocr.languages, ['nld', 'eng']);
+  assert.deepEqual(config.ocr.languages, ['nld']);
   assert.equal(config.ocr.min_confidence, 42);
   assert.equal(config.image.max_width, 1234);
   assert.equal(config.image.max_pixels, 7654321);
@@ -518,8 +521,9 @@ test('only settings the running process re-reads are marked live', () => {
     'ui.notify_on_unresolved',
   ]);
   // `ocr.languages` is restart-bound even though it sits next to ocr.min_confidence:
-  // the Tesseract worker is created once at startup, and the bundled traineddata is
-  // `nld` only. The HTTP ingress and the breaker knobs are captured at construction.
+  // the Tesseract worker is created once at startup and is now built from this list
+  // (#143), and the bundled traineddata is `nld` only. The HTTP ingress and the breaker
+  // knobs are captured at construction.
   assert.equal(getSetting('ocr.languages').restart, true);
   assert.equal(getSetting('http.bind').restart, true);
   assert.equal(getSetting('http.port').restart, true);
@@ -727,9 +731,12 @@ test('#69: a new setting is inserted at the end of its section', async (t) => {
 });
 
 test('#69: a multi-line array value refuses instead of being collapsed', async (t) => {
-  const text = '[ocr]\nlanguages = [\n  "nld",\n  "eng",\n]\n';
+  // #143: `ocr.languages` must be an installed language, so the multi-line fixture is
+  // single-element. The test is about the writer refusing a multi-line array, not about
+  // the value.
+  const text = '[ocr]\nlanguages = [\n  "nld",\n]\n';
   const { editor, path } = editorOverConfig(t, text);
-  editor.set('ocr.languages', 'nld, eng');
+  editor.set('ocr.languages', 'nld');
   await assert.rejects(() => editor.save(), ConfigEditError);
   assert.equal(readFileSync(path, 'utf8'), text, 'a refused edit writes nothing');
   assert.equal(existsSync(`${path}.bak`), false, 'a refused edit takes no backup');

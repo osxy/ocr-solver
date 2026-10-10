@@ -38,7 +38,7 @@ cost_tier = ""                  # auto-router band; "" sends none (see openroute
 allowed_models = []             # auto-router allowlist, wildcards; [] = no restriction
 excluded_models = []            # auto-router denylist, wildcards
 [ocr]
-languages = ["nld"]             # Tesseract traineddata; restart-bound (the worker is built once)
+languages = ["nld"]             # restart-bound; only installed @tesseract.js-data/<lang> packages work
 min_confidence = 0              # drop a transcript below this Tesseract confidence (live)
 variants = ["adaptive_25_020", "adaptive_25_020_c8", "adaptive_15_020"]  # preprocessing runs (live)
 [reply]
@@ -251,4 +251,8 @@ applies:
   so rather than appearing to save something that does nothing.
 
 `ocr.languages` is restart-bound even though it sits next to `ocr.min_confidence`: the
-Tesseract worker is created once at startup, and the bundled traineddata is `nld` only.
+Tesseract worker is created once at startup from this list. Each language must have its
+traineddata **installed** as an `@tesseract.js-data/<lang>` package — the app never
+downloads it at runtime — so only the bundled `nld` works out of the box. A configured
+language with no installed data is refused **by name** when the config is loaded and again
+when the worker is built; it is never silently read as `nld`.

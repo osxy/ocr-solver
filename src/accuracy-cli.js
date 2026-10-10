@@ -24,7 +24,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createOcrWorker } from './ocr/recognize.js';
 import { solveImage } from './solver/pipeline.js';
 import { openStore } from './state/db.js';
-import { defaultStatePath } from './config.js';
+import { defaultStatePath, loadConfig } from './config.js';
 import {
   loadCorpusItems,
   runCorpus,
@@ -64,7 +64,11 @@ export async function runAccuracy(argv = process.argv.slice(2), { corpusDir = de
   let worker = null;
   try {
     if (wantImages && items.length > 0) {
-      worker = await createOcrWorker();
+      // #143: the corpus runs with the configured OCR languages, like every other
+      // worker. Only `nld` ships traineddata, so this is the bundled default unless the
+      // user installed another language package.
+      const { config } = loadConfig({ env: process.env });
+      worker = await createOcrWorker({ languages: config.ocr.languages });
       const started = Date.now();
       outcomes = await runCorpus({
         items,

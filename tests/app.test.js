@@ -928,3 +928,37 @@ test('createApp wires the platform default log path when no logger is injected',
   assert.equal(app.logger.path, join(localAppData, 'PuzzleSolver', 'logs', 'app.log'));
   assert.ok(app.logger.path.startsWith(localAppData), 'the log path must stay under the temp LOCALAPPDATA');
 });
+
+test('#143: the app builds the OCR worker from the configured languages', async (t) => {
+  const fake = await startFakePushbullet();
+  const dir = mkdtempSync(join(tmpdir(), 'puzzlesolver-app-'));
+  const inboxDir = join(dir, 'inbox');
+  mkdirSync(inboxDir, { recursive: true });
+  t.after(async () => {
+    await fake.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const calls = [];
+  const app = await createApp({
+    config: validateConfig({ ocr: { languages: ['nld'] } }).config,
+    env: {},
+    providers: [],
+    client: fakeClient(fake),
+    reasoner: null,
+    solveImage: scriptedSolve(),
+    // The seam `runApp` uses for the real factory; it must receive the configured
+    // languages, not be called with no arguments (#143).
+    createWorker: async (options) => {
+      calls.push(options);
+      return { terminate: async () => {} };
+    },
+    inboxDir,
+    statePath: join(dir, 'state.db'),
+    logger: collectingLogger(),
+    now: () => Date.now() / 1000,
+  });
+  t.after(() => app.stop());
+
+  assert.deepEqual(calls, [{ languages: ['nld'] }], 'the worker is built from config.ocr.languages (#143)');
+});
