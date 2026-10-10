@@ -139,6 +139,17 @@ jobs:
           $zip = (Get-ChildItem dist/*.zip).FullName
           ./packaging/run-dpapi.ps1 -Zip $zip
 
+      # The headless launch above skips the tray by design, and the launcher step only
+      # asserts a node.exe process starts - so the systray2 interop layer that had never
+      # worked was entered by no automated check. This runs the artifact's own node.exe
+      # and app/src/ui/tray-systray.js and asserts the class resolves. It does not start
+      # the native widget (no interactive desktop on a runner).
+      - name: Prove the packaged systray2 class resolves
+        shell: pwsh
+        run: |
+          $zip = (Get-ChildItem dist/*.zip).FullName
+          ./packaging/run-tray-interop.ps1 -Zip $zip
+
   release:
     needs: [package, deploy]
     if: startsWith(github.ref, 'refs/tags/v')

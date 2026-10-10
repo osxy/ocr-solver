@@ -1138,6 +1138,23 @@ handled on the import side instead: both are loaded through dynamic `import()` i
 tray binary, and a missing module produces an actionable `--headless` message rather than a
 stack trace.
 
+**The import shape was wrong, and it hid in plain sight.** `systray2` is CommonJS
+(`"main": "index.js"`, `"type": "commonjs"`) whose only export is Babel-style:
+`exports.default = SysTray` with `__esModule` set (`index.js:496`). Node therefore does not
+lift `default` onto the ESM namespace, and the class lands at `mod.default.default`. The
+adapter read `mod?.default ?? mod`, got the module object, and its (correct) `typeof !==
+'function'` guard threw `TrayUnavailableError` — so **the tray had never started on any
+platform**. Two reviews, a green suite and every CI run passed because the deploy job's
+`--headless` launch skips the tray by design and its launcher step only asserts that a
+`node.exe` process starts; a tray that throws and exits is indistinguishable from one that
+loaded. The fix resolves all four realistic shapes (`mod.SysTray`, `mod.default.SysTray`,
+`mod.default.default`, `mod.default`) rather than swapping one hardcoded path for another,
+keeps the guard, and makes it name the exports it saw. `tests/tray-systray.test.js` asserts
+the resolution against the **real installed `systray2`** and fails on the old code; the
+`deploy` job adds `packaging/run-tray-interop.ps1`, which makes the same assertion on the
+packaged Windows artifact with its own `node.exe`. The native widget drawing still needs an
+interactive desktop and remains unverified (§11).
+
 ---
 
 ## 7. Reliability
@@ -1418,7 +1435,8 @@ is not tracked by git — the `secrets.*`-hid-`src/secrets.js` trap can no longe
 **M3 tests (offline, credential-free).** `tests/watchdog.test.js` drives the quiet rule with an
 injected clock, including the exact boundary. `tests/tray.test.js` exercises every menu action
 against a fake listener. `tests/tray-systray.test.js` asserts the actionable `--headless` failure
-with an injected loader and the click forwarding with a fake `SysTray`. `tests/deploy.test.js`
+with an injected loader, the click forwarding with a fake `SysTray`, and — against the real
+installed `systray2` — that the resolution yields a function in the Babel/CommonJS shape. `tests/deploy.test.js`
 asserts the launcher text, the per-user Startup shim (20 s delay, delegation) and the PowerShell
 content, plus the install/uninstall runners against injected fs. `tests/setup.test.js` covers validation, the connection probes and the real
 credential-file round-trip at mode 0600. The whole suite runs on Linux with no tray, no display
@@ -1580,7 +1598,10 @@ of the Windows build it reuses, and an installer regression belongs on the PR th
 
 What an interactive desktop would be needed for is still unverified: the native `systray2` tray
 widget and the `node-notifier` toast need a window station, and the `explorer.exe` browser hand-off
-(#56) is likewise unexercised. The unprivileged install path is likewise unexercised, because the
+(#56) is likewise unexercised. The `systray2` class *resolution* — the layer that was broken — is
+now asserted on the packaged artifact by `packaging/run-tray-interop.ps1`; only the widget drawing
+is not. The deploy job's launcher step enters the tray path but does not assert it (it stops at
+"a node.exe started"), so this separate step is the assertion. The unprivileged install path is likewise unexercised, because the
 runner is an administrator (#163). The DPAPI credential round trip, by contrast, *is* executed
 on the runner as two processes: the writer migrates and saves, the reader decrypts from disk and
 asserts `Unprotect` was called (see [§8](#8-security--privacy)); what it cannot cover is a process

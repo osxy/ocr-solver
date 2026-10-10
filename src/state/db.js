@@ -7,6 +7,14 @@
  * this table instead of re-running anything or guessing.
  *
  * The `pushes` and `outbox` tables are created now but only used from M2 onward.
+ *
+ * `node:sqlite` is unflagged from Node 22.13.0 but still emits
+ * `ExperimentalWarning: SQLite is an experimental feature ...` on import. That warning is
+ * left alone deliberately: the module really is experimental, the message is accurate,
+ * and suppressing it narrowly (`--disable-warning=ExperimentalWarning`) would also hide
+ * experimental warnings from every other feature. A console run shows it; the packaged
+ * app launches without a console via `PuzzleSolver.vbs`, so it is not user-visible there.
+ * `tests/config-cli.test.js` filters it out of the runtime's stderr, not the app's output.
  */
 import { DatabaseSync } from 'node:sqlite';
 import { dirname } from 'node:path';

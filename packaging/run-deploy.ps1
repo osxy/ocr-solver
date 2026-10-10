@@ -173,9 +173,14 @@ install -> per-user Startup shim inspected -> packaged app starts under ``--head
 
 The failure path is proved too: a payload whose installer exits non-zero makes ``install.ps1`` exit non-zero and print no success line (#162).
 
-Not covered here, because a runner has no interactive desktop: the native ``systray2`` tray
-widget, the ``node-notifier`` toast, and the ``explorer.exe`` browser hand-off. The runner is
-an administrator, so the unprivileged install path (#163) has still never been exercised.
+The launcher step *enters* the tray path (``PuzzleSolver.vbs`` runs ``listen`` without
+``--headless``) but only asserts that a node.exe process starts, so a tray that throws
+``TrayUnavailableError`` and exits looks the same there as a tray that loaded. The
+``Prove the packaged systray2 class resolves`` step is what actually asserts the interop
+layer; it does not start the widget. Not covered by any step, because a runner has no
+interactive desktop: the native ``systray2`` widget drawing, the ``node-notifier`` toast,
+and the ``explorer.exe`` browser hand-off. The runner is an administrator, so the
+unprivileged install path (#163) has still never been exercised.
 "@
     }
 }
