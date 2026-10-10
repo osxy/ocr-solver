@@ -788,6 +788,44 @@ test('a second start on the same state path is refused and starts no listener (#
   await second.stop();
 });
 
+// #167: the guard is per data directory, not per checkout. The test suite runs many
+// processes in this one checkout (node:test runs each file in its own process) and each
+// app has its own temp state path, so both must start and listen. A guard keyed on the
+// working directory would make this fail.
+test('two apps in one checkout with different state paths both start (#167)', async (t) => {
+  const fake = await startFakePushbullet();
+  const root = mkdtempSync(join(tmpdir(), 'puzzlesolver-parallel-'));
+  t.after(async () => {
+    await fake.close();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  const started = [];
+  const makeAppAt = (name) => {
+    const dir = join(root, name);
+    mkdirSync(join(dir, 'inbox'), { recursive: true });
+    return createApp({
+      env: {},
+      providers: [],
+      client: fakeClient(fake),
+      reasoner: null,
+      solveImage: scriptedSolve(),
+      createWorker: async () => ({ terminate: async () => {} }),
+      listener: { start: async () => started.push(name), stop() {}, status: () => ({}) },
+      inboxDir: join(dir, 'inbox'),
+      statePath: join(dir, 'state.db'),
+      logger: collectingLogger(),
+    });
+  };
+
+  const a = await makeAppAt('a');
+  const b = await makeAppAt('b');
+  t.after(() => Promise.all([a.stop(), b.stop()]));
+  await a.start();
+  await b.start();
+  assert.deepEqual(started.sort(), ['a', 'b'], 'separate data directories must not contend for one lock');
+});
+
 test('runApp installs SIGINT/SIGTERM handlers and starts listening', async (t) => {
   const fake = await startFakePushbullet();
   const dir = mkdtempSync(join(tmpdir(), 'puzzlesolver-app-'));
