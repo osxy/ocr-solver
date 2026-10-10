@@ -1178,6 +1178,24 @@ the resolution against the **real installed `systray2`** and fails on the old co
 packaged Windows artifact with its own `node.exe`. The native widget drawing still needs an
 interactive desktop and remains unverified (§11).
 
+**The icon is a path, not image data (issue #185).** `systray2` resolves `icon` with
+`fs.pathExists`; when the check passes it reads the file and base64-encodes the bytes
+itself before handing them to the tray binary. The adapter passed it a base64 string on
+every platform, so the existence check was false, the string was forwarded unchanged, and
+the native side received something it could not decode. The Go binary is explicit that
+Windows needs a real `.ico` (`iconBytes should be the content of .ico for windows and
+.ico/.jpg/.png for other platforms`), so a bare PNG could never render there - the entry
+registered, the tooltip showed, and the tile was blank. `scripts/build-tray-icons.mjs` now
+writes committed `.png` and `.ico` files for both colour states from the same SVG, and
+`src/ui/icons.js` resolves an absolute path with the platform's extension. The ICO is a
+PNG-compressed entry (accepted by `LoadImage`/`CreateIconFromResourceEx` since Vista; the app
+requires Windows 10/11) rather than a BMP/DIB, and that choice is checked rather than
+argued: `packaging/run-tray-interop.ps1` calls Win32 `LoadImage` with `LR_LOADFROMFILE` on the
+packaged `.ico` and requires a non-null handle, the same call the tray binary makes. The
+files are listed in `REQUIRED_PAYLOAD`, because a missing runtime file is invisible to the
+offline suite and would reproduce the blank tile in the release. The rendered pixels still
+need an interactive desktop and remain unverified (§11).
+
 ---
 
 ## 7. Reliability

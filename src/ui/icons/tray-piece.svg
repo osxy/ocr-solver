@@ -5,8 +5,8 @@
 
     The geometry here is the single source of truth. `scripts/build-tray-icons.mjs`
     rasterises it twice, substituting the two colour tokens below for the grey
-    state, and embeds the resulting 16x16 PNGs in `src/ui/icons.js`. Edit the path
-    here, never the base64 there.
+    state, and writes the resulting 16x16 PNG and ICO files beside this SVG
+    (`tray-normal.*`, `tray-grey.*`). Edit the path here, never those files.
 
     The stroke is the outline that keeps the piece legible on a light and a dark
     taskbar; the fill is the state colour (blue = listening, grey = quiet).
