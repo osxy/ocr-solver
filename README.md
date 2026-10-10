@@ -196,6 +196,7 @@ llm_base_url = "https://api.openai.com/v1"
 [reply]
 require_confidence = true       # only send answers every tier agreed on
 [http]
+# does not affect the web UI (web_ui has no enable flag)
 enabled = false                 # an HTTP endpoint that solves captchas is an oracle
 bind = "127.0.0.1"             # never 0.0.0.0 unless you mean it; it warns if you do
 ```
@@ -302,9 +303,10 @@ status code.
 to start; (2) `reply.enabled` is `true` and `reply.require_confidence` is not
 suppressing a merely validated answer; (3) the log and the listener state — a **grey
 tray icon** means the listener has been quiet for 10 minutes, and the stream reconnects
-with backoff while the 60 s poll is the second path; (4) the hourly cap (`max_per_hour`)
-has not been reached — answers and acknowledgements each have their own budget, so a
-burst of unsolvable puzzles can no longer starve a real answer; (5) a model tier needs a
+with backoff while the 60 s poll is the second path; (4) the hourly answer budget
+(`reply.max_per_hour`) has not been reached — acknowledgements have their own, looser cap
+(`reply.unresolved_max_per_hour`), so a burst of unsolvable puzzles cannot starve a real
+answer; both are editable in the settings editor; (5) a model tier needs a
 key, and `offline_only = true` disables the model tiers entirely.
 
 **A setting changed but nothing happened.** The editor and `config set` print which

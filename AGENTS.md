@@ -187,7 +187,7 @@ the old code. Behaviour that took live testing to find must not be able to come 
 ## 5. Tests
 
 ```bash
-npm test              # 760 tests (754 pass, 6 skip), fully offline: no network, no token, no key
+npm test              # 799 tests (793 pass, 6 skip), fully offline: no network, no token, no key
 npm run test:unit     # fast subset
 npm run test:corpus   # real images through real OCR, ~4s
 npm run test:live     # opt-in; skips itself unless LLM_API_KEY is set
@@ -349,6 +349,14 @@ without saying why in the commit message.
 ("every relative link and anchor in the README resolves"). When a section moves to
 `docs/`, the README gets a link to its new home; a moved section with no link is as bad
 as a deletion.
+
+**Describing configuration means mentioning the web UI.** Any page that shows a
+`config.toml` block, a `config set` command, or individual setting keys must also say the
+same settings can be changed in the web UI — the tray's **Settings** item, or
+`config edit --gui`. The editor is the path most users take, and a page that describes a
+key without it reads as "edit this file by hand." Enforced by `tests/readme.test.js`
+("a page that describes configuration also says the settings editor can change it", and
+its stronger half, "every config key the docs show exists in the settings registry").
 
 **Never hand-maintain a test count in a user-facing document.** `npm test` prints its
 own number; a count copied into prose goes stale faster than it can be re-measured (it

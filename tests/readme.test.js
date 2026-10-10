@@ -3,7 +3,7 @@
  *
  * The README is the front door: what it is, install, run, the failures people hit, the
  * known limitations, and pointers. Everything else belongs in DESIGN.md or docs/ (the
- * rule is written down in AGENTS.md §10). These four tests are the ratchet:
+ * rule is written down in AGENTS.md §10). These seven tests are the ratchet:
  *
  *   1. a length budget, so a milestone cannot append its mode and its evidence here;
  *   2. every relative link and anchor resolves, so moving detail to docs/ cannot leave
@@ -11,7 +11,13 @@
  *   3. every code fence is closed, so a stray marker cannot turn the tail of the file
  *      into a wall of grey monospace;
  *   4. `## License` is the terminal section, so material appended after it is visible
- *      even when it is not another heading.
+ *      even when it is not another heading;
+ *   5. every docs/*.md page is linked from the README, so a page cannot be added and
+ *      then forgotten;
+ *   6. a page that describes configuration also mentions the settings editor, so the
+ *      file is not the only route a page shows;
+ *   7. every `section.key` the docs' TOML blocks show exists in the settings registry,
+ *      so a page cannot document a setting the editor cannot set.
  *
  * The budget numbers are deliberately stated here and in AGENTS.md §10. When the README
  * legitimately grows, raise them in one deliberate commit and say why in the message -
@@ -30,10 +36,50 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync, statSync, readdirSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
+import { parse as parseToml } from 'smol-toml';
+import { SETTINGS } from '../src/ui/settings.js';
 
 const repoRoot = join(import.meta.dirname, '..');
 const readmePath = join(repoRoot, 'README.md');
 const readme = readFileSync(readmePath, 'utf8');
+
+/**
+ * README.md plus every top-level docs page, as `{ name, text }`. Shared by the prose
+ * guard and the registry cross-check so the two cannot disagree about what "a page"
+ * means.
+ */
+function loadDocPages() {
+  const docsDir = join(repoRoot, 'docs');
+  return [
+    { name: 'README.md', text: readme },
+    ...readdirSync(docsDir, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.endsWith('.md'))
+      .map((entry) => ({
+        name: `docs/${entry.name}`,
+        text: readFileSync(join(docsDir, entry.name), 'utf8'),
+      })),
+  ];
+}
+
+/** The body of every ```toml fenced block in a page, in file order. */
+function tomlBlocks(text) {
+  return [...text.matchAll(/^```toml\b[^\n]*\n([\s\S]*?)^```/gm)].map((match) => match[1]);
+}
+
+/** Every nested `section.key` path in a parsed TOML object; arrays and scalars are leaves. */
+function keyPaths(node, prefix = '') {
+  const paths = [];
+  if (node == null || typeof node !== 'object' || Array.isArray(node)) return paths;
+  for (const [key, value] of Object.entries(node)) {
+    const path = prefix ? `${prefix}.${key}` : key;
+    if (value != null && typeof value === 'object' && !Array.isArray(value)) {
+      paths.push(...keyPaths(value, path));
+    } else {
+      paths.push(path);
+    }
+  }
+  return paths;
+}
 
 // Stated budget. Sized just above the file at the second rewrite (414 lines / 3207
 // words) so that any addition needs a deliberate trim or a deliberate, explained bump.
@@ -202,4 +248,114 @@ test('every top-level docs page is linked from the README', () => {
       `docs/${page} is not linked from the README, so a reader never reaches it`
     );
   }
+});
+
+/**
+ * Describing configuration means mentioning the web UI. The rule is in AGENTS.md §10:
+ * any page that shows a `config.toml` block, a `config set` command or individual
+ * setting keys must also say the same settings can be changed in the settings editor
+ * (the tray's **Settings** item, or `config edit --gui`). The editor is the path most
+ * users take, and a page that describes a key without it reads as "edit this file by
+ * hand".
+ *
+ * WHAT THIS GUARD IS NOT. It sees that a page *mentions* the editor. It cannot see
+ * whether the mention is useful, whether it appears where a reader needs it, or whether
+ * the rest of the page is correct - the README told headless users to set session
+ * environment variables for a whole release while mentioning the editor in a trailing
+ * sentence, and this check passed it. A green run means the mention exists, nothing
+ * more; the reader still has to read the page.
+ *
+ * THE REGISTRY CROSS-CHECK IS THE NEXT TEST. The stronger half of this rule - every
+ * `section.key` the docs' TOML blocks show exists in `SETTINGS` - was withheld when
+ * this one landed because its first run found a real gap (`reply.max_per_hour` was in
+ * `DEFAULTS` and in `docs/configuration.md` but absent from `SETTINGS`, so
+ * `config set reply.max_per_hour` was rejected as an unknown key). An allowlisted
+ * cross-check would have hidden exactly the inconsistency it exists to catch; #133
+ * closed the gap and ships the check. It reads only TOML blocks, so a key named in
+ * prose (`docs/configuration.md` says "There is no `web_ui.enabled` key") is not
+ * mistaken for one being documented.
+ */
+test('a page that describes configuration also says the settings editor can change it', () => {
+  const pages = loadDocPages();
+
+  assert.ok(pages.length > 0, 'no pages to check; the test has lost its subject');
+
+  // What "describes configuration" means here, matching the audit in §10: a page that
+  // shows the config file, a config CLI command or a TOML block. A page that names a
+  // `section.key` only in passing (the solve and statistics pages describe a bound, not
+  // how to change it) is not a configuration guide and is not tested.
+  const configurationPatterns = [
+    { what: '`config.toml`', re: /config\.toml/ },
+    { what: 'a config CLI command', re: /\bconfig (set|get|edit)\b/ },
+    { what: 'a TOML code block', re: /^`{3,}toml\b/m },
+  ];
+
+  // The mention the rule asks for: the settings editor under any of the names the docs
+  // use for it.
+  const webUi = /settings editor|settings ui|settings item|settings page|config edit\s+--gui|--gui\b/i;
+
+  let configurationPages = 0;
+  for (const page of pages) {
+    const matches = configurationPatterns.filter((pattern) => pattern.re.test(page.text));
+    if (matches.length === 0) continue;
+    configurationPages += 1;
+
+    assert.match(
+      page.text,
+      webUi,
+      `${page.name} shows ${matches.map((m) => m.what).join(' and ')} but never mentions the settings editor or \`config edit --gui\`, so it reads as "edit this file by hand".`
+    );
+  }
+
+  assert.ok(
+    configurationPages > 0,
+    'no page describes configuration; the test has lost its subject'
+  );
+});
+
+/**
+ * The stronger half of the rule: not just that a configuration page mentions the
+ * editor, but that every `section.key` a TOML block shows is a setting the registry
+ * actually has. A documented setting the editor cannot set is precisely the
+ * inconsistency the rule exists to prevent (this check found `reply.max_per_hour`,
+ * #133), and it also catches a typo'd key in a doc, which the prose guard cannot.
+ *
+ * It reads the blocks with the same parser the app uses, so a key in prose is not
+ * mistaken for a documented key, and a section-less fragment (openrouter.md shows a
+ * bare `llm_vision_model = ...` as an alternative) names no `section.key` and is
+ * skipped rather than misattributed to whatever section preceded it.
+ *
+ * WHAT THIS GUARD IS NOT. It checks that the key is in the registry, not that its
+ * documented default, type or comment is right: a page can show `max_per_hour = 9999`
+ * with a wrong comment and pass. A green run means the key is settable, nothing more.
+ */
+test('every config key the docs show exists in the settings registry', () => {
+  const pages = loadDocPages();
+  assert.ok(pages.length > 0, 'no pages to check; the test has lost its subject');
+
+  const ids = new Set(SETTINGS.map((setting) => setting.id));
+  let documentedKeys = 0;
+
+  for (const page of pages) {
+    for (const block of tomlBlocks(page.text)) {
+      let parsed;
+      try {
+        parsed = parseToml(block);
+      } catch {
+        // An illustrative block may not stand alone as valid TOML (a fragment, a
+        // placeholder). It cannot be a registry key, so it is not this guard's subject.
+        continue;
+      }
+      for (const path of keyPaths(parsed)) {
+        if (!path.includes('.')) continue; // a section-less fragment names no section.key
+        documentedKeys += 1;
+        assert.ok(
+          ids.has(path),
+          `${page.name} documents "${path}", but no such setting exists in SETTINGS (src/ui/settings.js), so the editor and \`config set\` cannot change it.`
+        );
+      }
+    }
+  }
+
+  assert.ok(documentedKeys > 0, 'no docs show a section.key; the test has lost its subject');
 });
