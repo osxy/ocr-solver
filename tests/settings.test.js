@@ -420,11 +420,35 @@ test('#35: the HTTP token has no connection to test', async (t) => {
   await assert.rejects(() => editor.test('http.token'), /no connection to test/);
 });
 
-test('the editor refuses an empty or whitespace-bearing secret', (t) => {
+test('the editor refuses an empty secret, and internal whitespace in a pasted token', (t) => {
   const { editor } = makeEditor(t);
   assert.throws(() => editor.set('pushbullet.token', '   '), SettingValueError);
   assert.throws(() => editor.set('pushbullet.token', 'o.abc def'), /whitespace/);
   assert.throws(() => editor.set('llm.api_key', 'sk-a\nb'), /whitespace/);
+  // #147: the rule stays for every secret that is pasted, including the HTTP token.
+  assert.throws(() => editor.set('http.token', 'a long token value here'), /whitespace/);
+});
+
+test('#147: the web UI passphrase may contain spaces, and keeps the ends trimmed', async (t) => {
+  const { editor, secretsWrites } = makeEditor(t);
+  // The exact value the documented command in `docs/remote-access.md` sets.
+  editor.set('web_ui.password', '  a long passphrase  ');
+  await editor.save();
+  const stored = secretsWrites[0].web_ui;
+  assert.match(stored, /^scrypt\$/);
+  // Interior spaces are part of the credential; only the ends are trimmed, so the
+  // passphrase without the surrounding whitespace is what logs in.
+  assert.equal(verifyWebUiPassword('a long passphrase', stored), true);
+  assert.equal(verifyWebUiPassword('  a long passphrase  ', stored), false, 'the ends are trimmed before hashing');
+  assert.equal(stored.includes('a long passphrase'), false, 'the passphrase itself is never stored');
+});
+
+test('#147: a tab or line break is still not a passphrase character', (t) => {
+  const { editor } = makeEditor(t);
+  // A space is the one whitespace a human types into a passphrase; the login form's
+  // single-line field cannot reproduce a tab or a newline, so they stay refused.
+  assert.throws(() => editor.set('web_ui.password', 'a\tpassphrase'), /whitespace/);
+  assert.throws(() => editor.set('web_ui.password', 'a\npassphrase'), /whitespace/);
 });
 
 // ---------------------------------------------------------------------------
