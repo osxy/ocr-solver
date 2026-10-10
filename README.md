@@ -192,6 +192,7 @@ llm_base_url = "https://api.openai.com/v1"
 [reply]
 require_confidence = true       # only send answers every tier agreed on
 [http]
+# does not affect the web UI (web_ui has no enable flag)
 enabled = false                 # an HTTP endpoint that solves captchas is an oracle
 bind = "127.0.0.1"             # never 0.0.0.0 unless you mean it; it warns if you do
 ```

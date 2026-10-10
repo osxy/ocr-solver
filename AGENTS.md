@@ -344,6 +344,13 @@ without saying why in the commit message.
 `docs/`, the README gets a link to its new home; a moved section with no link is as bad
 as a deletion.
 
+**Describing configuration means mentioning the web UI.** Any page that shows a
+`config.toml` block, a `config set` command, or individual setting keys must also say the
+same settings can be changed in the web UI — the tray's **Settings** item, or
+`config edit --gui`. The editor is the path most users take, and a page that describes a
+key without it reads as "edit this file by hand." Enforced by `tests/readme.test.js`
+("a page that describes configuration also says the settings editor can change it").
+
 **Never hand-maintain a test count in a user-facing document.** `npm test` prints its
 own number; a count copied into prose goes stale faster than it can be re-measured (it
 was wrong three times in one session). Report the count when you are asked for it, from
