@@ -88,33 +88,22 @@ task named `PuzzleSolver` that starts the app at logon (20 s delay, restart on f
 
 ## Run it
 
-### Secrets: the Pushbullet token and the model key
+### First run: the app asks
 
-The Pushbullet token and the model key are **not** config keys — a config key whose name
-looks like a secret (`*token*`, `*key*`, `*secret*`, `*password*`) is rejected at load,
-because a config file ends up in backups and support threads. Set them in the
-environment:
+Start it — at logon, or now by running
+`%LOCALAPPDATA%\Programs\PuzzleSolver\PuzzleSolver.vbs` — and **it opens a setup page in
+your browser**: paste the Pushbullet token, optionally the model API key, and press
+**Test connection**. What you enter is written straight to the DPAPI credential store,
+`%APPDATA%\PuzzleSolver\credentials.dpapi`. Cancel it and the service does not start.
+That page is the designed path: the tray runs with no console, so a browser is the only
+place a prompt can appear.
 
-```powershell
-$env:PUSHBULLET_TOKEN = "o.xxxxxxxx"
-$env:LLM_API_KEY       = "sk-xxxxxxxx"
-```
-
-…or put them in the credential store: the DPAPI-protected blob at
-`%APPDATA%\PuzzleSolver\credentials.dpapi` on Windows, or the file at
-`${XDG_CONFIG_HOME:-~/.config}/puzzlesolver/credentials.json` elsewhere. A hand-written
-plaintext `%APPDATA%\PuzzleSolver\credentials.json` is migrated to DPAPI and removed on
-the next start.
-
-```json
-{ "pushbullet_token": "o.xxxxxxxx", "llm_api_key": "sk-xxxxxxxx" }
-```
-
-The Pushbullet token is required *unless* the HTTP ingress is enabled, in which case
-the app can run without a Pushbullet account at all. The model key is optional: with
-none, the app runs offline-only (Tier 0). There is no anonymous HTTP mode — see
-[the HTTP API](./docs/http-api.md) for its third secret, `HTTP_AUTH_TOKEN`. How the
-secrets are protected, and what DPAPI does and does not defend against, is in
+The Pushbullet token is required *unless* the HTTP ingress is enabled, in which case the
+app runs without a Pushbullet account at all. The model key is optional — the setup page
+does not demand one, and with none the app runs offline-only (Tier 0). There is no
+anonymous HTTP mode: see [the HTTP API](./docs/http-api.md) for its third secret,
+`HTTP_AUTH_TOKEN`. How the secrets are protected, and what DPAPI does and does not defend
+against, is in
 [configuration](./docs/configuration.md#how-the-secrets-are-protected).
 
 ### Tray / service mode (the Windows default)
@@ -146,8 +135,18 @@ For an unattended machine, or when the tray cannot start:
 %LOCALAPPDATA%\Programs\PuzzleSolver\node.exe %LOCALAPPDATA%\Programs\PuzzleSolver\app\src\cli.js listen --headless
 ```
 
-`--headless` skips the tray and every notification. `ui.tray = false` in the config does
-the same for the launcher.
+`--headless` skips the tray and every notification, and it **never opens the setup page**,
+so the token has to reach it another way:
+
+- a **persistent** environment variable — `setx PUSHBULLET_TOKEN "o.xxxxxxxx"`, or System
+  Properties → Environment Variables — which the logon task sees at the next logon. A
+  session `$env:PUSHBULLET_TOKEN = "…"` does **not** count: it dies with the shell that
+  set it, and the task never sees it;
+- `--token <value>`, or `node src/cli.js config edit` in a terminal, which writes the
+  credential store directly.
+
+With none of these the service refuses to start rather than run tokenless.
+`ui.tray = false` in the config disables the tray for the launcher too.
 
 ### Solve a local image (no Pushbullet needed)
 
@@ -168,11 +167,21 @@ With the packaged app, replace `node src/cli.js` with
 
 ### Configure it
 
-**A missing config file is normal.** Every setting has a working default, so the app
-starts with no config at all. The file is `%APPDATA%\PuzzleSolver\config.toml` on Windows
-or `${XDG_CONFIG_HOME:-~/.config}/PuzzleSolver/config.toml` elsewhere; `--config <path>`
+Change a setting the way the app offers: the tray's **Settings** item, or
+`config edit --gui`, opens an editor in the browser. It lists every setting with its
+current value, validates each change, tags it `[live]` or `[restart]`, and routes
+secrets to the credential store. `node src/cli.js config list|get|set|edit` is the same
+editor for a terminal — see
+[configuration](./docs/configuration.md#change-a-setting-with-the-editor).
+
+**A missing `config.toml` is normal.** Every setting has a working default, so the app
+starts with no config at all, and the file is for the advanced settings. It is
+`%APPDATA%\PuzzleSolver\config.toml` on Windows or
+`${XDG_CONFIG_HOME:-~/.config}/PuzzleSolver/config.toml` elsewhere; `--config <path>`
 (or `$PUZZLESOLVER_CONFIG`) overrides it. An unknown key warns and is ignored; a *bad*
-value fails loudly and names the key.
+value fails loudly and names the key. Secrets are **not** config keys: a key whose name
+looks like one (`*token*`, `*key*`, `*secret*`, `*password*`) is rejected at load, because
+a config file ends up in backups and support threads.
 
 ```toml
 [solver]
@@ -189,10 +198,7 @@ bind = "127.0.0.1"             # never 0.0.0.0 unless you mean it; it warns if y
 
 Every key and its default is in
 [configuration](./docs/configuration.md#every-option-with-its-default);
-`DEFAULTS` in [`src/config.js`](./src/config.js) is the schema. The tray's **Settings**
-item (or `node src/cli.js config edit --gui`) opens an editor that validates each change
-and routes secrets to the credential store — see
-[configuration](./docs/configuration.md#change-a-setting-with-the-editor).
+`DEFAULTS` in [`src/config.js`](./src/config.js) is the schema.
 
 ### The web UI
 
@@ -339,7 +345,7 @@ folders. Manually: `schtasks /Delete /TN PuzzleSolver /F`, then delete
   restarting the task. The **DPAPI credential round trip** is executed on the runner: a
   plaintext file is migrated and removed by one process, and a second `node` process
   decrypts it from disk. What DPAPI cannot protect is a process running as the same user
-  (see [Secrets](#secrets-the-pushbullet-token-and-the-model-key)). `--headless` remains
+  (see [First run](#first-run-the-app-asks)). `--headless` remains
   the supported fallback for an unattended machine.
 - **The web UI is plain HTTP and its non-loopback credential is transport-unprotected.**
   A remote-access password is verified as a `scrypt` verifier and failed logins are
@@ -382,34 +388,3 @@ architecture reference.
 ## License
 
 [Apache License 2.0](./LICENSE).
-```
-
-Now let me check: the anchor `#why-a-reply-may-be-missing-or-is-not-an-answer` — heading is "Why a reply may be missing, or is not an answer". Slug: remove comma → "why-a-reply-may-be-missing-or-is-not-an-answer". Good.
-
-The anchor `#secrets-the-pushbullet-token-and-the-model-key` — heading "Secrets: the Pushbullet token and the model key" → remove colon → "secrets-the-pushbullet-token-and-the-model-key". Good.
-
-`#some-settings-need-a-restart` in docs/configuration.md heading is "## Some settings need a restart" — good.
-
-`#every-option-with-its-default` in docs/configuration.md heading "## Every option, with its default" → remove comma → "every-option-with-its-default". Good.
-
-`#how-the-secrets-are-protected` in docs/configuration.md heading "## How the secrets are protected" good.
-
-`#status-codes-are-honest-not-approximate` in docs/http-api.md heading "## Status codes are honest, not approximate" → "status-codes-are-honest-not-approximate". Good.
-
-`#change-a-setting-with-the-editor` in docs/configuration.md heading "## Change a setting with the editor" good.
-
-Now README internal anchors used: `#solve-over-http` (heading "### Solve over HTTP"), `#why-a-reply-may-be-missing-or-is-not-an-answer`, `#known-limitations`, `#secrets-the-pushbullet-token-and-the-model-key`. Good.
-
-`./docs/` directory link — is `docs/` a valid relative link? There is no `docs/README.md`, so a link to `./docs/` would resolve to a directory; on GitHub it shows the directory listing. The guard test needs to handle directory links. I said "the secondary modes have their own pages under [`docs/`](./docs/)". My link checker must treat a link ending in `/` (directory) as valid if the directory exists. Or avoid it. Let me just link to each doc and not to `docs/` as a directory, to keep the checker simple. Actually it's nice to reference docs/. But then test must handle. I'll handle directories in the test: if link has no extension or ends with `/`, check fs.existsSync. Simpler: I'll keep `./docs/` and handle it. Hmm, "every relative link in the README resolves" — a directory link does resolve. I'll handle it.
-
-Also `./docs/screenshots/README.md`, `./DESIGN.md`, `./AGENTS.md`, `./LICENSE`, `./src/config.js` — files. Are DESIGN.md, AGENTS.md, LICENSE at root? Yes.
-
-Now, wait: I wrote `docs/configuration.md` links `../src/config.js` and `../packaging/run-dpapi.ps1` and `../config/llm.env.example` (in openrouter) and `../DESIGN.md`. Those aren't checked by the README test. Fine.
-
-Also docs/configuration.md links `./remote-access.md` and `./screenshots/settings.png`. Fine.
-
-Let me now write the test file. But first let me measure README lines/words.</think>
-
-<｜DSML｜ calls>
-<｜DSML｜ invoke name="bash">
-<｜DSML｜ parameter name="command" string="true">cd /home/andre/captchasolver && wc -l -w README.md && echo "--- headings ---" && grep -n '^#' README.md && echo "--- asset mentions ---" && grep -c 'PuzzleSolver-0.4.0-win-x64.zip' README.md && echo "--- releases links ---" && grep -n 'releases' README.md

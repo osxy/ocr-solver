@@ -60,23 +60,28 @@ allow_image_url = false         # off: image_url makes the server fetch a caller
 image_url_hosts = []            # when on: the only hosts image_url may name (default deny)
 ```
 
-## Secrets go in the environment or the credential store
+## Secrets go in the credential store, or in the environment
 
 The Pushbullet token and the model key are **not** config keys. A config key whose name
 looks like a secret (`*token*`, `*key*`, `*secret*`, `*password*`) is rejected at load,
-because a config file ends up in backups and support threads. Set them in the
-environment:
+because a config file ends up in backups and support threads.
+
+On a normal install the app collects them for you: the first-run setup page, or the
+tray's **Settings** editor, writes them to the credential store. On Linux/macOS that is
+the file at `${XDG_CONFIG_HOME:-~/.config}/puzzlesolver/credentials.json`; on Windows it
+is the DPAPI-protected blob at `%APPDATA%\PuzzleSolver\credentials.dpapi`. A hand-written
+plaintext `%APPDATA%\PuzzleSolver\credentials.json` is still read once, migrated to DPAPI
+and removed on the next start; that path exists for migration, not as the way to populate
+the store.
+
+A headless or unattended run reads them from the environment instead. It must be a
+**persistent** variable — `setx`, or System Properties → Environment Variables — because
+the logon task does not see a session `$env:` assignment:
 
 ```powershell
-$env:PUSHBULLET_TOKEN = "o.xxxxxxxx"
-$env:LLM_API_KEY       = "sk-xxxxxxxx"
+setx PUSHBULLET_TOKEN "o.xxxxxxxx"
+setx LLM_API_KEY       "sk-xxxxxxxx"
 ```
-
-…or put them in the credential store. On Linux/macOS that is the file at
-`${XDG_CONFIG_HOME:-~/.config}/puzzlesolver/credentials.json`; on Windows it is the
-DPAPI-protected blob at `%APPDATA%\PuzzleSolver\credentials.dpapi`. A hand-written plaintext
-`%APPDATA%\PuzzleSolver\credentials.json` still works: it is migrated to DPAPI and removed
-on the next start.
 
 ```json
 { "pushbullet_token": "o.xxxxxxxx", "llm_api_key": "sk-xxxxxxxx" }
