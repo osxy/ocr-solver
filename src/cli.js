@@ -217,8 +217,9 @@ function buildReasoner(opts, store, subject, config = null) {
 
   if (!opts.apiKey) {
     throw new Error(
-      '--use-model requires an API key: set LLM_API_KEY or pass --api-key ' +
-      '(use --fake-model to exercise the model tiers without one)'
+      '--use-model requires an API key: pass --api-key, set LLM_API_KEY, or store one with ' +
+        '`node src/cli.js config set llm.api_key <value>` ' +
+        '(use --fake-model to exercise the model tiers without one)'
     );
   }
 
@@ -264,7 +265,7 @@ async function main() {
       '  --fake-model           exercise the model tiers with a scripted reply\n' +
       '  --fake-answer <text>   implied by --fake-answer: reply with this answer\n' +
       '  --fake-class <class>   puzzle class the fake model claims\n' +
-      '  --api-key <k>          model API key (or LLM_API_KEY)\n' +
+      '  --api-key <k>          model API key (or LLM_API_KEY, or `config set llm.api_key`)\n' +
       '  --base-url <url>       OpenAI-compatible endpoint\n' +
       '  --auto                 auto-route the TEXT tier via OpenRouter (implies --use-model)\n' +
       '  --cost-tier <tier>     auto-router cost band: low|medium|high|xhigh|max\n' +
@@ -279,13 +280,20 @@ async function main() {
       '  listen                 run the service (Pushbullet and/or the HTTP ingress)\n' +
       '  --headless             skip the tray and notifications (for a service/unattended run)\n' +
       '  --config <path>        TOML config file (or PUZZLESOLVER_CONFIG)\n' +
-      '  --token <token>        Pushbullet token for listen mode (or PUSHBULLET_TOKEN)\n' +
+      '  --token <token>        Pushbullet token for listen mode (or PUSHBULLET_TOKEN, or config set pushbullet.token)\n' +
       '  config list|get|set|edit  change settings without the tray (`config --help`)\n' +
       '  config edit --gui         the settings editor as a loopback web UI in the browser\n' +
       '  images purge              delete every stored review copy (storage.keep_images)\n' +
       '\n' +
-      'The HTTP ingress is opt-in: set [http] enabled = true in the config and provide\n' +
-      'HTTP_AUTH_TOKEN (or an http_auth_token credential). It binds 127.0.0.1 by default.'
+      'Secrets (Pushbullet token, model key, HTTP bearer token) go in the credential store,\n' +
+      'never config.toml: `config set pushbullet.token <value>`, `config set llm.api_key\n' +
+      '<value>`, `config set http.token <value>`, or the settings editor (`config edit --gui`,\n' +
+      'or the tray). An environment variable (PUSHBULLET_TOKEN, LLM_API_KEY, HTTP_AUTH_TOKEN)\n' +
+      'works for a headless run but must be persistent (setx / System Properties): a session\n' +
+      '`$env:` value does not reach the logon task.\n' +
+      '\n' +
+      'The HTTP ingress is opt-in: set [http] enabled = true in the config and provide the\n' +
+      'token above. It binds 127.0.0.1 by default.'
     );
     process.exit(opts.help ? 0 : 2);
   }

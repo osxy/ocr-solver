@@ -116,7 +116,10 @@ export function buildReasonerFromConfig(config, { llmApiKey, store, logger, crea
     return { reasoner: null, reason: 'offline_only' };
   }
   if (!llmApiKey) {
-    logger?.warn?.('no LLM key (LLM_API_KEY or credential store); running offline only for now');
+    logger?.warn?.(
+      'no LLM key; running offline only for now. Store one with `config set llm.api_key <value>` ' +
+        '(the credential store), or set a persistent LLM_API_KEY (setx / System Properties)'
+    );
     return { reasoner: null, reason: 'no-key' };
   }
 
@@ -375,7 +378,8 @@ export async function createApp({
         if (ownsStore) store.close();
         throw new SetupCancelledError(
           'first-run setup ended without a Pushbullet token; the service was not started. ' +
-            `Set PUSHBULLET_TOKEN, or add "pushbullet_token" to ${credentialPath}.`
+            'Store one with `node src/cli.js config set pushbullet.token <value>` (the credential ' +
+            'store, never config.toml), or use the settings editor (`config edit --gui`, or the tray).'
         );
       }
 
@@ -390,14 +394,18 @@ export async function createApp({
       if (!pushbulletToken) {
         if (ownsStore) store.close();
         throw new SetupFailedError(
-          `the setup dialog reported success but no token was resolvable; add "pushbullet_token" to ${credentialPath}`
+          'the setup dialog reported success but no token was resolvable; store one with ' +
+            '`node src/cli.js config set pushbullet.token <value>` (the credential store, never config.toml).'
         );
       }
     } else {
       if (ownsStore) store.close();
       throw new MissingTokenError(
-        'no Pushbullet token found. Set PUSHBULLET_TOKEN (or pass --token), or add ' +
-          `"pushbullet_token" to ${credentialPath}; secrets are never read from config.toml.`
+        'no Pushbullet token found. Store one with `node src/cli.js config set pushbullet.token ' +
+          '<value>` (the credential store, never config.toml), or use the settings editor ' +
+          '(`config edit --gui`, or the tray). A persistent PUSHBULLET_TOKEN (setx / System ' +
+          'Properties) works too; a session `$env:` value does not reach the logon task. ' +
+          '`--token <value>` sets it for one run only.'
       );
     }
   }
@@ -407,8 +415,11 @@ export async function createApp({
   if (httpEnabled && !httpToken) {
     if (ownsStore) store.close();
     throw new MissingHttpTokenError(
-      'http.enabled = true but no HTTP bearer token was found. Set HTTP_AUTH_TOKEN, or add ' +
-        `"http_auth_token" to ${credentialPath}; secrets are never read from config.toml.`
+      'http.enabled = true but no HTTP bearer token was found. Store one with ' +
+        '`node src/cli.js config set http.token <value>` (the credential store, never ' +
+        'config.toml), or use the settings editor (`config edit --gui`, or the tray). A ' +
+        'persistent HTTP_AUTH_TOKEN (setx / System Properties) works too; a session `$env:` ' +
+        'value does not reach the logon task.'
     );
   }
 
@@ -420,7 +431,8 @@ export async function createApp({
       if (ownsStore) store.close();
       throw new WeakHttpTokenError(
         `http.enabled = true but ${problem}. Generate one with \`openssl rand -hex 24\` ` +
-          'and set HTTP_AUTH_TOKEN (or the http_auth_token credential).'
+          'and store it with `node src/cli.js config set http.token <value>` ' +
+          '(or a persistent HTTP_AUTH_TOKEN).'
       );
     }
   }
@@ -433,8 +445,8 @@ export async function createApp({
     if (ownsStore) store.close();
     throw new MissingWebUiCredentialError(
       'web_ui.allowed_cidrs admits addresses beyond loopback but no web UI credential is configured. ' +
-        `Run \`node src/cli.js config set ${WEB_UI_CREDENTIAL_SETTING} <password>\`, or set the ` +
-        '"web_ui_password_hash" entry in the credential store. The service refuses to start rather than ' +
+        `Run \`node src/cli.js config set ${WEB_UI_CREDENTIAL_SETTING} <password>\`, or use the ` +
+        'settings editor (`config edit --gui`, or the tray). The service refuses to start rather than ' +
         'expose the config and solve UI without authentication.'
     );
   }

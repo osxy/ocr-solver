@@ -656,7 +656,8 @@ export async function saveSecrets({
   const writable = list.filter((p) => typeof p.set === 'function');
   if (writable.length === 0) {
     throw new Error(
-      'no writable credential store is available; set PUSHBULLET_TOKEN / LLM_API_KEY in the environment instead'
+      'no writable credential store is available; use a persistent PUSHBULLET_TOKEN / LLM_API_KEY ' +
+        '(setx / System Properties) or run the settings editor where a store can be written'
     );
   }
 

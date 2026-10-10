@@ -1098,7 +1098,9 @@ test('http.enabled without a token refuses to start', async (t) => {
       }),
     (err) => {
       assert.equal(err.name, 'MissingHttpTokenError');
+      assert.match(err.message, /config set http\.token/, 'the message must lead with the command that writes the store');
       assert.match(err.message, /HTTP_AUTH_TOKEN/);
+      assert.doesNotMatch(err.message, /credentials\.json/, 'the plaintext migration file must not be presented as a route');
       return true;
     }
   );
