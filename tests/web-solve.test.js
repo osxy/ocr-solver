@@ -154,6 +154,36 @@ async function upload(server, session, bytes) {
   return fetch(`${baseUrl(server)}/solve?session=${encodeURIComponent(session)}`, { method: 'POST', body: form });
 }
 
+/**
+ * Build a multipart body by hand so the boundary spelling is ours, not undici's.
+ *
+ * undici's `FormData` generates an all-lowercase boundary, so lowercasing the whole
+ * `Content-Type` header is a no-op and cannot be told apart from a correct parser -
+ * that is exactly why #187 shipped green. A boundary is case-sensitive (RFC 2046) and
+ * Chrome and Edge send mixed case (`----WebKitFormBoundary...`), so this is the input
+ * the browser actually submits, and the one the report was about.
+ */
+function handBuiltMultipart(bytes, boundary = '----WebKitFormBoundaryAbCdEf12') {
+  const body = Buffer.concat([
+    Buffer.from(`--${boundary}\r\n`),
+    Buffer.from('Content-Disposition: form-data; name="image"; filename="puzzle.png"\r\n'),
+    Buffer.from('Content-Type: image/png\r\n'),
+    Buffer.from('\r\n'),
+    bytes,
+    Buffer.from(`\r\n--${boundary}--\r\n`),
+  ]);
+  return { body, contentType: `multipart/form-data; boundary=${boundary}` };
+}
+
+async function uploadRaw(server, session, bytes) {
+  const { body, contentType } = handBuiltMultipart(bytes);
+  return fetch(`${baseUrl(server)}/solve?session=${encodeURIComponent(session)}`, {
+    method: 'POST',
+    headers: { 'content-type': contentType },
+    body,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // The one access rule
 // ---------------------------------------------------------------------------
@@ -350,6 +380,22 @@ test('an uploaded image is solved and the answer, method, confidence and timing 
   assert.match(html, /\btrue\b/, 'confidence is shown');
   assert.match(html, /\d+ ms/, 'the timing is shown');
   assert.equal(res.headers.get('cache-control'), 'no-store');
+});
+
+test('a browser-style mixed-case boundary from the solve page is solved (#187)', async (t) => {
+  const dir = tempDir(t);
+  const config = validateConfig({}).config;
+  const { server } = await startUi(t, {
+    solveCore: scriptedCore(SOLVED),
+    config,
+    inboxDir: join(dir, 'inbox'),
+  });
+  const session = await openLoopbackSession(server);
+  const res = await uploadRaw(server, session, await smallPng());
+  const html = await res.text();
+  assert.equal(res.status, 200, html);
+  assert.match(html, /Solved\./);
+  assert.match(html, /7/);
 });
 
 test('an unresolved puzzle shows the acknowledgement wording, never a guess', async (t) => {
