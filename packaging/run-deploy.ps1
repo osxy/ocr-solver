@@ -37,6 +37,29 @@ function Assert($condition, $message) {
     if (-not $condition) { throw "ASSERT FAILED: $message" }
 }
 
+# Every node.exe whose command line names the install dir. The restart work already used
+# this match; the single-instance checks reuse it so a stray runner process cannot be
+# mistaken for ours.
+function Get-InstalledNodeProcesses($installDir) {
+    return @(Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -and $_.CommandLine.Contains($installDir) })
+}
+
+function Wait-ForInstalledNodeProcess($installDir, [int]$timeoutSec = 60) {
+    $deadline = (Get-Date).AddSeconds($timeoutSec)
+    $procs = @()
+    while ($procs.Count -eq 0 -and (Get-Date) -lt $deadline) {
+        $procs = Get-InstalledNodeProcesses $installDir
+        if ($procs.Count -eq 0) { Start-Sleep -Milliseconds 200 }
+    }
+    return $procs
+}
+
+function Stop-InstalledNodeProcesses($installDir) {
+    Get-InstalledNodeProcesses $installDir |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+}
+
 $timer = [System.Diagnostics.Stopwatch]::StartNew()
 $root = Join-Path ([IO.Path]::GetTempPath()) ("puzzlesolver-deploy-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $root | Out-Null
@@ -52,20 +75,25 @@ $payload = Join-Path $root 'payload'
 Expand-Archive -Path $Zip -DestinationPath $payload -Force
 Assert (Test-Path (Join-Path $payload 'node.exe')) "the artifact has no node.exe at its root"
 
-# Run install.ps1 in a child process so a thrown install error is observable as a process
-# exit code, not a terminating error that aborts this script ($ErrorActionPreference is
-# Stop here too). Returns the captured output and the exit code. `&` passes the script
-# path as one argument, so a temp path with spaces cannot split.
-function Invoke-Installer($scriptPath) {
-    $text = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $scriptPath 2>&1 | Out-String
+# `extraArgs` are appended to the -File invocation, so the same child-process pattern
+# exercises `install.ps1` with and without `-NoStart`.
+function Invoke-Installer($scriptPath, [string[]]$extraArgs = @()) {
+    $argv = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $scriptPath) + $extraArgs
+    $text = & powershell.exe @argv 2>&1 | Out-String
     return @{ code = $LASTEXITCODE; text = $text }
 }
 
 try {
-    # --- 1. install.ps1 succeeds and lands the files ------------------------
-    $installed = Invoke-Installer (Join-Path $payload 'install.ps1')
+    # --- 1. install.ps1 -NoStart installs and starts nothing -----------------
+    # `-NoStart` is the scripted-install switch; assert it really does not start the app
+    # before the default path is allowed to. The install-dir-scoped match means a node.exe
+    # from another job cannot make this pass.
+    $installed = Invoke-Installer (Join-Path $payload 'install.ps1') -extraArgs '-NoStart'
     Assert ($installed.code -eq 0) "install.ps1 exited $($installed.code): $($installed.text)"
     Assert ($installed.text -match 'Installed to ') "install.ps1 did not print a success line: $($installed.text)"
+    Assert ($installed.text -match 'not started now') "install.ps1 -NoStart must say the app was not started: $($installed.text)"
+    $none = Wait-ForInstalledNodeProcess $installDir 3
+    Assert ($none.Count -eq 0) "install.ps1 -NoStart started $($none.Count) node.exe process(es); it must start none"
 
     $expected = @(
         'node.exe',
@@ -79,6 +107,20 @@ try {
         Assert (Test-Path $path) "install: expected $rel at $path"
     }
     Write-Host "install: $($expected.Count) expected files are present under $installDir"
+
+    # --- 1b. the default install starts the app it just installed ------------
+    # This is the post-install start (issue #167) and the only place a runner can observe
+    # it. It also leaves a stale lock behind: the process is killed, so the `--headless`
+    # start below proves a dead holder does not block a legitimate start.
+    $startedInstall = Invoke-Installer (Join-Path $payload 'install.ps1')
+    Assert ($startedInstall.code -eq 0) "install.ps1 (start) exited $($startedInstall.code): $($startedInstall.text)"
+    Assert ($startedInstall.text -match 'starting now') "install.ps1 did not say it started the app: $($startedInstall.text)"
+    $autoStarted = Wait-ForInstalledNodeProcess $installDir 60
+    Assert ($autoStarted.Count -gt 0) "install.ps1 did not start the app within 60s"
+    Write-Host "install: the default run started $($autoStarted.Count) node.exe process(es)"
+    Stop-InstalledNodeProcesses $installDir
+    Start-Sleep -Seconds 2
+    Assert ((Get-InstalledNodeProcesses $installDir).Count -eq 0) 'install: the started process could not be stopped'
 
     # --- 2. autostart is a per-user Startup entry, not a scheduled task ------
     # The task was refused with `Toegang geweigerd` for an ordinary user (#163), so the
@@ -113,16 +155,10 @@ try {
 
     # --- 4. PuzzleSolver.vbs starts a process (the thing a user double-clicks) --
     & wscript.exe (Join-Path $installDir 'PuzzleSolver.vbs')
-    $deadline = (Get-Date).AddSeconds(60)
-    $launched = @()
-    while ($launched.Count -eq 0 -and (Get-Date) -lt $deadline) {
-        $launched = @(Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
-            Where-Object { $_.CommandLine -and $_.CommandLine.Contains($installDir) })
-        if ($launched.Count -eq 0) { Start-Sleep -Milliseconds 200 }
-    }
+    $launched = Wait-ForInstalledNodeProcess $installDir 60
     Assert ($launched.Count -gt 0) "launcher: PuzzleSolver.vbs did not start node.exe for $installDir within 60s"
     Write-Host "launcher: PuzzleSolver.vbs started $($launched.Count) node.exe process(es)"
-    foreach ($proc in $launched) { Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue }
+    Stop-InstalledNodeProcesses $installDir
     Start-Sleep -Seconds 2
 
     # --- 5. uninstall.ps1 removes the startup shim and the folders -----------

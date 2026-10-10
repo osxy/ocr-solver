@@ -45,6 +45,7 @@ import { defaultWebSettingsDialog, defaultWebSetupDialog } from './ui/web-config
 import { createShutdownHandler, planRestart } from './deploy/restart.js';
 import { WEB_UI_CREDENTIAL_SETTING, webUiAdmitsNonLoopback } from './ui/access.js';
 import { storeReport, loadReportCache, defaultAccuracyCachePath } from './accuracy.js';
+import { AlreadyRunningError, acquireInstanceLock, instanceLockPathForStatePath, resolveInstanceLockPath } from './instance.js';
 
 /**
  * No token could be resolved and there was no dialog to ask for one. The CLI turns
@@ -217,6 +218,13 @@ export async function createApp({
   // then a save that needs a restart simply reports it.
   onRestart = null,
 
+  // #167: the single-instance lock. `runApp` acquires it before any UI is built and
+  // passes it in, so a second start exits before a second tray or setup page; a direct
+  // `createApp().start()` acquires one itself. `instanceLockPath` overrides where it
+  // lives (tests, or a caller with a state path of its own).
+  instanceLock = null,
+  instanceLockPath = null,
+
   // Dependency injection - everything below can be replaced by a test.
   store: providedStore = null,
   client: providedClient = null,
@@ -286,7 +294,9 @@ export async function createApp({
 
   // Open the store before pruning: the prune is housekeeping and the store is what
   // makes a solve idempotent across restarts, so a store failure must be louder.
-  const store = providedStore ?? openStore({ path: statePath ?? defaultStatePath({ platform, env, homedir }) });
+  const resolvedStatePath = statePath ?? defaultStatePath({ platform, env, homedir });
+  const resolvedLockPath = instanceLockPath ?? instanceLockPathForStatePath(resolvedStatePath);
+  const store = providedStore ?? openStore({ path: resolvedStatePath });
   const ownsStore = !providedStore;
 
   // #67: notice settings introduced since the last reviewed version. This is a
@@ -604,9 +614,24 @@ export async function createApp({
 
   let started = false;
   let stopped = false;
+  // The lock is taken here, in `start()`, not at assembly: a `createApp` that is only
+  // inspected (every test) must not claim the runtime. `stop()` releases it, so a
+  // restart can hand the lock to its successor and a stopped app can be started again.
+  let instanceLockState = instanceLock;
 
   async function start() {
     if (started) return status();
+    // A previous refusal leaves a not-acquired lock object; retry acquisition rather
+    // than treating that object as an already-taken lock.
+    if (!instanceLockState?.acquired) {
+      instanceLockState = acquireInstanceLock({ lockPath: resolvedLockPath, logger });
+    }
+    if (!instanceLockState.acquired) {
+      // A library caller sees the error; the log line is for the launcher, which hides
+      // stderr - the whole point of "exit cleanly and say why" is that it is recorded.
+      logger.warn?.(`refused to start a second instance: ${new AlreadyRunningError(instanceLockState.holder).message}`);
+      throw new AlreadyRunningError(instanceLockState.holder, { lockPath: resolvedLockPath });
+    }
     started = true;
     logger.info(
       `starting ingresses (pushbullet=${Boolean(listener)}, http=${Boolean(httpServer)}, ` +
@@ -657,6 +682,11 @@ export async function createApp({
       }
     }
     if (ownsStore) store.close();
+    // Release before the process exits so a deliberate restart's successor finds the
+    // path free; a process that dies without this leaves a stale lock, which the
+    // pid-liveness check clears on the next start.
+    instanceLockState?.release?.();
+    instanceLockState = null;
     logger.info('shut down');
   }
 
@@ -811,6 +841,43 @@ export async function createApp({
  * The signal handlers close the listener socket and the database (DESIGN 5).
  */
 export async function runApp(options = {}) {
+  // #167: take the single-instance lock before any UI exists. Acquiring it in
+  // `createApp` would be too late for the user path - a second start would build a
+  // second tray and could run first-run setup before learning it may not listen - so
+  // `runApp` takes it here and hands it to `createApp`. A direct `createApp().start()`
+  // still acquires its own, so the guard lives on the start path, not on this wrapper.
+  const preLock =
+    options.instanceLock ??
+    acquireInstanceLock({ lockPath: options.instanceLockPath ?? resolveInstanceLockPath(options) });
+  if (!preLock.acquired) {
+    const err = new AlreadyRunningError(preLock.holder, { lockPath: preLock.lockPath });
+    // The launcher runs with no console, so stderr alone would make the refusal silent
+    // there. Best-effort: logging must never turn a clean refusal into a crash.
+    try {
+      const logger =
+        options.logger ??
+        createLogger({
+          path: options.logPath ?? defaultLogPath({ platform: options.platform, env: options.env, homedir: options.homedir }),
+        });
+      logger.warn?.(err.message);
+    } catch {
+      // the refusal is already knowable from the exit code
+    }
+    throw err;
+  }
+
+  try {
+    return await runLockedApp(options, preLock);
+  } catch (err) {
+    // An assembly or first-run failure must not leave the lock behind for a start that
+    // never reached `app.stop()`. A crash that bypasses this is covered by the stale
+    // pid check on the next start.
+    preLock.release?.();
+    throw err;
+  }
+}
+
+async function runLockedApp(options, preLock) {
   // `shutdown` is created after the tray is wired (it must be able to stop it), but
   // the settings dialog is assembled before that. The closure reads the variable when
   // a restart is actually requested, by which time it is assigned.
@@ -821,6 +888,7 @@ export async function runApp(options = {}) {
   // travel together so the two decisions cannot drift.
   const app = await createApp({
     ...options,
+    instanceLock: preLock,
     trayRequested: options.tray === true,
     // The default UI is the loopback web editor (issue #56): the Windows launcher runs
     // the tray with no console, so a terminal prompt cannot be presented there. The

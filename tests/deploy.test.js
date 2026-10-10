@@ -108,6 +108,17 @@ test('install.ps1 installs per-user, delegates to Node and checks the child exit
   const checkAt = ps.indexOf('$LASTEXITCODE -ne 0');
   const successAt = ps.indexOf('Installed to ');
   assert.ok(checkAt >= 0 && successAt > checkAt, 'the success line must be unreachable when the child fails');
+
+  // #167: install-and-go. The app is started *after* the exit-code check (so a failed
+  // install never starts anything), through the launcher rather than the Startup shim
+  // (the shim sleeps 20 s), and detached (`Start-Process`, so the installer exits).
+  assert.match(ps, /\[switch\]\$NoStart/, 'the unattended install switch must exist');
+  assert.match(ps, /Start-Process -FilePath \$Wscript -ArgumentList/, 'the launcher is started detached');
+  assert.match(ps, /PuzzleSolver\.vbs/, 'the installer starts the launcher itself');
+  assert.ok(!/PuzzleSolver-startup\.vbs/.test(ps), 'it must not go through the sleeping Startup shim');
+  const startAt = ps.indexOf('Start-Process -FilePath $Wscript');
+  assert.ok(startAt > checkAt, 'the app must only start after the child exit code was checked');
+  assert.match(ps, /starting now/, 'the success text describes what happened, not what to do next');
 });
 
 test('uninstall.ps1 removes the startup shim and all three per-user folders', () => {
@@ -192,6 +203,12 @@ test('run-deploy.ps1 proves a failing installer is propagated and prints no succ
   assert.match(ps, /PuzzleSolver-startup\.vbs/);
   assert.match(ps, /Sleep 20000/);
   assert.ok(!ps.includes('schtasks'), 'no scheduled task is queried any more');
+  // #167: both install paths are exercised - `-NoStart` starts nothing, the default run
+  // starts the app, and the killed app's stale lock must not block the next start.
+  assert.match(ps, /'-NoStart'/, 'the unattended path must be exercised');
+  assert.match(ps, /not started now/, 'the -NoStart install must be asserted to start nothing');
+  assert.match(ps, /starting now/, 'the default install must be asserted to start the app');
+  assert.match(ps, /Wait-ForInstalledNodeProcess/, 'the post-install start must actually be observed');
 });
 
 // ---------------------------------------------------------------------------

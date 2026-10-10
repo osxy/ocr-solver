@@ -1533,11 +1533,46 @@ tray has a **Restart** item; both route through the same `createShutdownHandler`
 
 Install layout: `packaging/install.ps1` locates `%LOCALAPPDATA%\Programs\PuzzleSolver`, copies
 the payload, then hands off to `app/src/deploy/install.js` (run by the bundled `node.exe`) to
-write the launcher and the Startup shim. `packaging/uninstall.ps1` delegates the shim deletion the
+write the launcher and the Startup shim. **Install is one step: after the `node.exe` child
+exits 0, install.ps1 starts `PuzzleSolver.vbs` detached** (`Start-Process`, so the installer
+exits and the app keeps running), not the Startup shim - the shim sleeps 20 s and would make
+the installer appear to hang. `-NoStart` is the switch for a scripted or unattended install
+where opening the first-run setup page is wrong. On a fresh install with no token the started
+app opens its setup page (#56), so install -> running -> it asks for the token is the first
+run. `packaging/uninstall.ps1` delegates the shim deletion the
 same way, then removes the three per-user folders. All path decisions live in the Node modules;
 the PowerShell is locator/launcher glue. Both `_ps1` scripts check `$LASTEXITCODE` after the
 native child, because `$ErrorActionPreference = 'Stop'` does not cover it and a failure otherwise
 still printed "Installed" (#162).
+
+**One process, or none: the single-instance lock (issue #167).** The restart machinery above
+guarantees a deliberate restart starts exactly one successor, but the ordinary path a user
+reaches first - double-clicking `PuzzleSolver.vbs` - had no protection at all, and neither the
+HTTP ingress (off by default) nor the ephemeral web UI would stop a second copy. Two copies are
+two Pushbullet listeners, and every puzzle is answered twice: a wrong answer that also spends
+the reply budget. Adding "start after install" made that materially more likely (a re-install
+on a running machine, or a manual start right after the installer's).
+
+The guard is a **lock file beside `state.db`** (`src/instance.js`), created with `wx` so the
+create is atomic; the loser gets `EEXIST`. A lock file works on every platform the app
+supports, where a named mutex is Windows-only and would need a fallback. The lock is taken in
+`app.start()`, so `--headless` and the tray agree, and released in `app.stop()` so a restart's
+successor finds it free; `runApp` takes it before any UI is built, so a second start exits
+without showing a second tray or a second setup page. The data directory is already
+per-instance (one `state.db`), and a caller with its own `statePath` gets its own lock - which
+is what keeps the test suite, whose processes legitimately share one checkout but use separate
+temp state paths, from colliding.
+
+**Stale is an ordinary event, not an error.** The file records the holder's pid, and a lock is
+stale when that pid is not a running process (`process.kill(pid, 0)`: `ESRCH` is gone, `EPERM`
+is alive-but-not-ours) or when the file is unreadable or truncated. A process killed without
+cleanup - the restart work makes this ordinary - therefore does not block the next start. The
+stale removal is guarded by the same `wx` create, so two processes that both find a stale lock
+cannot both take it. The refused start exits cleanly with a sentence (`AlreadyRunningError`),
+not a stack trace. Known gap: pid reuse can make a stale lock look live; the realistic trigger
+is a reboot, and the heartbeat or cross-platform start-time probe that would close it has not
+yet been worth its cost. `tests/instance.test.js` covers the refusal and every stale shape, and
+`tests/app.test.js` starts the same state path twice and asserts the second starts no listener.
 
 **Unverifiable on the Linux development host:** `wscript` execution, the `_ps1` scripts end to
 end, Explorer opening a log, and the actual tray widget. Every one of those has a testable seam

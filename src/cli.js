@@ -445,9 +445,10 @@ if (argv[0] === 'accuracy') {
   );
 } else if (argv[0] === 'listen' || argv.includes('--listen') || argv.includes('--headless')) {
   runListen(argv).catch((err) => {
-    // These are expected, actionable startup outcomes: the missing tray, and the
-    // first-run outcomes (no token, dialog cancelled, dialog/credential failure).
-    // A stack trace would read as a crash, so surface only the message.
+    // These are expected, actionable startup outcomes: the missing tray, the first-run
+    // outcomes (no token, dialog cancelled, dialog/credential failure), and a second
+    // start when an instance is already running (#167). A stack trace would read as a
+    // crash, so surface only the message.
     if (err?.name === 'TrayUnavailableError') {
       console.error(err.message);
       process.exit(1);
@@ -457,7 +458,10 @@ if (argv[0] === 'accuracy') {
       err?.name === 'MissingHttpTokenError' ||
       err?.name === 'WeakHttpTokenError' ||
       err?.name === 'SetupCancelledError' ||
-      err?.name === 'SetupFailedError'
+      err?.name === 'SetupFailedError' ||
+      // #167: a second start is an expected refusal, not a crash - it gets a sentence,
+      // not a stack trace.
+      err?.name === 'AlreadyRunningError'
     ) {
       console.error(err.message);
       process.exit(1);
