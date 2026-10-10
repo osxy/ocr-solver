@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <!--
+    A jigsaw puzzle piece: a square body with a knob (tab) on the top edge and a
+    blank (notch) cut into the right edge.
+
+    The geometry here is the single source of truth. `scripts/build-tray-icons.mjs`
+    rasterises it twice, substituting the two colour tokens below for the grey
+    state, and embeds the resulting 16x16 PNGs in `src/ui/icons.js`. Edit the path
+    here, never the base64 there.
+
+    The stroke is the outline that keeps the piece legible on a light and a dark
+    taskbar; the fill is the state colour (blue = listening, grey = quiet).
+  -->
+  <path
+    d="M 2.5 5
+       L 5.8 5
+       C 5.8 3.1 6.5 2.4 8 2.4
+       C 9.5 2.4 10.2 3.1 10.2 5
+       L 13.5 5
+       L 13.5 8.2
+       C 11.9 8.2 11.3 8.7 11.3 9.75
+       C 11.3 10.8 11.9 11.3 13.5 11.3
+       L 13.5 14.5
+       L 2.5 14.5
+       Z"
+    fill="#1e78dc"
+    stroke="#0a3d73"
+    stroke-width="1"
+    stroke-linejoin="round"
+    stroke-linecap="round"/>
+</svg>
