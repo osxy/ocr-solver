@@ -14,5 +14,7 @@ blended; the corpus is called a regression guard, not real-world accuracy.
 
 ![The statistics page: recent solves each carrying a shaped solved / withheld / unresolved verdict with answer, method, sent-or-withheld reason and took, then recorded-traffic totals by tier and puzzle class, then a separate offline-corpus section whose empty state says no report is cached.](./screenshots/statistics.png)
 
+![The same statistics page in the explicit dark theme, with a Light / Dark / Auto toggle in the header.](./screenshots/statistics-dark.png)
+
 The page is reached through the web UI described in the [README](../README.md#the-web-ui)
 and in [Exposing the web UI beyond loopback](./remote-access.md).

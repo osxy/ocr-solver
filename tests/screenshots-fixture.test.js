@@ -1,5 +1,6 @@
 /**
- * The screenshot fixture is a pure function of a fixed clock (issue #114).
+ * The screenshot fixture is a pure function of a fixed clock (issue #114), and every
+ * committed screenshot is displayed somewhere (issue #149).
  *
  * The capture itself needs Firefox, so it cannot run in CI. The reproducibility property
  * lives entirely in the fixture, though: its timestamps are ours, so they must come from a
@@ -10,6 +11,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readdirSync, readFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 
 import { buildHistory, FIXTURE_NOW } from '../scripts/screenshot-fixture.mjs';
 
@@ -59,4 +62,63 @@ test('the fixture carries nothing real', () => {
     assert.match(subject, /^demo\//, `fixture subject ${subject} is not a demo name`);
     assert.doesNotMatch(subject, /@/, `fixture subject ${subject} looks like a real ident`);
   }
+});
+
+const repoRoot = join(import.meta.dirname, '..');
+const screenshotsDir = join(repoRoot, 'docs', 'screenshots');
+// The directory's own README names every file in its table; an embed there would make this
+// guard vacuous, so it is not a valid consumer.
+const screenshotsReadme = resolve(screenshotsDir, 'README.md');
+
+/** Every `.md` file under the repository, minus dependencies and VCS metadata. */
+function markdownFiles(dir) {
+  const found = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.name === 'node_modules' || entry.name === '.git') continue;
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) found.push(...markdownFiles(full));
+    else if (entry.isFile() && entry.name.endsWith('.md')) found.push(full);
+  }
+  return found;
+}
+
+/**
+ * Every committed screenshot is embedded somewhere (issue #149).
+ *
+ * A screenshot nobody displays costs repository weight and regeneration time for nothing.
+ * `statistics-dark.png` was committed, regenerated and shown on no page at all until this
+ * guard, and the directory README pointed at the top-level README that embeds none of the
+ * six. The check is mechanical: parse the Markdown image syntax across the repository's
+ * `.md` files and require each `docs/screenshots/*.png` to be the target of at least one.
+ * A prose mention (DESIGN.md naming `solve.png`) is deliberately not enough - only an
+ * `<img>` puts the picture in front of a reader.
+ *
+ * WHAT THIS GUARD IS NOT. It proves an image has a reader, not that the image is current:
+ * only regenerating against the live UI can tell whether it is stale, and that needs a
+ * browser, which `npm test` deliberately does not have. A green run means the image is
+ * displayed, not that it is true.
+ */
+test('every committed screenshot is embedded as an image somewhere', () => {
+  const shots = readdirSync(screenshotsDir)
+    .filter((name) => name.endsWith('.png'))
+    .map((name) => ({ name, path: join(screenshotsDir, name) }));
+  assert.ok(shots.length > 0, 'docs/screenshots/ has no PNGs; the test has lost its subject');
+
+  const referenced = new Set();
+  for (const file of markdownFiles(repoRoot)) {
+    if (resolve(file) === screenshotsReadme) continue;
+    const text = readFileSync(file, 'utf8');
+    for (const match of text.matchAll(/!\[[^\]]*\]\(([^)\s]+)[^)]*\)/g)) {
+      const target = match[1].replace(/^<|>$/g, '');
+      if (/^(https?:|data:)/i.test(target)) continue;
+      referenced.add(resolve(dirname(file), target));
+    }
+  }
+
+  const missing = shots.filter((shot) => !referenced.has(resolve(shot.path))).map((shot) => shot.name);
+  assert.deepEqual(
+    missing,
+    [],
+    `these committed screenshots are embedded in no .md file: ${missing.join(', ')}. Embed each in the docs page that describes its mode, or remove it from the repository.`
+  );
 });
