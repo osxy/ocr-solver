@@ -3,7 +3,7 @@
  *
  * The README is the front door: what it is, install, run, the failures people hit, the
  * known limitations, and pointers. Everything else belongs in DESIGN.md or docs/ (the
- * rule is written down in AGENTS.md §10). These four tests are the ratchet:
+ * rule is written down in AGENTS.md §10). These six tests are the ratchet:
  *
  *   1. a length budget, so a milestone cannot append its mode and its evidence here;
  *   2. every relative link and anchor resolves, so moving detail to docs/ cannot leave
@@ -11,7 +11,11 @@
  *   3. every code fence is closed, so a stray marker cannot turn the tail of the file
  *      into a wall of grey monospace;
  *   4. `## License` is the terminal section, so material appended after it is visible
- *      even when it is not another heading.
+ *      even when it is not another heading;
+ *   5. every docs/*.md page is linked from the README, so a page cannot be added and
+ *      then forgotten;
+ *   6. a page that describes configuration also mentions the settings editor, so the
+ *      file is not the only route a page shows.
  *
  * The budget numbers are deliberately stated here and in AGENTS.md §10. When the README
  * legitimately grows, raise them in one deliberate commit and say why in the message -
@@ -202,4 +206,79 @@ test('every top-level docs page is linked from the README', () => {
       `docs/${page} is not linked from the README, so a reader never reaches it`
     );
   }
+});
+
+/**
+ * Describing configuration means mentioning the web UI. The rule is in AGENTS.md §10:
+ * any page that shows a `config.toml` block, a `config set` command or individual
+ * setting keys must also say the same settings can be changed in the settings editor
+ * (the tray's **Settings** item, or `config edit --gui`). The editor is the path most
+ * users take, and a page that describes a key without it reads as "edit this file by
+ * hand".
+ *
+ * WHAT THIS GUARD IS NOT. It sees that a page *mentions* the editor. It cannot see
+ * whether the mention is useful, whether it appears where a reader needs it, or whether
+ * the rest of the page is correct - the README told headless users to set session
+ * environment variables for a whole release while mentioning the editor in a trailing
+ * sentence, and this check passed it. A green run means the mention exists, nothing
+ * more; the reader still has to read the page.
+ *
+ * WHY THERE IS NO REGISTRY CROSS-CHECK HERE (tried, not clean). The stronger check
+ * would enumerate the `section.key` entries the docs show and assert each one exists in
+ * `SETTINGS` in `src/ui/settings.js`, so a page cannot document a setting the editor
+ * cannot set. It is not here because the docs' `config.toml` blocks immediately surface
+ * one real, pre-existing gap: `reply.max_per_hour` is in `DEFAULTS` and in
+ * `docs/configuration.md`, but is absent from `SETTINGS`, so `config set reply.max_per_hour`
+ * is rejected as an unknown key - a documented setting the web UI cannot set, exactly
+ * the inconsistency the check exists to catch. Fixing that is not a docs-or-tests change.
+ * The inline `section.key` half is also prose-sensitive: `docs/configuration.md` writes
+ * "There is no `web_ui.enabled` key", which a regex cannot tell from a real key. Until
+ * the registry is complete, the guard stays at the mention the rule asks for; a
+ * weakened cross-check with an allowlist would hide the very gap it should report.
+ */
+test('a page that describes configuration also says the settings editor can change it', () => {
+  const docsDir = join(repoRoot, 'docs');
+  const pages = [
+    { name: 'README.md', text: readme },
+    ...readdirSync(docsDir, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.endsWith('.md'))
+      .map((entry) => ({
+        name: `docs/${entry.name}`,
+        text: readFileSync(join(docsDir, entry.name), 'utf8'),
+      })),
+  ];
+
+  assert.ok(pages.length > 0, 'no pages to check; the test has lost its subject');
+
+  // What "describes configuration" means here, matching the audit in §10: a page that
+  // shows the config file, a config CLI command or a TOML block. A page that names a
+  // `section.key` only in passing (the solve and statistics pages describe a bound, not
+  // how to change it) is not a configuration guide and is not tested.
+  const configurationPatterns = [
+    { what: '`config.toml`', re: /config\.toml/ },
+    { what: 'a config CLI command', re: /\bconfig (set|get|edit)\b/ },
+    { what: 'a TOML code block', re: /^`{3,}toml\b/m },
+  ];
+
+  // The mention the rule asks for: the settings editor under any of the names the docs
+  // use for it.
+  const webUi = /settings editor|settings ui|settings item|settings page|config edit\s+--gui|--gui\b/i;
+
+  let configurationPages = 0;
+  for (const page of pages) {
+    const matches = configurationPatterns.filter((pattern) => pattern.re.test(page.text));
+    if (matches.length === 0) continue;
+    configurationPages += 1;
+
+    assert.match(
+      page.text,
+      webUi,
+      `${page.name} shows ${matches.map((m) => m.what).join(' and ')} but never mentions the settings editor or \`config edit --gui\`, so it reads as "edit this file by hand".`
+    );
+  }
+
+  assert.ok(
+    configurationPages > 0,
+    'no page describes configuration; the test has lost its subject'
+  );
 });
