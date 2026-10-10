@@ -953,8 +953,31 @@ image bytes, which stay debugging detail behind the store's policy.
 test and a fake UI keep working; `src/config-cli.js` still defaults `config edit` to the terminal
 prompt and selects the web dialog only for `config edit --gui`. `openWebSettingsDialog` turns a bind
 failure into `{ saved: false, failed: true, detail }` instead of a throw, which the tray controller
-reports and then leaves the listener running. The one seam that remains unverifiable on this host is
-the browser hand-off (`explorer.exe`/`xdg-open`); everything behind it is a real HTTP test.
+reports and then leaves the listener running. What remains unverifiable on this host is whether the
+Windows opener actually shows a browser window; the *choice* of opener and the no-terminal fallback
+are asserted offline, and everything behind the hand-off is a real HTTP test.
+
+**The hand-off is classified, and a failed one still reaches a person (issue #169).** A real first
+run double-clicked `PuzzleSolver.vbs` and got the **Documents** folder: a URL had gone to
+`explorer.exe`, which parses its own switches (`/select,`, `/e,`, `/root,…`), matches none of them
+for a URL with a query string, and opens its default folder. Windows now splits the two kinds of
+target — a **file path** to `explorer.exe` (what *Open log* and *Open config* need) and a **URL** to
+the shell's protocol handler, `rundll32 url.dll,FileProtocolHandler`. `cmd /c start "" <url>` was
+rejected because it interposes a `cmd.exe` parser in front of the URL, and node's Windows argument
+quoting does not protect `&`/`|`/`^`, so a future URL with a metacharacter would need hand-built
+verbatim quoting. `openPath` returns `{ launched, kind, command }`, where **`launched` means a
+handler process started, never that a window appeared** — resolving on `spawn` is exactly what let
+the old code read a Documents window as a browser — so the fallback is no longer gated on it.
+`openWebSettingsDialog` prints the link to a terminal (`output`, passed by `runApp` only when
+`process.stdout.isTTY`) **whether or not the launch looked successful**; a hidden session (the
+launcher's window style 0, so no terminal and, on a first run, no tray yet) writes it to a one-time
+file (`…/PuzzleSolver/handoff/settings-url.txt`, mode 0600, removed when the session settles) and
+raises a Windows message box through PowerShell's `[System.Windows.Forms.MessageBox]` — the same
+"PowerShell ships with Windows" reasoning that replaced keytar for DPAPI, so no dependency is added.
+The URL carries a single-use five-minute launch token, so it goes to a person (a terminal or a
+dialog) or to that one-session file; it never goes to the rotating log. `defaultWebSetupDialog`
+always raises the dialog on a hidden run, because first run has no other surface; the tray's
+**Settings** item raises it only when the launch reported failure, since the tray is already one.
 
 **Watchdog.** `src/ui/watchdog.js` is a pure, clock-injectable state machine. The listener now
 exposes `lastActivityAt` (advanced by a socket `open`, any stream message, or a completed poll)
@@ -1368,7 +1391,7 @@ captchasolver/
 │  ├─ state/db.js             node:sqlite attempts log         ✅
 │  ├─ pushbullet/{client,listener,filter,files,respond}.js    ✅
 │  ├─ ui/{tray,setup,watchdog,notifications,icons,mode}.js    ✅ M3
-│  ├─ ui/{tray-systray,open-path}.js   native/platform seam   ✅ M3 (unverified on Windows)
+│  ├─ ui/{tray-systray,open-path,handoff,message-box}.js  native/platform seam   ✅ M3 (opener choice asserted; the browser itself unverified)
 │  ├─ deploy/{launcher,autostart,install,uninstall}.js        ✅ M3 (executed on Windows in CI, #59)
 │  └─ config.js, secrets.js, logging.js                       ✅
 ├─ tests/                     unit + live-model + real and synthetic corpus end-to-end  ✅
@@ -1580,7 +1603,7 @@ end, Explorer opening a log, and the actual tray widget. Every one of those has 
 Startup shim, the `--headless` start, the `wscript` launcher and uninstall are also executed on
 `windows-latest`, and since #60 the real DPAPI round trip is (`packaging/run-dpapi.ps1`), run as
 two processes so the read must decrypt from disk and the job asserts `Unprotect` ran (#83). What
-remains unverified is the interactive-desktop behaviour (tray, toast, Explorer hand-off) **and
+remains unverified is the interactive-desktop behaviour (tray, toast, browser hand-off) **and
 the unprivileged install path**: the runner is an administrator, so it cannot prove the install
 works without elevation (#163).
 
@@ -1632,11 +1655,13 @@ It is bounded at 15 minutes and runs on the same triggers as `package` because i
 of the Windows build it reuses, and an installer regression belongs on the PR that introduces it.
 
 What an interactive desktop would be needed for is still unverified: the native `systray2` tray
-widget and the `node-notifier` toast need a window station, and the `explorer.exe` browser hand-off
-(#56) is likewise unexercised. The `systray2` class *resolution* — the layer that was broken — is
-now asserted on the packaged artifact by `packaging/run-tray-interop.ps1`; only the widget drawing
-is not. The deploy job's launcher step enters the tray path but does not assert it (it stops at
-"a node.exe started"), so this separate step is the assertion. The unprivileged install path is likewise unexercised, because the
+widget and the `node-notifier` toast need a window station. The `systray2` class *resolution* — the layer
+that was broken — is now asserted on the packaged artifact by `packaging/run-tray-interop.ps1`; only the
+widget drawing is not. The deploy job's launcher step enters the tray path but does not assert it (it stops
+at "a node.exe started"), so that separate step is the assertion. Whether the Windows URL handler (now
+`rundll32 url.dll,FileProtocolHandler`, not `explorer.exe` — #169) opens a real browser window is likewise
+unexercised; its failure path is not, since it is asserted with an injected opener. The unprivileged
+install path is likewise unexercised, because the
 runner is an administrator (#163). The DPAPI credential round trip, by contrast, *is* executed
 on the runner as two processes: the writer migrates and saves, the reader decrypts from disk and
 asserts `Unprotect` was called (see [§8](#8-security--privacy)); what it cannot cover is a process

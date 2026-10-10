@@ -451,6 +451,7 @@ test('defaultWebSettingsDialog opens the browser, saves through HTTP, and stops'
   let openedUrl = null;
   const dialog = defaultWebSettingsDialog({
     editor,
+    handoffDir: tempDir(t),
     openBrowser: async (url) => {
       openedUrl = url;
       return { launched: true };
@@ -490,6 +491,7 @@ test('a web first-run dialog collects the two secrets through createSetup', asyn
   let openedUrl = null;
   const dialog = defaultWebSetupDialog({
     setup,
+    handoffDir: tempDir(t),
     openBrowser: async (url) => {
       openedUrl = url;
       return { launched: true };

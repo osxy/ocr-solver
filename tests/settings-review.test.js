@@ -416,7 +416,8 @@ test('#87: a web UI that is never fetched keeps the badges but silences the prom
     settingsDialog: (opts) =>
       defaultWebSettingsDialog({
         ...opts,
-        openBrowser: async () => ({ opened: false }),
+        openBrowser: async () => ({ launched: false }),
+        handoffDir: tempDir(t),
         timeoutMs: 30,
       }),
   });
@@ -466,7 +467,7 @@ test('#67: headless startup opens no browser and no dialog, but logs and exposes
     tray: false,
     openBrowser: async () => {
       browserCalls += 1;
-      return { opened: true };
+      return { launched: true };
     },
     settingsDialog: async () => {
       dialogCalls += 1;
