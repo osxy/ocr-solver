@@ -144,6 +144,30 @@ try {
     Start-Sleep -Seconds 2
     Assert ((Get-InstalledNodeProcesses $installDir).Count -eq 0) 'install: the started process could not be stopped'
 
+    # --- 1c. the Mark-of-the-Web is reported, never cleared silently (#176) ---
+    # Zone.Identifier is the stream Explorer attaches to every file it extracts from a
+    # downloaded ZIP. The artifact this job downloads may or may not arrive marked, so the
+    # test writes the stream itself: the subject is install.ps1's detection, not GitHub's
+    # download plumbing. The mark must survive the ordinary run - only -Unblock may clear
+    # it, and either way the installer must say what it did.
+    $markedFile = Join-Path $payload 'PuzzleSolver.vbs'
+    Set-Content -Path $markedFile -Stream Zone.Identifier -Value "[ZoneTransfer]`nZoneId=3" -Encoding ascii
+    Assert (Get-Item -LiteralPath $markedFile -Stream Zone.Identifier -ErrorAction SilentlyContinue) 'motw: the test could not write the Zone.Identifier stream'
+
+    $motwReport = Invoke-Installer (Join-Path $payload 'install.ps1') -extraArgs '-NoStart'
+    Assert ($motwReport.code -eq 0) "motw: install.ps1 exited $($motwReport.code): $($motwReport.text)"
+    Assert ($motwReport.text -match 'Zone\.Identifier|Mark-of-the-Web') "motw: install.ps1 did not report the internet-download mark: $($motwReport.text)"
+    Assert ($motwReport.text -match 'PuzzleSolver\.vbs') "motw: the report did not name the marked file: $($motwReport.text)"
+    Assert ($motwReport.text -match 'Unblock-File') "motw: the report did not name the one command that fixes it: $($motwReport.text)"
+    Assert (Get-Item -LiteralPath $markedFile -Stream Zone.Identifier -ErrorAction SilentlyContinue) 'motw: the ordinary run cleared the mark; only -Unblock may do that'
+    Write-Host 'motw: install.ps1 reported the marked payload file and left the mark in place'
+
+    $motwUnblock = Invoke-Installer (Join-Path $payload 'install.ps1') -extraArgs @('-NoStart', '-Unblock')
+    Assert ($motwUnblock.code -eq 0) "motw: install.ps1 -Unblock exited $($motwUnblock.code): $($motwUnblock.text)"
+    Assert ($motwUnblock.text -match 'cleared the download mark') "motw: -Unblock did not say what it did: $($motwUnblock.text)"
+    Assert (-not (Get-Item -LiteralPath $markedFile -Stream Zone.Identifier -ErrorAction SilentlyContinue)) 'motw: -Unblock did not clear the mark'
+    Write-Host 'motw: -Unblock cleared the mark and the installer said so'
+
     # --- 2. autostart is a per-user Startup entry, not a scheduled task ------
     # The task was refused with `Toegang geweigerd` for an ordinary user (#163), so the
     # mechanism is a file any user can write. Assert its path and its two load-bearing

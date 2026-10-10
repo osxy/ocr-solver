@@ -1618,6 +1618,22 @@ the PowerShell is locator/launcher glue. Both `_ps1` scripts check `$LASTEXITCOD
 native child, because `$ErrorActionPreference = 'Stop'` does not cover it and a failure otherwise
 still printed "Installed" (#162).
 
+**Mark-of-the-Web is reported, never silently unblocked (issue #176).** The payload a user
+installs arrives as a downloaded ZIP, so Explorer may attach the `Zone.Identifier`
+alternate data stream to each extracted file and Windows warns on first open - SmartScreen
+for the unsigned `node.exe`, the *"Open File - Security Warning"* script prompt for
+`PuzzleSolver.vbs`. The stream is an accurate record of where the file came from, so clearing
+it is the user's decision: `install.ps1` **reports** which files carry it (`Get-ChildItem`,
+then `Get-Item -Stream Zone.Identifier` per file) and names the one command that fixes it,
+and clears nothing unless `-Unblock` is passed - saying what it did either way. Detection
+runs *before* the self-copy, so `-Unblock` clears the source and the installed files are
+copied clean. The instruction that matters for propagation is unblocking the **ZIP before
+extracting** (Explorer copies the ZIP's mark onto every extracted file), so the README leads
+with that and offers the after-the-fact `Unblock-File` commands only to someone who has
+already extracted. The deploy job proves the same on a real marked file: it writes the
+stream onto a payload file, asserts the ordinary run names it and leaves it in place, then
+that `-Unblock` clears it and says so.
+
 **One process, or none: the single-instance lock (issue #167).** The restart machinery above
 guarantees a deliberate restart starts exactly one successor, but the ordinary path a user
 reaches first - double-clicking `PuzzleSolver.vbs` - had no protection at all, and neither the

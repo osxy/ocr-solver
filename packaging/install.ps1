@@ -13,7 +13,12 @@
 param(
     # Unattended or scripted installs: install only, do not start the app (and therefore
     # do not open the first-run setup page). All other runs start the app themselves.
-    [switch]$NoStart
+    [switch]$NoStart,
+
+    # Clear the Mark-of-the-Web from the payload before installing. Off by default: the
+    # mark is an accurate record of where the file came from, and removing it is the
+    # user's decision, not the installer's (#176).
+    [switch]$Unblock
 )
 
 $ErrorActionPreference = 'Stop'
@@ -24,6 +29,44 @@ Write-Host "Installing PuzzleSolver to $InstallDir"
 # If the payload is already the install dir (a re-run), skip the self-copy.
 $Source = [IO.Path]::GetFullPath($PSScriptRoot)
 $Here = [IO.Path]::GetFullPath($InstallDir)
+
+# Mark-of-the-Web (#176). Zone.Identifier is the alternate data stream Explorer puts on
+# every file it extracts from a downloaded ZIP - the "this came from the internet" mark.
+# It is an accurate signal about the download, so the installer reports it and never
+# clears it silently: `-Unblock` is how the user asks for that. Detection runs before the
+# copy for a reason - clearing the source first is what keeps the installed files clean.
+#
+# The report names the files and the one command that fixes them, because the wrong
+# instruction is the common one: unblocking the ZIP *before* extracting is what prevents
+# the flags (Explorer copies the ZIP's mark onto each extracted file); unblocking the
+# extracted files afterwards works but is a different command (#176).
+function Get-MarkedFile([string]$Dir) {
+    if (-not (Test-Path -LiteralPath $Dir)) { return @() }
+    return @(
+        Get-ChildItem -LiteralPath $Dir -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { Get-Item -LiteralPath $_.FullName -Stream Zone.Identifier -ErrorAction SilentlyContinue } |
+            ForEach-Object { $_.FullName }
+    )
+}
+
+$Marked = @(Get-MarkedFile $Source)
+if ($Source -ne $Here) { $Marked += @(Get-MarkedFile $Here) }
+$Marked = @($Marked | Sort-Object -Unique)
+
+if ($Marked.Count -gt 0) {
+    if ($Unblock) {
+        foreach ($file in $Marked) { Unblock-File -LiteralPath $file }
+        $Remaining = @(Get-MarkedFile $Source)
+        if ($Source -ne $Here) { $Remaining += @(Get-MarkedFile $Here) }
+        $Remaining = @($Remaining | Sort-Object -Unique)
+        Write-Host "Mark-of-the-Web: cleared the download mark from $($Marked.Count) file(s) (-Unblock); $($Remaining.Count) file(s) are still marked."
+    } else {
+        Write-Host "Mark-of-the-Web: $($Marked.Count) file(s) in this download carry the internet-download mark, so Windows warns the first time each is opened:"
+        foreach ($file in $Marked) { Write-Host "  $file" }
+        Write-Host 'No file was changed. To clear the mark, unblock the ZIP before extracting (Unblock-File .\PuzzleSolver-<version>-win-x64.zip); clearing these extracted files in place works too, with "Get-ChildItem . -Recurse -File | Unblock-File". This installer will clear them if re-run with -Unblock.'
+    }
+}
+
 if ($Source -ne $Here) {
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
     Copy-Item -Recurse -Force (Join-Path $PSScriptRoot '*') $InstallDir
