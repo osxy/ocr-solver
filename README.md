@@ -37,7 +37,7 @@ pages under [`docs/`](./docs/):
 
 **0.45.0 — a pre-release.** The offline solver, model tiers, Pushbullet listener and
 reply path are implemented and tested. The packaged Windows app, the installer, the
-scheduled task and the launcher are executed on `windows-latest` in CI, and a fresh
+per-user Startup shim and the launcher are executed on `windows-latest` in CI, and a fresh
 `node` process decrypts Windows secrets through DPAPI there; the native tray widget and
 the notification toast need an interactive desktop and remain unverified (see
 [Known limitations](#known-limitations)).
@@ -78,11 +78,12 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 
 It installs per-user — no administrator prompt, nothing in `Program Files` or `HKLM`:
 it copies the app to `%LOCALAPPDATA%\Programs\PuzzleSolver`, writes
-`PuzzleSolver.vbs` (a launcher with no console window), and registers a Task Scheduler
-task named `PuzzleSolver` that starts the app at logon (20 s delay, restart on failure).
+`PuzzleSolver.vbs` (a launcher with no console window), and drops a small shim in your
+per-user Startup folder so the app starts at logon (20 s delay). Nothing is registered
+in Task Scheduler and nothing is written to `HKLM`.
 
-> The installer, the scheduled task, the launcher and the uninstaller are executed end
-> to end on `windows-latest` in CI. The native tray widget and the notification toast
+> The installer, the per-user Startup shim, the launcher and the uninstaller are executed
+> end to end on `windows-latest` in CI. The native tray widget and the notification toast
 > still need an interactive desktop and remain unverified. See
 > [Known limitations](#known-limitations).
 
@@ -108,7 +109,7 @@ against, is in
 
 ### Tray / service mode (the Windows default)
 
-The logon task starts the app at logon. To start it now, run the launcher
+The per-user Startup entry starts the app at logon. To start it now, run the launcher
 `%LOCALAPPDATA%\Programs\PuzzleSolver\PuzzleSolver.vbs`. The tray menu:
 
 | Item | What it does |
@@ -143,7 +144,7 @@ For an unattended machine, or when the tray cannot start:
 so the token has to reach it another way:
 
 - a **persistent** environment variable — `setx PUSHBULLET_TOKEN "o.xxxxxxxx"`, or System
-  Properties → Environment Variables — which the logon task sees at the next logon. A
+  Properties → Environment Variables — which the app sees when it starts at the next logon. A
   session `$env:PUSHBULLET_TOKEN = "…"` does **not** count: it dies with the shell that
   set it, and the task never sees it;
 - `--token <value>`, or `node src/cli.js config edit` in a terminal, which writes the
@@ -245,7 +246,7 @@ curl -sS -X POST http://127.0.0.1:8765/v1/solve \
 
 The service reads the credential store, not this shell variable; a headless or unattended
 run needs a **persistent** `HTTP_AUTH_TOKEN` (`setx`, or System Properties) instead,
-because the logon task does not see a session assignment.
+because the app started at logon does not see a session assignment.
 
 The response carries `answer`, `method`, `confident` and `cost`, or a `422` when no tier
 produced a validated answer. The full contract — accepted bodies, status codes, the
@@ -314,7 +315,7 @@ changes apply live and which need a restart; the list is in
 [configuration](./docs/configuration.md#some-settings-need-a-restart). The models, the
 offline switches, the reply wording, the poll interval, `ocr.languages`, the breaker knobs,
 the HTTP ingress and all three secrets are read at startup, so restart the service (Quit
-and relaunch, or restart the scheduled task). If a hand-edited `config.toml` now blocks
+and relaunch, or use the tray's **Restart** item). If a hand-edited `config.toml` now blocks
 startup, the loader names the offending key; the editor keeps the previous file as
 `config.toml.bak`, so copying that back is the way out.
 
@@ -350,9 +351,10 @@ statistics page.
 powershell -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\Programs\PuzzleSolver\uninstall.ps1"
 ```
 
-It removes the scheduled task first, then the install folder and the two per-user data
-folders. Manually: `schtasks /Delete /TN PuzzleSolver /F`, then delete
-`%LOCALAPPDATA%\Programs\PuzzleSolver`, `%LOCALAPPDATA%\PuzzleSolver` and
+It removes the per-user Startup entry first, then the install folder and the two per-user
+data folders. Manually: delete
+`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\PuzzleSolver-startup.vbs`, then
+delete `%LOCALAPPDATA%\Programs\PuzzleSolver`, `%LOCALAPPDATA%\PuzzleSolver` and
 `%APPDATA%\PuzzleSolver`.
 
 ## Known limitations
@@ -364,18 +366,18 @@ folders. Manually: `schtasks /Delete /TN PuzzleSolver /F`, then delete
 - **The native tray widget, the notification toast and the browser hand-off remain
   unverified on Windows.** The packaged `node.exe`, the app, `sharp`'s win32-x64 binary
   and the traineddata are smoke-tested on `windows-latest` by the package job, and the
-  deploy job executes `install.ps1`, the `schtasks` registration (inspecting the logon
-  trigger and the restart-on-failure properties), the packaged app's `--headless`
-  start-and-refuse, `PuzzleSolver.vbs` launching a process, and `uninstall.ps1`. What a
-  runner cannot provide is an interactive desktop: `systray2` needs a window station, so
-  the **native tray widget** and the **notification toast** are still unverified, as is
-  the `explorer.exe` browser hand-off for the settings UI (issue #56). The
-  restart-on-failure *properties* are inspected; a crash loop has not been seen
-  restarting the task. The **DPAPI credential round trip** is executed on the runner: a
-  plaintext file is migrated and removed by one process, and a second `node` process
-  decrypts it from disk. What DPAPI cannot protect is a process running as the same user
-  (see [First run](#first-run-the-app-asks)). `--headless` remains
-  the supported fallback for an unattended machine.
+  deploy job executes `install.ps1`, inspects the per-user Startup shim, runs the packaged
+  app's `--headless` start-and-refuse, checks `PuzzleSolver.vbs` launching a process, runs
+  `uninstall.ps1`, and proves a failing installer exits non-zero without printing success.
+  What a runner cannot provide is an interactive desktop: `systray2` needs a window
+  station, so the **native tray widget** and the **notification toast** are still
+  unverified, as is the `explorer.exe` browser hand-off for the settings UI (issue #56).
+  The runner is an administrator, so the **unprivileged install path** (issue #163) has
+  still never been exercised. The **DPAPI credential round trip** is executed on the
+  runner: a plaintext file is migrated and removed by one process, and a second `node`
+  process decrypts it from disk. What DPAPI cannot protect is a process running as the
+  same user (see [First run](#first-run-the-app-asks)). `--headless` remains the
+  supported fallback for an unattended machine.
 - **The web UI is plain HTTP and its non-loopback credential is transport-unprotected.**
   A remote-access password is verified as a `scrypt` verifier and failed logins are
   throttled, but the HTTP connection itself is not encrypted and the session token cannot

@@ -865,9 +865,10 @@ export async function runApp(options = {}) {
 
   // One shutdown path for SIGINT/SIGTERM, Quit and Restart. A restart quiesces the
   // ingresses, drains the in-flight solve, releases the port and the database, starts
-  // exactly one successor and exits 0, so RestartOnFailure never fires (#128). If that
-  // successor cannot be started it exits non-zero instead, deliberately leaving the
-  // service to the scheduler's recovery rather than dead until the next logon (#135).
+  // exactly one successor and exits 0, so nothing starts a second copy (#128). If that
+  // successor cannot be started it exits non-zero instead; since #163 there is no
+  // scheduler recovery, so that leaves the service down until the next logon rather than
+  // reporting a dead process as alive (#135).
   shutdown = createShutdownHandler({ app, tray, plan: app.restartPlan, logger: app.logger });
   process.once('SIGINT', () => void shutdown('SIGINT'));
   process.once('SIGTERM', () => void shutdown('SIGTERM'));

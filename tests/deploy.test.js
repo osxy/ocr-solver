@@ -1,8 +1,8 @@
 /**
- * Packaging tests. Nothing here is executed on Windows - `wscript` and `schtasks`
- * do not exist on this host. What *is* asserted is the generated content: the
- * launcher text, the task XML and the schtasks argument lists. Those are the parts
- * with a decision in them, and they are asserted literally so a broken default
+ * Packaging tests. Nothing here is executed on Windows - `wscript` does not exist on
+ * this host. What *is* asserted is the generated content: the launcher shim, the
+ * per-user Startup-folder shim, and where the install plan writes them. Those are the
+ * parts with a decision in them, and they are asserted literally so a broken default
  * cannot hide behind a double.
  */
 import { test } from 'node:test';
@@ -10,17 +10,8 @@ import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { buildLauncherVbs, defaultInstallDir, LAUNCHER_FILE } from '../src/deploy/launcher.js';
-import {
-  buildTaskXml,
-  buildCreateTaskArgs,
-  buildDeleteTaskArgs,
-  buildInstallPlan,
-  LOGON_DELAY_SEC,
-  RESTART_COUNT,
-  RESTART_INTERVAL,
-  TASK_NAME,
-} from '../src/deploy/autostart.js';
+import { buildLauncherVbs, buildStartupVbs, defaultInstallDir, defaultStartupDir, LAUNCHER_FILE, STARTUP_FILE } from '../src/deploy/launcher.js';
+import { buildInstallPlan, LOGON_DELAY_SEC } from '../src/deploy/autostart.js';
 import { runInstall } from '../src/deploy/install.js';
 import { runUninstall } from '../src/deploy/uninstall.js';
 
@@ -57,82 +48,73 @@ test('the install location is per-user under %LOCALAPPDATA%\\Programs', () => {
   assert.ok(dir.includes('Programs'), 'no admin rights means nothing under Program Files');
 });
 
+test('the startup shim waits, then delegates to the launcher hidden', () => {
+  const vbs = buildStartupVbs({ launcherPath: launcher, delaySec: 20 });
+  assert.ok(vbs.includes('WScript.Sleep 20000'), 'the 20 s logon delay lives in the shim, not the launcher');
+  assert.ok(vbs.includes(`"${launcher}"`), 'the shim must launch the installed launcher');
+  const runLine = vbs.split('\r\n').find((l) => l.startsWith('shell.Run'));
+  assert.ok(runLine, 'the shim must actually start the app');
+  assert.ok(runLine.endsWith(', 0, False'), 'window style 0 is what hides the console');
+});
+
+test('the startup folder is the per-user Start Menu Startup folder', () => {
+  const dir = defaultStartupDir({ platform: 'win32', env: { APPDATA: 'C:\\Users\\Andre\\AppData\\Roaming' }, homedir: null });
+  assert.equal(dir, 'C:\\Users\\Andre\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup');
+  assert.ok(!/Program Files/i.test(dir), 'a Startup entry needs no elevation');
+  assert.equal(STARTUP_FILE, 'PuzzleSolver-startup.vbs');
+});
+
 // ---------------------------------------------------------------------------
-// Scheduled task
+// Autostart placement
 // ---------------------------------------------------------------------------
 
 const launcher = 'C:\\Users\\Andre de Vries\\AppData\\Local\\Programs\\PuzzleSolver\\PuzzleSolver.vbs';
+const startupDir = 'C:\\Users\\Andre de Vries\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup';
 
-test('the task XML starts at logon with the documented 20 second delay', () => {
-  const xml = buildTaskXml({ launcherPath: launcher });
-  assert.match(xml, /<LogonTrigger>/);
-  assert.match(xml, /<Delay>PT20S<\/Delay>/);
+test('the install plan writes the launcher and the Startup shim, and nothing else', () => {
+  const plan = buildInstallPlan({ installDir: 'C:\\Users\\Andre de Vries\\AppData\\Local\\Programs\\PuzzleSolver', startupDir });
+  assert.equal(plan.startupPath, `${startupDir}\\${STARTUP_FILE}`);
+  const launcherFile = plan.files.find((f) => f.role === 'launcher');
+  const startupFile = plan.files.find((f) => f.role === 'startup');
+  assert.ok(launcherFile.path.endsWith('PuzzleSolver.vbs'));
+  assert.ok(launcherFile.content.includes('shell.Run'), 'the launcher shim is written');
+  assert.ok(startupFile.path.startsWith(startupDir), 'the startup shim belongs in the Startup folder');
+  assert.ok(startupFile.content.includes('WScript.Sleep 20000'), 'the startup shim carries the logon delay');
+  assert.ok(startupFile.content.includes(launcherFile.path), 'the startup shim points at the launcher');
   assert.equal(LOGON_DELAY_SEC, 20);
 });
 
-test('the task XML restarts on failure (the reason to prefer a task over the Run key)', () => {
-  const xml = buildTaskXml({ launcherPath: launcher });
-  assert.match(xml, /<RestartOnFailure>/);
-  assert.match(xml, new RegExp(`<Interval>${RESTART_INTERVAL}<\\/Interval>`));
-  assert.match(xml, new RegExp(`<Count>${RESTART_COUNT}<\\/Count>`));
-  assert.equal(RESTART_INTERVAL, 'PT1M');
-  assert.equal(RESTART_COUNT, 3);
-});
-
-test('the task launches the shim through wscript with every path quoted', () => {
-  const xml = buildTaskXml({ launcherPath: launcher });
-  assert.match(xml, /<Command>"%SystemRoot%\\System32\\wscript\.exe"<\/Command>/);
-  assert.ok(
-    xml.includes(`<Arguments>"${launcher}"</Arguments>`),
-    'a path with spaces must be quoted in Arguments, or Task Scheduler splits it'
-  );
-  assert.ok(xml.includes('<WorkingDirectory>C:\\Users\\Andre de Vries\\AppData\\Local\\Programs\\PuzzleSolver</WorkingDirectory>'));
-});
-
-test('the task cannot double-launch and has no execution time limit', () => {
-  const xml = buildTaskXml({ launcherPath: launcher });
-  assert.match(xml, /<MultipleInstancesPolicy>IgnoreNew<\/MultipleInstancesPolicy>/);
-  assert.match(xml, /<ExecutionTimeLimit>PT0S<\/ExecutionTimeLimit>/, 'a long-running app must not be killed after 3 days');
-  assert.match(xml, /<RunLevel>LeastPrivilege<\/RunLevel>/);
-});
-
-test('XML-special characters in a path are escaped, not injected', () => {
-  const xml = buildTaskXml({ launcherPath: 'C:\\a & b\\PuzzleSolver.vbs' });
-  assert.ok(xml.includes('C:\\a &amp; b\\PuzzleSolver.vbs'));
-  assert.ok(!xml.includes('C:\\a & b\\PuzzleSolver.vbs'));
-});
-
-test('schtasks create/delete arguments name the task and force the operation', () => {
-  assert.deepEqual(buildCreateTaskArgs({ xmlPath: 'C:\\x\\task.xml' }), ['/Create', '/TN', TASK_NAME, '/XML', 'C:\\x\\task.xml', '/F']);
-  assert.deepEqual(buildDeleteTaskArgs({}), ['/Delete', '/TN', TASK_NAME, '/F']);
-});
-
-test('the install plan carries the task XML and a single create command', () => {
-  const plan = buildInstallPlan({ installDir: 'C:\\Programs\\PuzzleSolver' });
-  const xmlFile = plan.files.find((f) => f.path.endsWith('.task.xml'));
-  assert.ok(xmlFile && xmlFile.content.includes('<LogonTrigger>'));
-  assert.deepEqual(plan.commands, [
-    { command: 'schtasks.exe', args: ['/Create', '/TN', TASK_NAME, '/XML', 'C:\\Programs\\PuzzleSolver\\PuzzleSolver.task.xml', '/F'] },
-  ]);
+test('the install plan no longer registers a scheduled task', () => {
+  const plan = buildInstallPlan({ installDir: 'C:\\P', startupDir });
+  assert.equal(plan.commands, undefined, 'no child process is run: task creation is what needed elevation');
+  assert.ok(!JSON.stringify(plan).includes('schtasks'), 'the scheduled task is gone entirely');
 });
 
 // ---------------------------------------------------------------------------
 // Installer / uninstaller scripts (content only - they cannot run here)
 // ---------------------------------------------------------------------------
 
-test('install.ps1 installs per-user and delegates task creation to Node', () => {
+test('install.ps1 installs per-user, delegates to Node and checks the child exit code', () => {
   const ps = readFileSync(join(packaging, 'install.ps1'), 'utf8');
   assert.match(ps, /LOCALAPPDATA/);
   assert.match(ps, /Programs\\PuzzleSolver/);
   assert.match(ps, /node\.exe/);
   assert.match(ps, /deploy\\install\.js/);
   assert.ok(!/\$env:ProgramFiles/i.test(ps), 'per-user install must not touch Program Files');
-  assert.ok(!/Start-Process.*schtasks/i.test(ps), 'task creation lives in install.js, not duplicated here');
+  assert.ok(!/schtasks/i.test(ps), 'the scheduled task is gone; autostart is a Startup file');
+  // The #162 trap: a native child's exit code is invisible to ErrorActionPreference, so
+  // it has to be checked explicitly or success is printed after a failure.
+  assert.match(ps, /\$LASTEXITCODE -ne 0/, 'a failing child must be checked explicitly');
+  const checkAt = ps.indexOf('$LASTEXITCODE -ne 0');
+  const successAt = ps.indexOf('Installed to ');
+  assert.ok(checkAt >= 0 && successAt > checkAt, 'the success line must be unreachable when the child fails');
 });
 
-test('uninstall.ps1 removes the task and all three per-user folders', () => {
+test('uninstall.ps1 removes the startup shim and all three per-user folders', () => {
   const ps = readFileSync(join(packaging, 'uninstall.ps1'), 'utf8');
-  assert.match(ps, /deploy\\uninstall\.js/, 'the task is removed through the Node runner');
+  assert.match(ps, /deploy\\uninstall\.js/, 'the startup shim is removed through the Node runner');
+  assert.ok(ps.includes(STARTUP_FILE), 'the damaged-install fallback must name the same shim file');
+  assert.match(ps, /Start Menu\\Programs\\Startup/, 'the fallback must use the per-user Startup folder');
   assert.match(ps, /Programs\\PuzzleSolver/);
   assert.match(ps, /Join-Path \$env:LOCALAPPDATA 'PuzzleSolver'/, 'logs/state must go');
   assert.match(ps, /Join-Path \$env:APPDATA 'PuzzleSolver'/, 'config/credentials must go');
@@ -145,58 +127,71 @@ test('every packaged file is tracked in git (no generated artefact left untracke
   }
 });
 
-test('runInstall writes the shim and the task XML and registers the task', () => {
+test('runInstall writes the launcher and the Startup shim, and runs nothing', () => {
   const writes = [];
   const mkdirs = [];
-  const spawns = [];
   const result = runInstall({
     installDir: 'C:\\Programs\\PuzzleSolver',
+    startupDir: 'C:\\Users\\Andre\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup',
     writeFile: (path, content, enc) => writes.push({ path, content, enc }),
     mkdir: (path) => mkdirs.push(path),
-    spawn: (command, args) => {
-      spawns.push({ command, args });
-      return { status: 0 };
-    },
     log: { log() {} },
   });
 
   assert.equal(result.launcherPath, 'C:\\Programs\\PuzzleSolver\\PuzzleSolver.vbs');
-  const vbs = writes.find((w) => w.path.endsWith('.vbs'));
-  assert.ok(vbs && vbs.content.includes('shell.Run'), 'the shim is written');
-  const xml = writes.find((w) => w.path.endsWith('.task.xml'));
-  assert.ok(xml && xml.content.includes('PT20S'), 'the task XML is written');
-  assert.deepEqual(spawns, [
-    { command: 'schtasks.exe', args: buildCreateTaskArgs({ xmlPath: result.xmlPath }) },
-  ]);
+  assert.ok(result.startupPath.endsWith('PuzzleSolver-startup.vbs'));
+  const launcherShim = writes.find((w) => w.path.endsWith('PuzzleSolver.vbs'));
+  assert.ok(launcherShim && launcherShim.content.includes('shell.Run'), 'the launcher shim is written');
+  const startupShim = writes.find((w) => w.path.endsWith('PuzzleSolver-startup.vbs'));
+  assert.ok(startupShim && startupShim.content.includes('WScript.Sleep 20000'), 'the Startup shim is written with the delay');
+  assert.ok(startupShim.content.includes(result.launcherPath), 'the Startup shim points at the launcher');
+  assert.equal(writes.length, 2, 'the install writes files and starts nothing');
 });
 
-test('runInstall reports a non-zero schtasks exit instead of claiming success', () => {
+test('runInstall lets a write failure propagate instead of reporting success', () => {
   assert.throws(
     () => runInstall({
       installDir: 'C:\\P',
-      writeFile: () => {},
+      startupDir: 'C:\\S',
+      writeFile: () => { throw new Error('disk full'); },
       mkdir: () => {},
-      spawn: () => ({ status: 1 }),
       log: { log() {} },
     }),
-    /schtasks\.exe .* failed with 1/
+    /disk full/
   );
 });
 
-test('runUninstall deletes the task and tolerates one that was never registered', () => {
-  const calls = [];
+test('runUninstall removes the Startup shim and tolerates one that is absent', () => {
+  const removedPaths = [];
   const removed = runUninstall({
-    spawn: (command, args) => {
-      calls.push({ command, args });
-      return { status: 0 };
-    },
+    startupDir: 'C:\\Users\\Andre\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup',
+    fileExists: () => true,
+    unlink: (path) => removedPaths.push(path),
     log: { warn() {} },
   });
-  assert.deepEqual(calls, [{ command: 'schtasks.exe', args: buildDeleteTaskArgs({}) }]);
   assert.equal(removed.removed, true);
+  assert.deepEqual(removedPaths, [removed.path]);
+  assert.ok(removed.path.endsWith('PuzzleSolver-startup.vbs'));
 
-  const missing = runUninstall({ spawn: () => ({ status: 1 }), log: { warn() {} } });
-  assert.equal(missing.removed, false, 'an absent task is already the desired end state');
+  const missing = runUninstall({
+    startupDir: 'C:\\S',
+    fileExists: () => false,
+    unlink: () => { throw new Error('must not be called'); },
+    log: { warn() {} },
+  });
+  assert.equal(missing.removed, false, 'an absent startup entry is already the desired end state');
+});
+
+test('run-deploy.ps1 proves a failing installer is propagated and prints no success line', () => {
+  const ps = readFileSync(join(packaging, 'run-deploy.ps1'), 'utf8');
+  assert.match(ps, /process\.exit\(3\)/, 'the induced failure must exit non-zero');
+  assert.match(ps, /induced-failure/, 'the failure scenario must be present');
+  assert.match(ps, /-notmatch 'Installed'/, 'the failure must be asserted to print no success line');
+  assert.match(ps, /code -ne 0/, 'the failure must be asserted to exit non-zero');
+  // The autostart assertions move with the mechanism.
+  assert.match(ps, /PuzzleSolver-startup\.vbs/);
+  assert.match(ps, /Sleep 20000/);
+  assert.ok(!ps.includes('schtasks'), 'no scheduled task is queried any more');
 });
 
 // ---------------------------------------------------------------------------

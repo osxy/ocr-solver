@@ -98,8 +98,8 @@ jobs:
   # The expensive Windows build happens once; this job downloads its artifact rather
   # than rebuilding. It runs on every trigger the package job does, because the point
   # is to catch an installer/launcher regression on the PR that introduces it, not
-  # after a tag. It is cheap next to the build (install + schtasks + two launches), and
-  # `timeout-minutes` bounds it so a wedged start cannot hold the runner (issue #37).
+  # after a tag. It is cheap next to the build (install + startup shim + two launches),
+  # and `timeout-minutes` bounds it so a wedged start cannot hold the runner (issue #37).
   deploy:
     needs: package
     runs-on: windows-latest
@@ -112,10 +112,11 @@ jobs:
           name: windows-package
           path: dist
 
-      # Install, inspect the registered task, start the packaged app, run the
-      # double-click launcher, uninstall. Each step asserts; the script throws on the
-      # first mismatch so the job is red without a human reading the log.
-      - name: Exercise install, task, launcher and uninstall
+      # Install, inspect the per-user Startup shim, start the packaged app, run the
+      # double-click launcher, uninstall - then prove a failing child is propagated.
+      # Each step asserts; the script throws on the first mismatch so the job is red
+      # without a human reading the log.
+      - name: Exercise install, startup, launcher and uninstall
         shell: pwsh
         run: |
           $zip = (Get-ChildItem dist/*.zip).FullName

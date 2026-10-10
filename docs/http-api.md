@@ -41,7 +41,7 @@ node src/cli.js config set http.token a-long-random-string
 
 A headless or unattended service reads `HTTP_AUTH_TOKEN` from the environment instead.
 That variable must be **persistent** — `setx`, or System Properties → Environment
-Variables — because the logon task does not see a session `$env:` assignment:
+Variables — because the app started at logon does not see a session `$env:` assignment:
 
 ```powershell
 setx HTTP_AUTH_TOKEN "a-long-random-string"

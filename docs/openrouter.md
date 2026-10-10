@@ -37,7 +37,7 @@ each before it writes.
 
 A headless or unattended service reads `LLM_API_KEY` from the environment instead, and it
 must be a **persistent** variable — `setx LLM_API_KEY "sk-or-..."` on Windows, or System
-Properties → Environment Variables — because the logon task does not see a session
+Properties → Environment Variables — because the app started at logon does not see a session
 `$env:LLM_API_KEY = "…"`.
 
 The settings UI's **Test connection** button probes the configured
