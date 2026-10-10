@@ -203,9 +203,10 @@ disclosure: every row is still on the page. Each row keeps its `[live]` / `[rest
 tag and the `[security]` marker, and each group's header counts how many of its rows
 need a restart, so the lifecycle information is not lost to the grouping.
 
-Secrets go to the credential store, never to `config.toml`. That covers all three of
-them: `config set pushbullet.token o.xxxxxxxx`, `config set llm.api_key sk-xxxxxxxx` and
-`config set http.token a-long-random-enough-token` each write the credential store (the DPAPI
+Secrets go to the credential store, never to `config.toml`. That covers all four of
+them: `config set pushbullet.token o.xxxxxxxx`, `config set llm.api_key sk-xxxxxxxx`,
+`config set http.token a-long-random-enough-token` and `config set web_ui.password
+<passphrase>` each write the credential store (the DPAPI
 blob on Windows, `credentials.json` elsewhere) and leave
 the TOML file alone (or uncreated). A write **re-reads the store immediately before merging**
 (read-modify-write), so a `config set` from a second process while the tray service is running is
@@ -240,12 +241,16 @@ applies:
   `image.max_pixels`. These
   are re-read from the shared config object for every solve, push or HTTP request, so a
   save takes effect without a restart.
-- **restart** — the models and base URL, `offline_only`, `escalate_to_vision`,
-  `self_consistency_n`, the breaker knobs (`breaker_threshold`, `breaker_cooldown_sec`),
-  the reply switch/wording/budgets, `poll_interval_sec`, `history_mode`, `ocr.languages`,
-  `storage.retain_days`, `ui.tray`, `ui.stats_recent_solves`, the whole `http.*` and `web_ui.*`
-  blocks, and **all
-  three secrets**,
+- **restart** — `solver.offline_only`, `solver.escalate_to_vision`,
+  `solver.self_consistency_n`, the breaker knobs (`solver.breaker_threshold`,
+  `solver.breaker_cooldown_sec`), the model settings and base URL
+  (`solver.llm_text_model`, `solver.llm_vision_model`, `solver.llm_base_url`), the
+  auto-router policy (`solver.cost_tier`, `solver.allowed_models`,
+  `solver.excluded_models`), the reply switch, wording and budgets (`reply.*`),
+  `pushbullet.poll_interval_sec`, `pushbullet.history_mode`, `ocr.languages`,
+  `storage.retain_days`, `storage.max_images`, `ui.tray`, `ui.stats_recent_solves`, the
+  whole `http.*` and `web_ui.*` blocks, and **all four secrets** (`pushbullet.token`,
+  `llm.api_key`, `http.token`, `web_ui.password`),
   because the listener, reasoner, responder or HTTP server capture them when they are
   built. The running service keeps the old value until it is restarted; the editor says
   so rather than appearing to save something that does nothing.

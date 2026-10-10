@@ -3,8 +3,15 @@
 A small Windows background app that watches Pushbullet for incoming puzzle images,
 reads the image, solves the puzzle, and answers back on Pushbullet.
 
-Status: **M1 complete** (offline solver + model reasoner tiers, verified live).
+Status: **v0.4.0 released** (offline solver + model reasoner tiers, verified live; the
+Pushbullet listener, image fetcher and responder are built and tested offline, but the
+live Pushbullet ingress has never run against the real service — issue #3).
 Decisions confirmed — see §13.
+
+Component headers carry a **✅ built** marker once the component exists and its offline
+tests pass, followed by the milestone that built it; a parenthetical names any work still
+outstanding. The earlier **⬜ M2** marker meant "not built"; four shipped components
+carried it long after they were built.
 
 **This document is the architecture reference.** It records what was decided and *why* — the
 measurements, the rejected alternatives, the traps — and deliberately stays readable as a whole.
@@ -358,7 +365,7 @@ applies to the next puzzle without a restart, with built-in fallbacks for packag
 > the corpus puzzles (`hond blauw kat`, `peer arm fiets`, `negen min vier`). Using the corpus
 > puzzles as examples would inflate measured accuracy on the only test set available.
 
-### 4.9 Listener — `src/pushbullet/listener.js` ⬜ M2
+### 4.9 Listener — `src/pushbullet/listener.js` ✅ built (M2, live Pushbullet verification outstanding — issue #3)
 
 Pushbullet has **no webhooks**. Two mechanisms, used together:
 
@@ -372,13 +379,13 @@ Pushbullet has **no webhooks**. Two mechanisms, used together:
 Keeps a persisted watermark, deduplicates by push `iden`, reconnects with exponential backoff
 and jitter, and (by default) ignores pre-existing history rather than answering a backlog.
 
-### 4.10 Image fetcher — `src/pushbullet/files.js` ⬜ M2
+### 4.10 Image fetcher — `src/pushbullet/files.js` ✅ built (M2, live Pushbullet verification outstanding — issue #3)
 
 `file_url` is a pre-signed S3 URL, so a plain `fetch` works. Verifies magic bytes and that
 Pillow-equivalent decoding succeeds, enforces a size cap, saves to
 `%LOCALAPPDATA%\PuzzleSolver\inbox\<iden>.<ext>`, and prunes by age (default 7 days).
 
-### 4.11 Responder — `src/pushbullet/respond.js` ⬜ M2
+### 4.11 Responder — `src/pushbullet/respond.js` ✅ built (M2, live Pushbullet verification outstanding — issue #3)
 
 **Delivery path confirmed: the puzzle arrives as a file push from another user or device, and
 a new note push back is an acceptable answer.** The Pushbullet API offers a true threaded reply
@@ -463,7 +470,7 @@ CREATE TABLE kv (k TEXT PRIMARY KEY, v TEXT);   -- watermark, schema_version
 `attempts` records **every** OCR variant and every model answer, so a failure can be
 replayed offline from the corpus instead of guessed at.
 
-### 4.13 Config & secrets ⬜ M2
+### 4.13 Config & secrets ✅ built (M2)
 
 `%APPDATA%\PuzzleSolver\config.toml`:
 
@@ -672,8 +679,9 @@ request rather than captured at server construction for exactly this reason (#35
 `escalate_to_vision`, `self_consistency_n`, the breaker knobs, the whole `http.*` block,
 `ocr.languages` (resolved against the installed `@tesseract.js-data/*` packages when the
 worker is built; an unbundled language is refused by name rather than falling back to
-`nld`, #143), the reply switch/wording/budgets, poll interval, `history_mode`, `retain_days`,
-`ui.tray` and all three secrets — is captured when the Tesseract worker, listener, reasoner,
+`nld`, #143), the reply switch/wording/budgets, the auto-router policy (`cost_tier`,
+`allowed_models`, `excluded_models`), poll interval, `history_mode`, `retain_days`,
+`max_images`, `ui.tray` and all four secrets — is captured when the Tesseract worker, listener, reasoner,
 responder or HTTP server is built, so the editor says "restart" rather than appearing to save
 something that silently does nothing. The live ones are copied into the live config by
 `applyLiveSettings` after a successful save.
@@ -724,7 +732,8 @@ GUI. First-run uses the same descriptors through `createSetupSettingsController`
 drift either.
 
 **The theme is a cookie plus a server-side render, and CSS owns the OS default (issue #99).**
-The served CSP is `default-src 'none'; img-src 'self'; style-src 'unsafe-inline'` — it
+The served CSP is `default-src 'none'; img-src 'self'; style-src 'unsafe-inline';
+form-action 'self'; base-uri 'none'` — it
 forbids scripts and external assets. (`img-src 'self'` is the minimal widening for the
 statistics page's review copies: `img-src` falls back to `default-src`, so without the
 directive the `default-src 'none'` forbade every same-origin `/images/<id>` thumbnail,
@@ -759,7 +768,8 @@ paragraphs. There is no client-side loading state to design: every page is serve
 there is no script; the only asynchronous paint is a lazy thumbnail, which uses a sized
 panel-coloured placeholder so it does not reflow. `prefers-reduced-motion` collapses the
 transitions to nothing. The token layer could not be a build step: there is no bundler, and the
-CSP (`default-src 'none'; img-src 'self'`) still forbids scripts and external assets.
+CSP (`default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; form-action 'self';
+base-uri 'none'`) still forbids scripts and external assets.
 
 **Screenshots are captured over HTTP, with the real CSP in force (issue #111).**
 `scripts/screenshots.mjs` used to write the fetched HTML to a `file://` document and inline
@@ -1102,7 +1112,7 @@ dependencies.
 | HTTP client | built-in `fetch` | — |
 | Imaging | `sharp` (libvips) | integral-image work done directly on raw pixels; native, prebuilt for Windows x64 |
 | OCR | `tesseract.js` + `@tesseract.js-data/nld` | WASM, offline, bundled traineddata, per-word confidence |
-| Model | `openai` SDK against any OpenAI-compatible base URL | swap providers by config |
+| Model | built-in `fetch` (hand-rolled OpenAI-compatible client, §4.7) | no vendor SDK to track or audit; swap providers by config |
 | State | `node:sqlite` | built in, no dependency |
 | Config | `smol-toml` | tiny pure-JS TOML parser |
 | Tray | `systray2` + `node-notifier` | no Electron; ~200 MB saved; both declared, both imported lazily (M3) |
