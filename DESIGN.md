@@ -984,7 +984,13 @@ run double-clicked `PuzzleSolver.vbs` and got the **Documents** folder: a URL ha
 `explorer.exe`, which parses its own switches (`/select,`, `/e,`, `/root,…`), matches none of them
 for a URL with a query string, and opens its default folder. Windows now splits the two kinds of
 target — a **file path** to `explorer.exe` (what *Open log* and *Open config* need) and a **URL** to
-the shell's protocol handler, `rundll32 url.dll,FileProtocolHandler`. `cmd /c start "" <url>` was
+the shell's protocol handler, `rundll32 url.dll,FileProtocolHandler`. The path branch was fixed in
+two parts (#217): an existing target is revealed with explorer's documented `/select,<path>` switch
+(a bare path is not a reveal form and is what Explorer resolved to Documents), and a target that
+does not exist — a fresh install has no `config.toml` yet — opens the **nearest existing ancestor
+folder**, found with `win32.dirname`, instead of being handed to Explorer to misread. The opener
+command alone was asserted before, and only for URLs; `packaging/open-path-check.mjs` now asserts
+both branches against the shipped artifact on `windows-latest`. `cmd /c start "" <url>` was
 rejected because it interposes a `cmd.exe` parser in front of the URL, and node's Windows argument
 quoting does not protect `&`/`|`/`^`, so a future URL with a metacharacter would need hand-built
 verbatim quoting. `openPath` returns `{ launched, kind, command }`, where **`launched` means a
@@ -1709,7 +1715,11 @@ that was broken — is now asserted on the packaged artifact by `packaging/run-t
 widget drawing is not. The deploy job's launcher step enters the tray path but does not assert it (it stops
 at "a node.exe started"), so that separate step is the assertion. Whether the Windows URL handler (now
 `rundll32 url.dll,FileProtocolHandler`, not `explorer.exe` — #169) opens a real browser window is likewise
-unexercised; its failure path is not, since it is asserted with an injected opener. The unprivileged
+unexercised; its failure path is not, since it is asserted with an injected opener. The same limit applies to
+the path branch fixed for #217: `packaging/run-open-path.ps1` asserts the constructed command
+(`explorer.exe /select,<path>` for an existing file, the containing folder for a missing one) on the shipped
+artifact, but a runner has no interactive desktop, so **whether a window appears, and which one, is not
+checked there** — only the seam that was wrong three releases running. The unprivileged
 install path is likewise unexercised, because the
 runner is an administrator (#163). The DPAPI credential round trip, by contrast, *is* executed
 on the runner as two processes: the writer migrates and saves, the reader decrypts from disk and
