@@ -193,23 +193,8 @@ starts with no config at all, and the file is for the advanced settings. It is
 (or `$PUZZLESOLVER_CONFIG`) overrides it. An unknown key warns and is ignored; a *bad*
 value fails loudly and names the key. Secrets are **not** config keys: a key whose name
 looks like one (`*token*`, `*key*`, `*secret*`, `*password*`) is rejected at load, because
-a config file ends up in backups and support threads.
-
-```toml
-[solver]
-offline_only = false            # true = never call a model; no image leaves the machine
-llm_text_model = "gpt-4o-mini"
-llm_vision_model = "gpt-4o"
-llm_base_url = "https://api.openai.com/v1"
-[reply]
-require_confidence = true       # only send answers every tier agreed on
-[http]
-# does not affect the web UI (web_ui has no enable flag)
-enabled = false                 # an HTTP endpoint that solves captchas is an oracle
-bind = "127.0.0.1"             # never 0.0.0.0 unless you mean it; it warns if you do
-```
-
-Every key and its default is in
+a config file ends up in backups and support threads. Every key with its default, and an
+annotated `config.toml` block, are in
 [configuration](./docs/configuration.md#every-configtoml-key-with-its-default);
 `DEFAULTS` in [`src/config.js`](./src/config.js) is the schema.
 
