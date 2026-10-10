@@ -62,12 +62,13 @@ image_url_hosts = []            # when on: the only hosts image_url may name (de
 
 ## Secrets go in the credential store, or in the environment
 
-The Pushbullet token and the model key are **not** config keys. A config key whose name
-looks like a secret (`*token*`, `*key*`, `*secret*`, `*password*`) is rejected at load,
-because a config file ends up in backups and support threads.
+The Pushbullet token, the model key and the HTTP bearer token are **not** config keys. A
+config key whose name looks like a secret (`*token*`, `*key*`, `*secret*`, `*password*`)
+is rejected at load, because a config file ends up in backups and support threads.
 
-On a normal install the app collects them for you: the first-run setup page, or the
-tray's **Settings** editor, writes them to the credential store. On Linux/macOS that is
+On a normal install the app collects them for you: the first-run setup page (the
+Pushbullet token and model key), or the tray's **Settings** editor, writes them to the
+credential store. On Linux/macOS that is
 the file at `${XDG_CONFIG_HOME:-~/.config}/puzzlesolver/credentials.json`; on Windows it
 is the DPAPI-protected blob at `%APPDATA%\PuzzleSolver\credentials.dpapi`. A hand-written
 plaintext `%APPDATA%\PuzzleSolver\credentials.json` is still read once, migrated to DPAPI
@@ -95,10 +96,13 @@ stores what you enter in the credential store; cancel it and nothing starts.
 `PUSHBULLET_TOKEN` and the credential-store file. The model key is optional: with none,
 the app runs offline-only (Tier 0).
 
-When `[http] enabled = true`, a second secret is required: the bearer token for the
-HTTP endpoint. Set `HTTP_AUTH_TOKEN` in the environment, or add `http_auth_token` to the
-same credential store (a hand-written `credentials.json` is migrated to DPAPI on the next
-start on Windows):
+When `[http] enabled = true`, another required secret is the bearer token for the HTTP
+endpoint. Like the other two it goes in the credential store — the settings editor's
+**HTTP bearer token** row, or `node src/cli.js config set http.token a-long-random-string`.
+An unattended run may set `HTTP_AUTH_TOKEN` in the environment instead, but that variable
+must be **persistent** (`setx` or System Properties, as above), not a session `$env:`
+assignment, or the logon task will not see it. A hand-written `credentials.json` with
+`http_auth_token` is migrated to DPAPI on the next start on Windows:
 
 ```json
 { "pushbullet_token": "o.xxxxxxxx", "llm_api_key": "sk-xxxxxxxx", "http_auth_token": "a-long-random-string" }

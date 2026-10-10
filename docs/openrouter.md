@@ -29,12 +29,18 @@ allowed_models = ["openai/*", "google/gemini-*"]   # wildcard patterns
 https://openrouter.ai/api/v1`, and so on. The model settings and the auto-router policy
 are all **restart-bound**, and the settings UI marks them `[restart]`.
 
-**The key goes in the environment or the credential store, never `config.toml`** (which
-rejects secret-shaped keys at load by design). Either set `LLM_API_KEY`
-(`$env:LLM_API_KEY = "sk-or-..."` on Windows), or store it with
-`node src/cli.js config set llm.api_key sk-or-...`. The settings UI (tray **Settings**, or
-`config edit --gui`) exposes the model settings, the auto-router policy and the key,
-validating each before it writes. Its **Test connection** button probes the configured
+**The key goes in the credential store, never `config.toml`** (which rejects secret-shaped
+keys at load by design). The settings UI (tray **Settings**, or `config edit --gui`) has a
+**Model API key** row, and `node src/cli.js config set llm.api_key sk-or-...` writes the
+same store. The UI also exposes the model settings and the auto-router policy, validating
+each before it writes.
+
+A headless or unattended service reads `LLM_API_KEY` from the environment instead, and it
+must be a **persistent** variable — `setx LLM_API_KEY "sk-or-..."` on Windows, or System
+Properties → Environment Variables — because the logon task does not see a session
+`$env:LLM_API_KEY = "…"`.
+
+The settings UI's **Test connection** button probes the configured
 `solver.llm_base_url` and `solver.llm_text_model`, so with the base URL and text model
 above it talks to OpenRouter rather than to OpenAI. A failed probe names the host and
 model it used, so it cannot be mistaken for "your key is bad".
