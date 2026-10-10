@@ -122,6 +122,10 @@ export async function startTray({
     click: () => {},
   }));
 
+  // `trayIcon` yields an absolute file path, not image data: systray2 itself reads
+  // the file and base64s the bytes for the tray binary, and Windows needs a real
+  // `.ico` there (issue #185). Both this initial menu and the repaint below go
+  // through `trayIcon`, so the two cannot drift.
   const tray = new SysTray({
     menu: {
       icon: trayIcon(controller.poll().icon),
@@ -160,6 +164,8 @@ export async function startTray({
     }
   }
 
+  // The repaint shares `trayIcon` with the initial menu above, and so gets the same
+  // platform-correct path rather than a second, drifting copy of the format choice.
   const timer = setInterval(refreshIcon, pollIntervalMs);
   timer.unref?.();
 

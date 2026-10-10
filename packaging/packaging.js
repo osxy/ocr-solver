@@ -70,6 +70,13 @@ export const REQUIRED_PAYLOAD = [
   'node_modules/@tesseract.js-data/nld/4.0.0/nld.traineddata.gz',
   'app/package.json',
   'app/src/cli.js',
+  // The tray is handed a file path and Windows requires a real .ico there (#185).
+  // A missing icon is invisible to the offline suite, so the payload build must
+  // refuse to assemble a zip without it.
+  'app/src/ui/icons/tray-normal.ico',
+  'app/src/ui/icons/tray-grey.ico',
+  'app/src/ui/icons/tray-normal.png',
+  'app/src/ui/icons/tray-grey.png',
   'install.ps1',
   'uninstall.ps1',
   'PuzzleSolver.vbs',

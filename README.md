@@ -35,20 +35,20 @@ pages under [`docs/`](./docs/):
 
 ## Status
 
-**0.45.1 — a pre-release.** The offline solver, model tiers, Pushbullet listener and
+**0.45.2 — a pre-release.** The offline solver, model tiers, Pushbullet listener and
 reply path are implemented and tested. The packaged Windows app, the installer, the
 per-user Startup shim and the launcher are executed on `windows-latest` in CI, and a fresh
 `node` process decrypts Windows secrets through DPAPI there; that runner also asserts the
-packaged `systray2` class now resolves (the tray had never loaded, because a
-CommonJS/Babel interop bug made the import resolve to an object). The native tray widget
-itself and the notification toast need an interactive desktop and remain unverified (see
+packaged `systray2` class resolves and that Windows `LoadImage` accepts the shipped `.ico`
+the tray icon is handed to `systray2` as a file path. The native tray widget itself and
+the notification toast need an interactive desktop and remain unverified (see
 [Known limitations](#known-limitations)).
 
 The **Pushbullet ingress — reading a real push, fetching its image, solving it and
 replying — has never been executed against the real Pushbullet service**, because no
 account or token exists (tracked and blocked as
 [issue #3](https://github.com/osxy/ocr-solver/issues/3)). That is the app's primary
-user-facing path, so **0.45.1 remains a pre-release**: the parts a runner can reach are
+user-facing path, so **0.45.2 remains a pre-release**: the parts a runner can reach are
 tested against fakes, but the main ingress is not *observed* end to end. Work is tracked
 in the [issue tracker](https://github.com/osxy/ocr-solver/issues); the design and its
 reasoning live in [DESIGN.md](./DESIGN.md).
@@ -57,20 +57,20 @@ reasoning live in [DESIGN.md](./DESIGN.md).
 
 Install from a **release**, not from source. From the
 [releases page](https://github.com/osxy/ocr-solver/releases) download
-`PuzzleSolver-0.45.1-win-x64.zip` and its `.sha256` checksum. The ZIP carries
+`PuzzleSolver-0.45.2-win-x64.zip` and its `.sha256` checksum. The ZIP carries
 its own pinned `node.exe`, so Node does not have to be installed.
 
 The binary is **unsigned**, so **Windows SmartScreen will warn on first run** and the
 SHA256 checksum is the only integrity signal. Verify it before extracting:
 
 ```powershell
-Get-FileHash .\PuzzleSolver-0.45.1-win-x64.zip -Algorithm SHA256
-Get-Content .\PuzzleSolver-0.45.1-win-x64.zip.sha256
+Get-FileHash .\PuzzleSolver-0.45.2-win-x64.zip -Algorithm SHA256
+Get-Content .\PuzzleSolver-0.45.2-win-x64.zip.sha256
 ```
 
 The two hashes must match. (On Linux or macOS:
-`sha256sum -c PuzzleSolver-0.45.1-win-x64.zip.sha256`.) If Windows flags the download,
-`Unblock-File .\PuzzleSolver-0.45.1-win-x64.zip` first.
+`sha256sum -c PuzzleSolver-0.45.2-win-x64.zip.sha256`.) If Windows flags the download,
+`Unblock-File .\PuzzleSolver-0.45.2-win-x64.zip` first.
 
 Then extract the ZIP and, from the extracted folder, run the installer:
 
@@ -348,7 +348,7 @@ delete `%LOCALAPPDATA%\Programs\PuzzleSolver`, `%LOCALAPPDATA%\PuzzleSolver` and
 
 ## Known limitations
 
-- **Pre-release.** 0.45.1 is a pre-release: expect rough edges and no stability promise.
+- **Pre-release.** 0.45.2 is a pre-release: expect rough edges and no stability promise.
   The **Pushbullet ingress has never run against the real Pushbullet service** — no
   account or token exists (issue #3) — so the app's primary path is exercised against
   fakes rather than observed end to end.

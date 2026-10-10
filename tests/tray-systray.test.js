@@ -5,6 +5,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
 
 import { startTray, resolveSysTray, TrayUnavailableError } from '../src/ui/tray-systray.js';
 
@@ -101,6 +102,13 @@ test('the adapter renders the controller menu and forwards clicks back by id', a
   );
   assert.equal(instance.conf.menu.title, 'PuzzleSolver');
   assert.ok(instance.conf.menu.icon.length > 0, 'an icon payload is required');
+
+  // The systray2 contract is a *path*, not base64: the library calls pathExists on
+  // it and reads the file itself. An embedded base64 string is not a path, so the
+  // bytes reached the native side undecoded and the tile rendered blank (#185).
+  const icon = instance.conf.menu.icon;
+  assert.match(icon, process.platform === 'win32' ? /\.ico$/ : /\.png$/, 'the platform chooses the format');
+  assert.ok(existsSync(icon), `systray2 reads this path itself, so it must exist: ${icon}`);
 
   const result = await instance.clicks({ item: { tooltip: 'status' } });
   assert.equal(result.id, 'status');
