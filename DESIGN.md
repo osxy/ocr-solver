@@ -173,11 +173,42 @@ Cost is trivial: integral image + union-find over 36k pixels, well under 10 ms p
 
 - `tesseract.js` with the `nld` traineddata **bundled in `node_modules`** via
   `@tesseract.js-data/nld` — no CDN fetch, fully offline.
+- The bundled data is loaded straight into Tesseract's **in-memory** filesystem with
+  `cacheMethod: 'none'`; no on-disk traineddata cache is ever written. The disk cache
+  was the cause of the CI flake in issue #110, and it bought nothing: reading and
+  gunzipping `nld.traineddata.gz` costs the same as reading the 23 MB decompressed file
+  (~0.4 s, four runs each).
 - Runs every preprocessing variant at PSM 6 (uniform block) and PSM 7 (single line).
 - `rankResults()` **demotes empty transcripts below every non-empty one regardless of
   reported confidence**, and `bestResult()` adds a small bonus for transcripts that
   contain real Dutch question words, because a slightly lower-confidence full sentence
   is far more useful than a high-confidence fragment.
+
+#### The #110 corpus flake
+
+The failure was `tests/corpus.test.js` cancelled at its 60 s timeout with
+`Error opening data file ./nld.traineddata` / `Tesseract couldn't load any languages!`,
+on a commit that had passed the same job twice. The cause was **not** a path resolved
+against the working directory, although the error names a relative path: that `./` is
+Tesseract's in-memory filesystem root, and `@tesseract.js-data/nld`'s `langPath` is
+absolute (a worker created from `/` loads fine — measured).
+
+The cause is a **shared writable cache**. Every test file runs in its own process, all
+of them use one `~/.cache/PuzzleSolver/tessdata` path, and tesseract.js writes the
+decompressed `nld.traineddata` there with a truncating `fs.writeFile`. A process that
+reads while another writes gets a short file: 5552 of 5564 concurrent reads were short
+in a direct measurement. Tesseract then fails to open the language, and because
+`createWorker` leaves its promise unsettled after an initialisation rejection, the caller
+hangs to its timeout — the same leaked worker thread is also the 15-minute job hang.
+A truncated cached file reproduces the exact CI symptom under `node --test`
+(`# fail 0 / # cancelled 1`).
+
+Reproduction, old code, corpus test files together under CPU load with a fresh cache:
+**6 runs, 1 failure** (run 3, `cancelled 1`, the process then hung to the 180 s shell
+cap). With the fix: **18 of 19 runs clean**; the one non-zero run was not captured and
+could not be reproduced (10/10 clean on the confirming batch). The guard is
+`tests/ocr-worker.test.js`; reverting `cacheMethod: 'none'` turns it red with
+`actual: [ 'nld.traineddata' ]` in under a second.
 
 ### 4.3 Repair — `src/solver/transcript.js` ✅ built
 
