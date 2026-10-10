@@ -16,7 +16,8 @@ The shape is the same for a milestone and for a hotfix:
 - **Every item branches off the integration branch**, not off `main`, and its pull request
   **targets the integration branch**.
 - **The version bump, the README install link and the release notes live on the integration
-  branch.**
+  branch** — the content ends up there, delivered by a pull request from an item branch, not
+  committed to the branch directly.
 - **The integration branch is protected** like `main`: the `pre-push` hook refuses it, so work
   reaches it through pull requests.
 - **CI must cover it.** The workflows trigger on `main` **and** on `milestone/**` and
@@ -46,6 +47,39 @@ development cycle (issue #106). For hotfixes, fixes merged after a release were 
 `main` with no branch to land on, so the patch release could not be prepared, tested or tagged
 at a single commit. An integration branch keeps unreleased state off `main` and gives a set of
 fixes one place to land before it becomes the next release.
+
+**"The version bump, the README install link and the release notes live on the integration
+branch" means the content lands there, not that it is committed there.** The integration
+branch is protected, so a direct push is refused; the bump, the README install link and the
+release notes are prepared on an item branch and reach the integration branch through a pull
+request. That pull request is not ceremony. A push to `hotfix/**` runs no workflow at all, and
+a push to `milestone/**` runs only the offline suite; the Windows packaging job — the only
+place `packaging/check-version.mjs` and the deployment smoke test execute — triggers on a pull
+request into either integration branch, never on a push. So the pull request is the only run
+that covers the assembled release state in full, and it is where `tests/packaging.test.js`
+cross-checks the version bump, the README asset and the install link together. The product
+owner was asked directly and chose to keep the pull request, with this wording clarified.
+
+**A sync of `main` into an integration branch is a real merge, never a squash.** `main`
+contains merge commits — every release is one — and squashing a branch that contains a merge
+discards ancestry: the content arrives, but the branch still reports itself N commits behind
+`main`, so the next sync or the release merge sees history that does not match reality. The
+v0.45.2 sync into `milestone/v0.46` was squash-merged and had to be repaired for exactly this
+reason: the milestone read "4 behind main" while holding every file from it, and the ancestry
+was restored with a real merge through the API. Prove a sync afterwards:
+
+```bash
+git rev-list --count <branch>..main         # must be 0
+git merge-base --is-ancestor main <branch>  # must exit 0
+```
+
+**Dependabot opens against the default branch, so its pull requests need retargeting.** There
+is no `.github/dependabot.yml` in this repository, so only security updates appear — and they
+open against `main`, because that is the default branch. `main` is always the released
+version, so a dependency change landing there would alter what users download without a
+release. Retarget such a pull request into the current milestone (or the open hotfix) before
+considering it. This is manual: dependabot's `target-branch` is a fixed setting and the
+current integration branch changes.
 
 **Creating the milestone branch is the one exception to the hook.** The `pre-push` hook
 refuses `milestone/*` from a clone, deliberately — work reaches the milestone through a pull
