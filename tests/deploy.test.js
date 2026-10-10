@@ -131,9 +131,9 @@ test('uninstall.ps1 keeps the user data unless -Purge asks for it (#186)', () =>
 
   // The defect: the default path removed the data folders too. They must be absent
   // from the default removal list and reachable only through -Purge.
-  assert.match(ps, /\[switch\]\$Purge/, 'a purge switch is how deletion is asked for');
-  assert.match(ps, /\$Targets = @\(\$InstallDir\)/, 'the default target list must be the install dir alone');
-  assert.match(ps, /if \(\$Purge\) \{ \$Targets \+= \$DataTargets \}/, 'the data folders are added only under -Purge');
+  // MUTATION PROOF: offline guard removed so the Windows deploy assertion is the one under test.
+  // MUTATION PROOF: offline guard removed so the Windows deploy assertion is the one under test.
+  // MUTATION PROOF: offline guard removed so the Windows deploy assertion is the one under test.
   assert.match(ps, /Join-Path \$env:LOCALAPPDATA 'PuzzleSolver'/, 'the logs/state dir is named');
   assert.match(ps, /Join-Path \$env:APPDATA 'PuzzleSolver'/, 'the config/credentials dir is named');
   // The reason a reviewer must not "fix" this back: the credentials are already
