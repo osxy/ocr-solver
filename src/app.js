@@ -627,6 +627,9 @@ export async function createApp({
       instanceLockState = acquireInstanceLock({ lockPath: resolvedLockPath, logger });
     }
     if (!instanceLockState.acquired) {
+      // A library caller sees the error; the log line is for the launcher, which hides
+      // stderr - the whole point of "exit cleanly and say why" is that it is recorded.
+      logger.warn?.(`refused to start a second instance: ${new AlreadyRunningError(instanceLockState.holder).message}`);
       throw new AlreadyRunningError(instanceLockState.holder, { lockPath: resolvedLockPath });
     }
     started = true;
@@ -847,7 +850,20 @@ export async function runApp(options = {}) {
     options.instanceLock ??
     acquireInstanceLock({ lockPath: options.instanceLockPath ?? resolveInstanceLockPath(options) });
   if (!preLock.acquired) {
-    throw new AlreadyRunningError(preLock.holder, { lockPath: preLock.lockPath });
+    const err = new AlreadyRunningError(preLock.holder, { lockPath: preLock.lockPath });
+    // The launcher runs with no console, so stderr alone would make the refusal silent
+    // there. Best-effort: logging must never turn a clean refusal into a crash.
+    try {
+      const logger =
+        options.logger ??
+        createLogger({
+          path: options.logPath ?? defaultLogPath({ platform: options.platform, env: options.env, homedir: options.homedir }),
+        });
+      logger.warn?.(err.message);
+    } catch {
+      // the refusal is already knowable from the exit code
+    }
+    throw err;
   }
 
   try {

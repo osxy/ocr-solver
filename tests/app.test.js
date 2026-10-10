@@ -826,6 +826,55 @@ test('two apps in one checkout with different state paths both start (#167)', as
   assert.deepEqual(started.sort(), ['a', 'b'], 'separate data directories must not contend for one lock');
 });
 
+// The user path: `runApp` takes the lock before any UI, so a second launch refuses here
+// rather than in `createApp`. The launcher has no console, so the refusal must reach the
+// log; this pins both the clean error and the logged reason.
+test('runApp refuses a second start, exits cleanly and logs why (#167)', async (t) => {
+  const fake = await startFakePushbullet();
+  const dir = mkdtempSync(join(tmpdir(), 'puzzlesolver-runapp-instance-'));
+  mkdirSync(join(dir, 'inbox'), { recursive: true });
+  t.after(async () => {
+    await fake.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const beforeSigint = new Set(process.listeners('SIGINT'));
+  const beforeSigterm = new Set(process.listeners('SIGTERM'));
+  t.after(() => {
+    for (const handler of [...process.listeners('SIGINT'), ...process.listeners('SIGTERM')]) {
+      if (!beforeSigint.has(handler) && !beforeSigterm.has(handler)) {
+        process.removeListener('SIGINT', handler);
+        process.removeListener('SIGTERM', handler);
+      }
+    }
+  });
+
+  const base = {
+    env: {},
+    providers: [],
+    client: fakeClient(fake),
+    reasoner: null,
+    solveImage: scriptedSolve(),
+    createWorker: async () => ({ terminate: async () => {} }),
+    listener: { start() {}, stop() {}, status: () => ({}) },
+    inboxDir: join(dir, 'inbox'),
+    statePath: join(dir, 'state.db'),
+  };
+  const first = await runApp({ ...base, logger: collectingLogger() });
+  t.after(() => first.stop());
+
+  const warnings = [];
+  const secondLogger = { warn: (m) => warnings.push(String(m)), info() {}, debug() {}, error() {} };
+  await assert.rejects(
+    () => runApp({ ...base, logger: secondLogger }),
+    (err) => err.name === 'AlreadyRunningError' && /already running/.test(err.message)
+  );
+  assert.ok(
+    warnings.some((m) => /already running/.test(m)),
+    `the refusal must be logged for the console-less launcher: ${warnings.join(' | ')}`
+  );
+});
+
 test('runApp installs SIGINT/SIGTERM handlers and starts listening', async (t) => {
   const fake = await startFakePushbullet();
   const dir = mkdtempSync(join(tmpdir(), 'puzzlesolver-app-'));
