@@ -111,7 +111,13 @@ async function openSession(t, server) {
 }
 
 function rowFor(html, id) {
-  const match = new RegExp(`<th>${id.replace(/\./g, '\\.')}</th>[\\s\\S]*?</tr>`).exec(html);
+  // Backslashes first, then the metacharacters that need escaping: escaping dots first
+  // would turn the `\` it inserts into `\\` when the backslash pass ran afterwards, so
+  // the pattern would stop meaning a literal `.` (CodeQL js/incomplete-sanitization).
+  const escaped = id.replace(/\\/g, '\\\\').replace(/\./g, '\\.');
+  // The id is no longer the row heading - the registry label is (#139) - so the row is
+  // located by its id element, which is still the row's identity and submitted value.
+  const match = new RegExp(`<code class="setting-id">${escaped}</code>[\\s\\S]*?</tr>`).exec(html);
   assert.ok(match, `the page must contain a row for ${id}`);
   return match[0];
 }
@@ -247,7 +253,13 @@ test('the page renders every descriptor in settings.js, with live/restart labels
   const server = await startUi(t, { controller: editor });
   const { page } = await openSession(t, server);
   for (const setting of SETTINGS) {
-    assert.ok(page.text.includes(`<th>${setting.id}</th>`), `${setting.id} must appear in the UI`);
+    assert.ok(
+      page.text.includes(`<code class="setting-id">${setting.id}</code>`),
+      `${setting.id} must appear in the UI as the row's identity`
+    );
+    // #139: the registry's label is rendered, not just carried. A descriptor whose
+    // label drifted out of the page fails here rather than silently in the browser.
+    assert.ok(page.text.includes(`<span class="setting-label">${setting.label}</span>`), `${setting.id} must render its label`);
   }
   assert.match(rowFor(page.text, 'ui.notify_on_unresolved'), /\[live\]/, 'a per-solve setting is labelled live');
   assert.match(rowFor(page.text, 'solver.llm_text_model'), /\[restart\]/, 'a captured setting is labelled restart');
@@ -268,7 +280,8 @@ test('a descriptor added to the controller list appears in the UI with no second
   };
   const server = await startUi(t, { controller });
   const { page } = await openSession(t, server);
-  assert.match(page.text, /<th>future\.setting<\/th>/);
+  assert.match(page.text, /<code class="setting-id">future\.setting<\/code>/);
+  assert.match(page.text, /<span class="setting-label">A future setting<\/span>/);
   assert.match(rowFor(page.text, 'future.setting'), /\[live\]/);
   assert.match(page.text, /name="v:future\.setting"/);
 });

@@ -258,10 +258,13 @@ test('tray is the requested default, but the config and --headless can veto it',
 });
 
 test('the opener sends a path to explorer and a URL to the URL handler (#169)', () => {
-  // A path: the shell's file opener. *Open log* and *Open config* depend on this.
-  assert.deepEqual(openPathCommand('C:\\logs\\app.log', { platform: 'win32', env: {} }), {
+  // A path: the shell's file opener. *Open log* and *Open config* depend on this. The
+  // file exists, so it is revealed selected with explorer's `/select,` switch (#217);
+  // the old assertion here pinned the bare-path form, which is exactly what opened
+  // Documents instead, so it was corrected with the fix rather than kept.
+  assert.deepEqual(openPathCommand('C:\\logs\\app.log', { platform: 'win32', env: {}, exists: () => true }), {
     command: 'explorer.exe',
-    args: ['C:\\logs\\app.log'],
+    args: ['/select,C:\\logs\\app.log'],
   });
   assert.equal(openPathCommand('/x', { platform: 'darwin' }).command, 'open');
   assert.equal(openPathCommand('/x', { platform: 'linux' }).command, 'xdg-open');
@@ -278,6 +281,58 @@ test('the opener sends a path to explorer and a URL to the URL handler (#169)', 
   assert.deepEqual(spec.args, ['url.dll,FileProtocolHandler', url]);
   assert.equal(spec.command.includes('explorer'), false, 'a URL must never reach explorer');
   assert.equal(openPathCommand(url, { platform: 'win32', env: {} }).command, 'rundll32.exe');
+});
+
+// The path branch of #217: an existing target is *revealed* with `/select,`, and a
+// missing one opens the nearest existing ancestor folder. Before the fix the args were
+// `[text]`, and explorer's handling of a path it cannot reveal is the Documents window
+// the user reported. Reverting to `[text]` fails these deepEqual assertions.
+test('a Windows path is revealed with explorer /select, and a missing one opens its folder (#217)', () => {
+  const existing = openPathCommand('C:\\logs\\app.log', { platform: 'win32', env: {}, exists: () => true });
+  assert.deepEqual(existing, { command: 'explorer.exe', args: ['/select,C:\\logs\\app.log'] }, 'an existing file is revealed, with no space after the comma');
+  const rooted = openPathCommand('C:\\logs\\app.log', { platform: 'win32', env: { SystemRoot: 'C:\\Windows' }, exists: () => true });
+  assert.deepEqual(rooted, { command: 'C:\\Windows\\explorer.exe', args: ['/select,C:\\logs\\app.log'] }, 'the SystemRoot-qualified explorer gets the same reveal args');
+
+  // The config file before anything is saved. The target is absent, so the containing
+  // folder must open - never explorer's default (Documents).
+  const configPath = 'C:\\Users\\a\\AppData\\Roaming\\PuzzleSolver\\config.toml';
+  const dir = 'C:\\Users\\a\\AppData\\Roaming\\PuzzleSolver';
+  const missing = openPathCommand(configPath, { platform: 'win32', env: {}, exists: (p) => p === dir });
+  assert.deepEqual(missing, { command: 'explorer.exe', args: [dir] }, 'a missing file opens its existing containing folder');
+
+  // The folder itself may be missing on a fresh install; walk up to the first ancestor
+  // that exists instead of handing explorer a path it will turn into Documents.
+  const roaming = 'C:\\Users\\a\\AppData\\Roaming';
+  const ancestor = openPathCommand(configPath, { platform: 'win32', env: {}, exists: (p) => p === roaming });
+  assert.deepEqual(ancestor, { command: 'explorer.exe', args: [roaming] }, 'the nearest existing ancestor is opened');
+
+  // Nothing exists: the loop stops at the drive root, which is still a real folder on
+  // Windows - the failure mode is never "fall through to explorer's default".
+  const none = openPathCommand(configPath, { platform: 'win32', env: {}, exists: () => false });
+  assert.deepEqual(none, { command: 'explorer.exe', args: ['C:\\'] }, 'the walk terminates at the drive root, not the target');
+
+  // Non-Windows openers already dispatch on both kinds and are left alone: no /select,
+  // switch, which is an explorer concept.
+  assert.deepEqual(openPathCommand('/var/log/app.log', { platform: 'linux' }), { command: 'xdg-open', args: ['/var/log/app.log'] });
+  assert.deepEqual(openPathCommand('/var/log/app.log', { platform: 'darwin' }), { command: 'open', args: ['/var/log/app.log'] });
+});
+
+test('openPath forwards existence to the Windows path branch and launches the reveal (#217)', async () => {
+  const seen = [];
+  const result = await openPath('C:\\logs\\app.log', {
+    platform: 'win32',
+    env: {},
+    exists: () => true,
+    spawn: (command, args) => {
+      seen.push({ command, args });
+      const emitter = new EventEmitter();
+      emitter.unref = () => {};
+      queueMicrotask(() => emitter.emit('spawn'));
+      return emitter;
+    },
+  });
+  assert.equal(result.launched, true);
+  assert.deepEqual(seen, [{ command: 'explorer.exe', args: ['/select,C:\\logs\\app.log'] }], 'the spawned args are the reveal form');
 });
 
 // `isUrl` is the classifier the opener branches on: a wrong answer here silently sends a

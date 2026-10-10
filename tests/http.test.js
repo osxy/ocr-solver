@@ -654,6 +654,34 @@ test('multipart/form-data with a file part is accepted', async (t) => {
   assert.equal(res.json.answer, '2');
 });
 
+/**
+ * Build a multipart body by hand so the boundary spelling is ours, not undici's.
+ *
+ * undici's `FormData` generates an all-lowercase boundary, so lowercasing the whole
+ * `Content-Type` header is a no-op and cannot be told apart from a correct parser -
+ * that is exactly why #187 shipped green. A boundary is case-sensitive (RFC 2046) and
+ * Chrome, Edge and curl all send mixed case, so this is the input the tests must supply.
+ */
+function handBuiltMultipart(bytes, boundary = '----WebKitFormBoundaryAbCdEf12') {
+  const body = Buffer.concat([
+    Buffer.from(`--${boundary}\r\n`),
+    Buffer.from('Content-Disposition: form-data; name="image"; filename="puzzle.png"\r\n'),
+    Buffer.from('Content-Type: image/png\r\n'),
+    Buffer.from('\r\n'),
+    bytes,
+    Buffer.from(`\r\n--${boundary}--\r\n`),
+  ]);
+  return { body, contentType: `multipart/form-data; boundary=${boundary}` };
+}
+
+test('multipart/form-data with a mixed-case boundary is accepted (#187)', async (t) => {
+  const { url } = await startServer(t);
+  const { body, contentType } = handBuiltMultipart(await smallPng());
+  const res = await post(url, { body, contentType });
+  assert.equal(res.status, 200, res.text);
+  assert.equal(res.json.answer, '2');
+});
+
 // ---------------------------------------------------------------------------
 // The default egress is the HTTP response, never a Pushbullet push
 // ---------------------------------------------------------------------------
@@ -873,6 +901,47 @@ test('tokenMatches is strict about the scheme and the value', () => {
   assert.equal(tokenMatches('abc', 'Bearer abcd'), false);
   assert.equal(tokenMatches('', 'Bearer '), false);
   assert.equal(tokenMatches('abc', undefined), false);
+});
+
+test('tokenMatches keeps the odd spacing the old pattern accepted (#208)', () => {
+  // The parse was rewritten to be linear; these are the shapes the previous regex
+  // tolerated and which the rewrite must not have narrowed.
+  assert.equal(tokenMatches('abc', 'Bearer  abc'), true, 'several spaces between scheme and token');
+  assert.equal(tokenMatches('abc', 'bearer   abc'), true, 'several spaces, lower-case scheme');
+  assert.equal(tokenMatches('abc', 'Bearer\t\tabc'), true, 'tabs as the separator');
+  assert.equal(tokenMatches('abc', 'BEARER abc'), true, 'the scheme is case-insensitive');
+  assert.equal(tokenMatches('ABC', 'Bearer ABC'), true, 'the token itself stays case-sensitive');
+  assert.equal(tokenMatches('abc', 'Bearer ABC'), false, 'a case-folded token must not match');
+  assert.equal(tokenMatches('abc', 'Bearer abc '), false, 'trailing whitespace is part of the token');
+  // The old pattern let `(.+)` fall back to a single separator character, so
+  // `tokenMatches(' ', 'Bearer  ')` was true. It could never authenticate a real
+  // token (the token floor is far above one space), so the rewrite rejects it.
+  assert.equal(tokenMatches(' ', 'Bearer  '), false, 'a whitespace-only header carries no token');
+});
+
+test('a hostile authorization header is rejected promptly (#208)', () => {
+  // The CodeQL shape: `bearer` plus a long run of separators. The trailing carriage
+  // return is what made the old pattern quadratic - `\r` is whitespace that `\s+`
+  // matched but `(.+)` cannot, so the engine retried every split of the run. At this
+  // size the old pattern took ~25s; the linear parse is O(n).
+  const header = `Bearer${' '.repeat(150_000)}\r`;
+  const started = performance.now();
+  const matched = tokenMatches('test-token-do-not-log', header);
+  const elapsedMs = performance.now() - started;
+  assert.equal(matched, false, 'a hostile header must still be rejected');
+  // Deliberately generous. The linear parse costs ~1-2ms, so a loaded CI runner would
+  // have to be thousands of times slower to trip this, while the quadratic pattern is
+  // an order of magnitude over it. A tighter bound would flake on a loaded box and
+  // teach everyone to distrust the assertion.
+  assert.ok(elapsedMs < 5_000, `hostile header took ${elapsedMs.toFixed(0)}ms; the parse must stay linear`);
+});
+
+test('the bearer parse carries no backtracking regex (#208)', () => {
+  // A stopwatch only samples a machine, so it cannot prove linearity. Pin the
+  // mechanism instead: the finding was a quantified whitespace class overlapping the
+  // token wildcard, so the function body must carry no quantified whitespace class at
+  // all. The per-character test is a bare `/\s/`, which has nothing to backtrack over.
+  assert.doesNotMatch(String(tokenMatches), /\\s[+*]/, 'a quantified whitespace class is the backtracking hazard');
 });
 
 test('isLoopbackHost validates the whole address, not a prefix (#47)', () => {

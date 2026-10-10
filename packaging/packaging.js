@@ -46,6 +46,22 @@ export function assertTagMatchesVersion({ refType, refName, version }) {
   return { checked: true, tag: refName, version };
 }
 
+/**
+ * Whether a release tag names a pre-release, and so needs `--prerelease`.
+ *
+ * The marker is a semver pre-release suffix: the part after the first `-` in the
+ * version (`v0.46.0-pre.1`). A plain `vX.Y.Z` tag is a normal release, as is one with
+ * only build metadata (`v1.0.0+build.7`, which uses `+`). The choice is therefore
+ * opt-in and visible in the version string, rather than a `v0.*` range that flagged
+ * every pre-1.0 release for a reason that has gone (issue #216).
+ *
+ * A non-tag ref is not a release at all and is never a pre-release.
+ */
+export function isPrereleaseTag(refType, refName) {
+  const version = tagVersion(refType, refName);
+  return version !== null && version.includes('-');
+}
+
 /** sha256sum-compatible line: digest, two spaces, filename. */
 export function checksumLine(digest, filename) {
   return `${digest}  ${filename}\n`;
@@ -79,6 +95,7 @@ export const REQUIRED_PAYLOAD = [
   'app/src/ui/icons/tray-grey.png',
   'install.ps1',
   'uninstall.ps1',
+  'update.ps1',
   'PuzzleSolver.vbs',
 ];
 

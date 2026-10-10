@@ -26,6 +26,10 @@ on:
   # runs on push or pull_request.
   workflow_call:
 
+# Read everywhere; no job in this file needs write access.
+permissions:
+  contents: read
+
 # Cancel a superseded run for the same ref: the last push is the one worth testing and
 # a queued older run is billed. `github.workflow` keeps this group distinct from the
 # same file's reusable-workflow call inside Package (Windows), so a fresh CI push cannot

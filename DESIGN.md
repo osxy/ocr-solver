@@ -3,9 +3,9 @@
 A small Windows background app that watches Pushbullet for incoming puzzle images,
 reads the image, solves the puzzle, and answers back on Pushbullet.
 
-Status: **v0.45.2 released** (offline solver + model reasoner tiers, verified live; the
-Pushbullet listener, image fetcher and responder are built and tested offline, but the
-live Pushbullet ingress has never run against the real service — issue #3).
+Status: **v0.46.0 released** (offline solver + model reasoner tiers, verified live; the
+Pushbullet listener, image fetcher and responder are built, tested offline, and verified
+against the real service end to end — issue #3 closed).
 Decisions confirmed — see §13.
 
 Component headers carry a **✅ built** marker once the component exists and its offline
@@ -365,7 +365,7 @@ applies to the next puzzle without a restart, with built-in fallbacks for packag
 > the corpus puzzles (`hond blauw kat`, `peer arm fiets`, `negen min vier`). Using the corpus
 > puzzles as examples would inflate measured accuracy on the only test set available.
 
-### 4.9 Listener — `src/pushbullet/listener.js` ✅ built (M2, live Pushbullet verification outstanding — issue #3)
+### 4.9 Listener — `src/pushbullet/listener.js` ✅ built (M2, verified live)
 
 Pushbullet has **no webhooks**. Two mechanisms, used together:
 
@@ -379,13 +379,13 @@ Pushbullet has **no webhooks**. Two mechanisms, used together:
 Keeps a persisted watermark, deduplicates by push `iden`, reconnects with exponential backoff
 and jitter, and (by default) ignores pre-existing history rather than answering a backlog.
 
-### 4.10 Image fetcher — `src/pushbullet/files.js` ✅ built (M2, live Pushbullet verification outstanding — issue #3)
+### 4.10 Image fetcher — `src/pushbullet/files.js` ✅ built (M2, verified live)
 
 `file_url` is a pre-signed S3 URL, so a plain `fetch` works. Verifies magic bytes and that
 Pillow-equivalent decoding succeeds, enforces a size cap, saves to
 `%LOCALAPPDATA%\PuzzleSolver\inbox\<iden>.<ext>`, and prunes by age (default 7 days).
 
-### 4.11 Responder — `src/pushbullet/respond.js` ✅ built (M2, live Pushbullet verification outstanding — issue #3)
+### 4.11 Responder — `src/pushbullet/respond.js` ✅ built (M2, verified live)
 
 **Delivery path confirmed: the puzzle arrives as a file push from another user or device, and
 a new note push back is an acceptable answer.** The Pushbullet API offers a true threaded reply
@@ -573,6 +573,19 @@ refused by name rather than silently read as `nld` (#143). `ui.tray` /
 §7's per-tier circuit breaker, and `storage.log_images` is the opt-in in §8. `log_images`
 defaults to `false`; it never writes image bytes anywhere (that is refused at the sinks), it only
 records a durable file reference for puzzles that ended unresolved.
+
+**The example config is generated, commented and never live (#181).** The installer writes
+`config.toml.example` beside where `config.toml` lives (`defaultExampleConfigPath` in
+`src/config-example.js`), derived from `DEFAULTS` and the settings registry rather than
+hand-written — documentation outliving its code is this repository's most repeated defect. Every
+line is commented out, so even a careless `cp config.toml.example config.toml` pins no default: a
+live complete file would freeze this version's defaults, and a later release changing one would
+silently have no effect. `runInstall` honours a `skipIfExists` flag on that entry, so a user's
+edited copy survives a reinstall or an update while the generated shims are refreshed. It names
+the secret ids and routes them to the credential store (`config set` or the settings editor),
+because the loader rejects secret-shaped keys and the shipped file must not contradict the
+app's own refusal. All of it is asserted offline by `tests/config-example.test.js`, and on
+Windows by `packaging/run-deploy.ps1` (the unprivileged install path stays unexercised, #163).
 
 ### 4.14 UI & logging ✅ M3
 
@@ -771,6 +784,15 @@ transitions to nothing. The token layer could not be a build step: there is no b
 CSP (`default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; form-action 'self';
 base-uri 'none'`) still forbids scripts and external assets.
 
+**The settings row heading is the registry's label, not the raw id (#139).** Every descriptor
+carried a hand-written `label` and nothing rendered it: the row printed `item.id`. The decision is
+to render both — the human label is the heading, the id sits beneath it — because the id is the
+row's identity, its anchor key and its submitted value (`name="v:section.key"`, the `test_id` the
+**Test connection** button posts), so it cannot be dropped. The terminal editor shows the same
+pair. `tests/web-config.test.js` asserts every descriptor's label reaches the page and
+`tests/settings.test.js` asserts no descriptor has an empty one, so a label can no longer drift
+from its id in silence.
+
 **Screenshots are captured over HTTP, with the real CSP in force (issue #111).**
 `scripts/screenshots.mjs` used to write the fetched HTML to a `file://` document and inline
 the thumbnails as `data:` URLs. A `file://` document carries no CSP header, so the render
@@ -962,7 +984,13 @@ run double-clicked `PuzzleSolver.vbs` and got the **Documents** folder: a URL ha
 `explorer.exe`, which parses its own switches (`/select,`, `/e,`, `/root,…`), matches none of them
 for a URL with a query string, and opens its default folder. Windows now splits the two kinds of
 target — a **file path** to `explorer.exe` (what *Open log* and *Open config* need) and a **URL** to
-the shell's protocol handler, `rundll32 url.dll,FileProtocolHandler`. `cmd /c start "" <url>` was
+the shell's protocol handler, `rundll32 url.dll,FileProtocolHandler`. The path branch was fixed in
+two parts (#217): an existing target is revealed with explorer's documented `/select,<path>` switch
+(a bare path is not a reveal form and is what Explorer resolved to Documents), and a target that
+does not exist — a fresh install has no `config.toml` yet — opens the **nearest existing ancestor
+folder**, found with `win32.dirname`, instead of being handed to Explorer to misread. The opener
+command alone was asserted before, and only for URLs; `packaging/open-path-check.mjs` now asserts
+both branches against the shipped artifact on `windows-latest`. `cmd /c start "" <url>` was
 rejected because it interposes a `cmd.exe` parser in front of the URL, and node's Windows argument
 quoting does not protect `&`/`|`/`^`, so a future URL with a metacharacter would need hand-built
 verbatim quoting. `openPath` returns `{ launched, kind, command }`, where **`launched` means a
@@ -1581,10 +1609,30 @@ the installer appear to hang. `-NoStart` is the switch for a scripted or unatten
 where opening the first-run setup page is wrong. On a fresh install with no token the started
 app opens its setup page (#56), so install -> running -> it asks for the token is the first
 run. `packaging/uninstall.ps1` delegates the shim deletion the
-same way, then removes the three per-user folders. All path decisions live in the Node modules;
+same way, then removes the program folder. The user's data folders are **kept by default**
+and removed only by `-Purge` (#186): `%APPDATA%`/`%LOCALAPPDATA%` application data
+outliving an uninstall is the Windows convention, and `credentials.json` is
+DPAPI-protected with `CurrentUser` scope, so deleting it protects nobody while costing the
+legitimate owner. All path decisions live in the Node modules;
 the PowerShell is locator/launcher glue. Both `_ps1` scripts check `$LASTEXITCODE` after the
 native child, because `$ErrorActionPreference = 'Stop'` does not cover it and a failure otherwise
 still printed "Installed" (#162).
+
+**Mark-of-the-Web is reported, never silently unblocked (issue #176).** The payload a user
+installs arrives as a downloaded ZIP, so Explorer may attach the `Zone.Identifier`
+alternate data stream to each extracted file and Windows warns on first open - SmartScreen
+for the unsigned `node.exe`, the *"Open File - Security Warning"* script prompt for
+`PuzzleSolver.vbs`. The stream is an accurate record of where the file came from, so clearing
+it is the user's decision: `install.ps1` **reports** which files carry it (`Get-ChildItem`,
+then `Get-Item -Stream Zone.Identifier` per file) and names the one command that fixes it,
+and clears nothing unless `-Unblock` is passed - saying what it did either way. Detection
+runs *before* the self-copy, so `-Unblock` clears the source and the installed files are
+copied clean. The instruction that matters for propagation is unblocking the **ZIP before
+extracting** (Explorer copies the ZIP's mark onto every extracted file), so the README leads
+with that and offers the after-the-fact `Unblock-File` commands only to someone who has
+already extracted. The deploy job proves the same on a real marked file: it writes the
+stream onto a payload file, asserts the ordinary run names it and leaves it in place, then
+that `-Unblock` clears it and says so.
 
 **One process, or none: the single-instance lock (issue #167).** The restart machinery above
 guarantees a deliberate restart starts exactly one successor, but the ordinary path a user
@@ -1610,10 +1658,31 @@ is alive-but-not-ours) or when the file is unreadable or truncated. A process ki
 cleanup - the restart work makes this ordinary - therefore does not block the next start. The
 stale removal is guarded by the same `wx` create, so two processes that both find a stale lock
 cannot both take it. The refused start exits cleanly with a sentence (`AlreadyRunningError`),
-not a stack trace. Known gap: pid reuse can make a stale lock look live; the realistic trigger
-is a reboot, and the heartbeat or cross-platform start-time probe that would close it has not
-yet been worth its cost. `tests/instance.test.js` covers the refusal and every stale shape, and
+not a stack trace. **A pid is not an identity (#212).** `process.kill(pid, 0)` answers
+"is some process using this pid", not "is it the one that took the lock" - and pid 1 always
+answers yes, so a lock left by a crashed container (where the app is usually pid 1) refused
+every restart, permanently. On Linux the lock now records the holder's `/proc/<pid>/stat`
+start ticks and the kernel boot id beside the pid; a holder is live only when both still
+match, so a recreated PID namespace and a reboot both read as stale. The probe is
+best-effort: where `/proc` is absent (Windows) it returns `null` and the check falls back to
+the pid, keeping the documented pid-reuse gap there. `tests/instance.test.js` covers the
+refusal, every stale shape, and the pid-1 container case (mutation-proved), and
 `tests/app.test.js` starts the same state path twice and asserts the second starts no listener.
+
+**Stopping a running app for an update (#168).** The updater cannot replace a running
+`node.exe` and must not force-kill it (that loses an in-flight solve), so the lock seam
+gained a stop half: `requestInstanceStop` writes a request file beside the lock and waits,
+bounded, for the holder to go; the app watches for it in `runApp` and routes it through the
+same graceful shutdown as SIGINT/SIGTERM, the tray Quit or a restart. `src/deploy/stop.js` is
+the client `update.ps1` invokes before it replaces anything. `packaging/update.ps1` applies
+the user-downloaded release with **no network of its own** - it re-verifies the `.sha256`
+when present (the binary is unsigned, so that is the only integrity signal), refuses an older
+payload, replaces the install tree rather than merging (`applyUpdate` clears it first, so a
+stale `node_modules` cannot shadow the new one), re-creates the launcher and Startup shim,
+and starts the new app. The user's two data directories are never named. The version and
+replace rules are pure and tested offline in `tests/update.test.js`; the checksum,
+`Expand-Archive` and start are exercised only by the deploy job on `windows-latest`, which
+also plants a stale file that must not survive and a tampered sidecar that must refuse.
 
 **Unverifiable on the Linux development host:** `wscript` execution, the `_ps1` scripts end to
 end, Explorer opening a log, and the actual tray widget. Every one of those has a testable seam
@@ -1651,8 +1720,11 @@ home. Decided here, additively:
 - **No third-party release action.** The Release is created with the runner's preinstalled `gh` and
   the default token, so there is nothing extra to pin; `contents: write` is set on the release job
   only, and the rest of the workflow is `contents: read`.
-- **Pre-1.0 tags (`v0.*`) are published as GitHub pre-releases**, so the first build is not offered
-  as the project's "latest".
+- **A tag with a semver pre-release suffix is published as a GitHub pre-release.** The
+  `release` job takes the flag from `packaging/release-flag.mjs`, so a plain `vX.Y.Z` tag
+  is a normal release and only a suffixed one (`v0.46.0-pre.1`) is flagged. The choice is
+  in the version string, not a `v0.*` range that flagged every pre-1.0 release for a
+  reason that is gone (#216).
 - **`main`/PR runs upload a workflow artifact but never publish.** Only a `v*` tag creates a
   Release; workflow artifacts expire after 14 days, release assets do not.
 - **No credentials can travel.** The payload is copied from an explicit allowlist (`src/`,
@@ -1665,7 +1737,9 @@ redirected there, and runs `packaging/run-deploy.ps1`. It executes `install.ps1`
 per-user Startup shim exists and carries the `WScript.Sleep` logon delay; starts the packaged
 `node.exe` under `--headless` and asserts the documented exit-1 refusal rather than a stack trace;
 runs `PuzzleSolver.vbs` and asserts a `node.exe` process appears; then runs `uninstall.ps1` and
-asserts the shim and all three per-user folders are gone. It then **proves the failure path**: a
+asserts the shim and the program folder are gone while the `config.toml`, `credentials.json`
+and `state.db` written beforehand survive with their contents intact, and that `-Purge` is the
+only path that removes them (#186). It then **proves the failure path**: a
 payload whose `app/src/deploy/install.js` exits non-zero must make `install.ps1` exit non-zero and
 print no success line (#162) — the check that was missing when the first real user saw "Installed"
 after node had failed. The `release` job now needs it too, so a broken installer blocks a release.
@@ -1678,7 +1752,11 @@ that was broken — is now asserted on the packaged artifact by `packaging/run-t
 widget drawing is not. The deploy job's launcher step enters the tray path but does not assert it (it stops
 at "a node.exe started"), so that separate step is the assertion. Whether the Windows URL handler (now
 `rundll32 url.dll,FileProtocolHandler`, not `explorer.exe` — #169) opens a real browser window is likewise
-unexercised; its failure path is not, since it is asserted with an injected opener. The unprivileged
+unexercised; its failure path is not, since it is asserted with an injected opener. The same limit applies to
+the path branch fixed for #217: `packaging/run-open-path.ps1` asserts the constructed command
+(`explorer.exe /select,<path>` for an existing file, the containing folder for a missing one) on the shipped
+artifact, but a runner has no interactive desktop, so **whether a window appears, and which one, is not
+checked there** — only the seam that was wrong three releases running. The unprivileged
 install path is likewise unexercised, because the
 runner is an administrator (#163). The DPAPI credential round trip, by contrast, *is* executed
 on the runner as two processes: the writer migrates and saves, the reader decrypts from disk and

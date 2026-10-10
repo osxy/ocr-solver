@@ -59,6 +59,25 @@ function makeEditor(t, { configPath = null, secrets = null, saveSecrets = null, 
 }
 
 // ---------------------------------------------------------------------------
+// Every descriptor has a label, and the UI renders it (#139)
+// ---------------------------------------------------------------------------
+
+test('every descriptor carries a non-empty label', () => {
+  // #139: 53 labels existed and nothing rendered them. The switch is to render them,
+  // so an empty or missing label is now a visible defect rather than dead weight, and
+  // this is the registry-side half of `tests/web-config.test.js`'s render check.
+  const missing = SETTINGS.filter((setting) => typeof setting.label !== 'string' || setting.label.trim() === '').map(
+    (setting) => setting.id
+  );
+  assert.deepEqual(
+    missing,
+    [],
+    `these settings have no label, so the settings page would fall back to the raw id: ${missing.join(', ')}`
+  );
+  assert.ok(SETTINGS.length > 40, `the registry shrank to ${SETTINGS.length} settings; the guard lost its subject`);
+});
+
+// ---------------------------------------------------------------------------
 // The schema covers the issue's settings
 // ---------------------------------------------------------------------------
 
@@ -129,6 +148,8 @@ test('the editor lists current values, and secrets by presence only', (t) => {
   const items = editor.list();
   assert.equal(items.find((i) => i.id === 'solver.self_consistency_n').value, 3);
   assert.equal(items.find((i) => i.id === 'reply.title').value, 'Antwoord');
+  // The label survives the editor's descriptor projection (#139).
+  assert.equal(items.find((i) => i.id === 'reply.max_per_hour').label, 'Answer budget (per hour)');
   const token = items.find((i) => i.id === 'pushbullet.token');
   assert.equal(token.secret, true);
   assert.equal(token.value, null, 'a secret value must never be returned');

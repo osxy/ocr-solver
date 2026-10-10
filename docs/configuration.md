@@ -13,6 +13,14 @@ value (wrong type, unknown enum, negative interval) fails loudly and names the k
 `DEFAULTS` in [`src/config.js`](../src/config.js) is the full schema; `DESIGN.md` §4.13
 explains the defaults.
 
+The installer writes a commented example beside it, `config.toml.example`, in the same
+directory. It is generated from `DEFAULTS` and the settings registry, every line is
+commented out, and it is never read: it is a discovery aid, not a live file, so copying
+it over `config.toml` pins no default (a complete live file would freeze this version's
+defaults and later releases would silently not apply). The settings editor can change
+the same keys, and the secrets it must not carry are described under
+[Secrets](#secrets-go-in-the-credential-store-or-in-the-environment) below.
+
 ## Every `config.toml` key, with its default
 
 This is **every key that can live in `config.toml`**, with its default. The three

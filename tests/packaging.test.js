@@ -18,6 +18,7 @@ import {
   assertTagMatchesVersion,
   bundledNodeUrl,
   checksumLine,
+  isPrereleaseTag,
   parseChecksum,
   tagVersion,
   BUNDLED_NODE_VERSION,
@@ -87,6 +88,41 @@ test('the check-version CLI fails on a mismatched tag and passes on a branch', (
 });
 
 // ---------------------------------------------------------------------------
+// Pre-release flag
+// ---------------------------------------------------------------------------
+
+/*
+ * The flag used to be a `v0.*` glob that marked every pre-1.0 tag as a pre-release for
+ * a reason that is gone (#216). It now keys on a semver pre-release suffix, so a plain
+ * `vX.Y.Z` tag is a normal release and the choice is visible in the version string.
+ * The workflow calls `release-flag.mjs`, which is this function, so the CLI test below
+ * pins the same decision the release job runs.
+ */
+test('a plain vX.Y.Z tag is a normal release and a suffixed tag is a pre-release', () => {
+  assert.equal(isPrereleaseTag('tag', 'v0.46.0'), false);
+  assert.equal(isPrereleaseTag('tag', 'v0.46.0-pre.1'), true);
+  assert.equal(isPrereleaseTag('tag', 'v1.0.0-rc.2'), true);
+  assert.equal(isPrereleaseTag('tag', 'v1.0.0+build.7'), false, 'build metadata is not a pre-release');
+  assert.equal(isPrereleaseTag('branch', 'main'), false, 'a branch is not a release');
+  assert.equal(isPrereleaseTag('', ''), false);
+});
+
+test('the release-flag CLI prints --prerelease only for a suffixed tag', () => {
+  const run = (env) =>
+    spawnSync(process.execPath, [join(repoRoot, 'packaging', 'release-flag.mjs')], {
+      encoding: 'utf8',
+      env: { ...process.env, ...env },
+    });
+
+  assert.equal(run({ GITHUB_REF_TYPE: 'tag', GITHUB_REF_NAME: 'v0.46.0' }).stdout.trim(), '');
+  assert.equal(
+    run({ GITHUB_REF_TYPE: 'tag', GITHUB_REF_NAME: 'v0.46.0-pre.1' }).stdout.trim(),
+    '--prerelease'
+  );
+  assert.equal(run({ GITHUB_REF_TYPE: 'branch', GITHUB_REF_NAME: 'feat/x' }).stdout.trim(), '');
+});
+
+// ---------------------------------------------------------------------------
 // Checksum
 // ---------------------------------------------------------------------------
 
@@ -130,6 +166,8 @@ test('the required payload includes the app, the Windows sharp binary, the train
       REQUIRED_PAYLOAD.includes('app/src/ui/icons/tray-grey.ico'),
     'the Windows tray icons must be required in the payload'
   );
+  // #168: update.ps1 travels with the installed copy so it can update itself.
+  assert.ok(REQUIRED_PAYLOAD.includes('update.ps1'), 'the updater must ship in the payload');
   assert.ok(!REQUIRED_PAYLOAD.some((entry) => entry.includes('config/')), 'config/ must not ship');
   assert.ok(FORBIDDEN_PAYLOAD.includes('config/llm.env'));
   assert.ok(FORBIDDEN_PAYLOAD.includes('credentials.json'));
@@ -166,6 +204,27 @@ test('the package workflow triggers on PRs, main pushes, v* tags and dispatch', 
   // Only the release job may write; the rest of the workflow is read-only.
   assert.equal((workflow.match(/contents:\s*write/g) ?? []).length, 1);
   assert.match(workflow, /permissions:\s*\n\s*contents:\s*read/);
+});
+
+/*
+ * The pre-release flag is a published claim about an artifact, so its decision belongs
+ * in code a Linux test can run rather than an inline glob that only CI ever executes
+ * (#216). `release-flag.mjs` is the tested `isPrereleaseTag`; this pins that the release
+ * job asks it, and that the `v0.*` glob (which flagged every pre-1.0 release for a
+ * reason that is gone) cannot come back.
+ */
+test('the release job decides the pre-release flag through release-flag.mjs', () => {
+  const workflow = readFileSync(join(repoRoot, '.github', 'workflows', 'package.yml'), 'utf8');
+
+  assert.match(
+    workflow,
+    /pre=\$\(node packaging\/release-flag\.mjs\)/,
+    'the release job must take the flag from the tested script'
+  );
+  assert.ok(
+    !workflow.includes('case "$tag" in v0.*)'),
+    'the pre-1.0 tag glob must not return; a plain vX.Y.Z tag is a normal release'
+  );
 });
 
 test('the package workflow cancels a superseded branch run but never a tag build', () => {
@@ -221,7 +280,8 @@ test('run-deploy.ps1 asserts every deployment surface and throws on the first mi
   assert.match(script, /function Assert/);
   // install lands the files, the per-user Startup shim exists with the documented delay,
   // the app refuses with the documented message, the launcher starts a process,
-  // uninstall is clean, and a failing installer is propagated (#162).
+  // uninstall keeps the user's data and -Purge removes it (#186), and a failing
+  // installer is propagated (#162).
   for (const marker of [
     'install.ps1',
     'PuzzleSolver-startup.vbs',
@@ -233,6 +293,17 @@ test('run-deploy.ps1 asserts every deployment surface and throws on the first mi
     'PuzzleSolver.vbs',
     'Stop-Process',
     'uninstall.ps1',
+    '-Purge',
+    'config.toml',
+    'credentials.json',
+    'must survive a default uninstall',
+    // #168: the updater is exercised against the artifact, with a graceful stop and a
+    // replace that must drop a planted stale file, and a tampered sidecar that refuses.
+    'update.ps1',
+    'checksum verified',
+    'checksum mismatch',
+    'stopped gracefully',
+    'stale-marker.txt',
   ]) {
     assert.ok(script.includes(marker), `run-deploy.ps1 no longer checks ${marker}`);
   }
@@ -308,10 +379,10 @@ test('the README install instructions name the asset CI builds (#97)', () => {
  * to a URL that 404s for the whole cycle. `/releases` lists everything and cannot 404.
  *
  * Do not "tidy" this back to a pinned tag, and prefer `/releases` over
- * `/releases/latest`: the *web* `/releases/latest` currently only works by falling
- * back to `/releases` (every v0.x release is a pre-release), and the *API*
- * `repos/osxy/ocr-solver/releases/latest` genuinely 404s. The releases page depends on
- * neither fallback nor on a release existing.
+ * `/releases/latest`: the README names the version being prepared, and `/releases/latest`
+ * points at the newest release, which during the bump-to-tag window is the previous one
+ * the README no longer documents. The releases page lists everything and needs no
+ * release to exist.
  *
  * Honest limit: this cannot assert that a release EXISTS, only that the link does not
  * depend on one particular tag.

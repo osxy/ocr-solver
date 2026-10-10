@@ -134,12 +134,37 @@ export function isLoopbackHost(host) {
   return false;
 }
 
-/** Constant-time bearer check. Length is compared first because timingSafeEqual requires it. */
+// One whitespace code unit, tested per character. This is the `\s` set; it is
+// deliberately never quantified - see `tokenMatches` for why.
+const WHITESPACE = /\s/;
+
+/**
+ * Constant-time bearer check. Length is compared first because timingSafeEqual requires it.
+ *
+ * The header is parsed by hand instead of with the previous `/^Bearer\s+(.+)$/i`
+ * pattern. That pattern is ambiguous: `\s+` and `(.+)` both match whitespace, so a
+ * caller-supplied header of `bearer` plus N separator characters plus a final line
+ * terminator (which `(.+)` cannot match) forced the engine to try every split of the
+ * run, making the match O(N^2) - a ReDoS on the ingress that decides access, before
+ * any authentication (CodeQL `js/polynomial-redos`, #208). Each loop below visits
+ * every header character at most once, and no step can backtrack, so the parse is
+ * linear in the header length.
+ */
 export function tokenMatches(expected, header) {
   if (typeof expected !== 'string' || expected.length === 0) return false;
-  const match = /^Bearer\s+(.+)$/i.exec(String(header ?? ''));
-  if (!match) return false;
-  const provided = Buffer.from(match[1]);
+  const value = String(header ?? '');
+  // The scheme is exactly the first six characters and is matched case-insensitively;
+  // the token that follows remains case-sensitive. The slice never scans past six
+  // characters, so a long header costs nothing here.
+  if (value.slice(0, 6).toLowerCase() !== 'bearer') return false;
+  // Skip the separator run just as a greedy whitespace quantifier did, so
+  // `Bearer    abc` and `Bearer\tabc` keep working. A header that is only the scheme
+  // and whitespace has no token and is rejected. This loop advances one index per
+  // character and never revisits one, which is what makes the parse linear.
+  let end = 6;
+  while (end < value.length && WHITESPACE.test(value[end])) end += 1;
+  if (end === 6 || end === value.length) return false;
+  const provided = Buffer.from(value.slice(end));
   const wanted = Buffer.from(expected);
   if (provided.length !== wanted.length) return false;
   return timingSafeEqual(provided, wanted);
@@ -264,13 +289,20 @@ export function assertImageUrlAllowed(url, { enabled = false, hosts = [] } = {})
 
 /** Parse the request into a description the resolver can act on, without touching bytes yet. */
 export async function classifyRequest(req, body) {
-  const contentType = String(req.headers['content-type'] ?? '').toLowerCase();
-  if (contentType.startsWith('multipart/form-data')) {
+  const contentType = String(req.headers['content-type'] ?? '');
+  // The multipart boundary is carried in this header and is case-sensitive (RFC 2046),
+  // so only the media type may be lowercased for the comparison; the parser must
+  // receive the header as sent. Lowercasing the whole header rewrites the boundary, and
+  // the parser then looks for a delimiter the body never contains - which is how every
+  // browser upload (Chrome/Edge send mixed-case `----WebKitFormBoundary...`) became a
+  // `400 bad_multipart` (#187).
+  const mediaType = contentType.split(';')[0].trim().toLowerCase();
+  if (mediaType === 'multipart/form-data') {
     const file = await firstFormFile(contentType, body);
     if (!file) throw new HttpError(400, 'missing_image', 'multipart body had no file part');
     return { kind: 'raw', buffer: file.buffer, deliver: null };
   }
-  if (contentType.includes('application/json')) {
+  if (mediaType.includes('application/json')) {
     let json;
     try {
       json = JSON.parse(body.toString('utf8') || '{}');

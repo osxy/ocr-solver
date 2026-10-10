@@ -12,6 +12,14 @@
 # That is the check the deploy job was missing - and the reason the first real-machine
 # failure printed "Installed" after node had printed a stack trace.
 #
+# Since #186 it also proves what an uninstall must *not* do: the program folder and the
+# Startup shim go, the user's config.toml/credentials.json/state.db survive intact, and
+# uninstall.ps1 -Purge is the only path that deletes them.
+#
+# Since #181 it asserts the commented example config the installer writes beside where
+# config.toml lives: present, generated from the defaults, fully commented, never a live
+# config.toml, and a user's edited copy kept across a reinstall.
+#
 # Every check throws on failure, so a human never has to read the log to decide whether
 # the job passed. The per-user folders are redirected into a temp tree so the run cannot
 # touch the runner's real profile and is removed afterwards.
@@ -108,6 +116,20 @@ try {
     }
     Write-Host "install: $($expected.Count) expected files are present under $installDir"
 
+    # --- 1a. the commented example config is installed, and is not config.toml ---
+    # #181: the file lives in the config directory, not the install directory (which an
+    # update replaces), so a reader finds it where the file they copy *to* lives. Every
+    # line is commented, so even a careless copy over config.toml pins no default.
+    $exampleFile = Join-Path $env:APPDATA 'PuzzleSolver\config.toml.example'
+    Assert (Test-Path $exampleFile) "install: expected the example config at $exampleFile"
+    Assert (-not (Test-Path (Join-Path $env:APPDATA 'PuzzleSolver\config.toml'))) 'install: the installer must not write a live config.toml'
+    $exampleText = Get-Content $exampleFile -Raw
+    Assert ($exampleText -match 'poll_interval_sec = 60') 'install: the example does not show the generated defaults'
+    Assert ($exampleText -match 'config set') 'install: the example must say where secrets go'
+    $liveLines = @($exampleText -split "`n" | Where-Object { $_.Trim() -ne '' -and -not $_.StartsWith('#') })
+    Assert ($liveLines.Count -eq 0) "install: the example has live TOML lines: $($liveLines -join '; ')"
+    Write-Host 'install: commented example config present in the config directory, no live config.toml'
+
     # --- 1b. the default install starts the app it just installed ------------
     # This is the post-install start (issue #167) and the only place a runner can observe
     # it. It also leaves a stale lock behind: the process is killed, so the `--headless`
@@ -121,6 +143,92 @@ try {
     Stop-InstalledNodeProcesses $installDir
     Start-Sleep -Seconds 2
     Assert ((Get-InstalledNodeProcesses $installDir).Count -eq 0) 'install: the started process could not be stopped'
+
+    # --- 1c. the Mark-of-the-Web is reported, never cleared silently (#176) ---
+    # Zone.Identifier is the stream Explorer attaches to every file it extracts from a
+    # downloaded ZIP. The artifact this job downloads may or may not arrive marked, so the
+    # test writes the stream itself: the subject is install.ps1's detection, not GitHub's
+    # download plumbing. The mark must survive the ordinary run - only -Unblock may clear
+    # it, and either way the installer must say what it did.
+    $markedFile = Join-Path $payload 'PuzzleSolver.vbs'
+    Set-Content -Path $markedFile -Stream Zone.Identifier -Value "[ZoneTransfer]`nZoneId=3" -Encoding ascii
+    Assert (Get-Item -LiteralPath $markedFile -Stream Zone.Identifier -ErrorAction SilentlyContinue) 'motw: the test could not write the Zone.Identifier stream'
+
+    $motwReport = Invoke-Installer (Join-Path $payload 'install.ps1') -extraArgs '-NoStart'
+    Assert ($motwReport.code -eq 0) "motw: install.ps1 exited $($motwReport.code): $($motwReport.text)"
+    Assert ($motwReport.text -match 'Zone\.Identifier|Mark-of-the-Web') "motw: install.ps1 did not report the internet-download mark: $($motwReport.text)"
+    Assert ($motwReport.text -match 'PuzzleSolver\.vbs') "motw: the report did not name the marked file: $($motwReport.text)"
+    Assert ($motwReport.text -match 'Unblock-File') "motw: the report did not name the one command that fixes it: $($motwReport.text)"
+    Assert (Get-Item -LiteralPath $markedFile -Stream Zone.Identifier -ErrorAction SilentlyContinue) 'motw: the ordinary run cleared the mark; only -Unblock may do that'
+    Write-Host 'motw: install.ps1 reported the marked payload file and left the mark in place'
+
+    $motwUnblock = Invoke-Installer (Join-Path $payload 'install.ps1') -extraArgs @('-NoStart', '-Unblock')
+    Assert ($motwUnblock.code -eq 0) "motw: install.ps1 -Unblock exited $($motwUnblock.code): $($motwUnblock.text)"
+    Assert ($motwUnblock.text -match 'cleared the download mark') "motw: -Unblock did not say what it did: $($motwUnblock.text)"
+    Assert (-not (Get-Item -LiteralPath $markedFile -Stream Zone.Identifier -ErrorAction SilentlyContinue)) 'motw: -Unblock did not clear the mark'
+    Write-Host 'motw: -Unblock cleared the mark and the installer said so'
+
+    # --- 1d. update.ps1 stops the app gracefully and replaces, never merges ----
+    # This is the seam #212 and #168 share: the updater must know an app is running
+    # (the lock, whose record now carries a start identity) and must stop it through
+    # that same mechanism rather than a forced kill that loses an in-flight solve.
+    # A file the new payload does not carry is planted so a merge would keep it.
+    $startedForUpdate = Invoke-Installer (Join-Path $payload 'install.ps1')
+    Assert ($startedForUpdate.code -eq 0) "update setup: install.ps1 exited $($startedForUpdate.code): $($startedForUpdate.text)"
+    $beforeUpdate = Wait-ForInstalledNodeProcess $installDir 60
+    Assert ($beforeUpdate.Count -gt 0) 'update: the app must be running before the update is exercised'
+    $oldPids = @($beforeUpdate | ForEach-Object { $_.ProcessId })
+    Assert (Test-Path (Join-Path $payload 'update.ps1')) 'update: the payload must carry update.ps1 so an install can update itself'
+    # The lock must record a start identity, not just a pid (#212); the updater reads it
+    # to decide whether a holder is really running before asking it to stop. The new app
+    # replaces 1b's stale record once `runApp` acquires the lock, so wait for the record
+    # to name the running app rather than racing its startup.
+    $lockPath = Join-Path $env:LOCALAPPDATA 'PuzzleSolver\instance.lock'
+    $lock = $null
+    $lockDeadline = (Get-Date).AddSeconds(30)
+    while (-not $lock -and (Get-Date) -lt $lockDeadline) {
+        if (Test-Path $lockPath) {
+            try { $candidate = Get-Content $lockPath -Raw | ConvertFrom-Json } catch { $candidate = $null }
+            if ($candidate -and ($candidate.pid -in $oldPids)) { $lock = $candidate }
+        }
+        if (-not $lock) { Start-Sleep -Milliseconds 200 }
+    }
+    Assert ($lock) "update: the instance lock at $lockPath never named the running app (pid $($oldPids -join ', '))"
+    Write-Host "update: app running as pid(s) $($oldPids -join ', '); applying update.ps1"
+
+    $staleFile = Join-Path $installDir 'node_modules\stale-marker.txt'
+    Set-Content -Path $staleFile -Value 'stale' -Encoding utf8
+
+    $updated = Invoke-Installer (Join-Path $payload 'update.ps1') -extraArgs @('-Zip', $Zip, '-Force')
+    Assert ($updated.code -eq 0) "update.ps1 exited $($updated.code): $($updated.text)"
+    Assert ($updated.text -match 'checksum verified') "update.ps1 did not verify the shipped sidecar: $($updated.text)"
+    Assert ($updated.text -match 'stopped gracefully') "update.ps1 did not stop the app gracefully: $($updated.text)"
+    Assert ($updated.text -match 'replaced the install') "update.ps1 did not replace the install: $($updated.text)"
+    Assert (-not (Test-Path $staleFile)) 'update: a stale file survived; the install was merged, not replaced'
+    $survivors = @(Get-InstalledNodeProcesses $installDir | Where-Object { $oldPids -contains $_.ProcessId })
+    Assert ($survivors.Count -eq 0) "update: the old app (pid $($oldPids -join ', ')) is still running"
+    $afterUpdate = Wait-ForInstalledNodeProcess $installDir 60
+    Assert ($afterUpdate.Count -gt 0) 'update: the new app was not started'
+    Write-Host 'update: checksum verified, app stopped gracefully, install replaced, new app started'
+
+    # A tampered sidecar must refuse before a single byte is replaced.
+    $tamperZip = Join-Path $root 'tampered.zip'
+    Copy-Item -Force $Zip $tamperZip
+    $sidecarText = Get-Content "$Zip.sha256" -Raw
+    $flipped = if ($sidecarText.Substring(0, 1) -eq '0') { '1' } else { '0' }
+    Set-Content -Path "$tamperZip.sha256" -Value ($flipped + $sidecarText.Substring(1)) -NoNewline -Encoding ascii
+    $markerFile = Join-Path $installDir 'node.exe.unverified-marker'
+    Set-Content -Path $markerFile -Value 'untouched' -NoNewline -Encoding utf8
+    $tampered = Invoke-Installer (Join-Path $payload 'update.ps1') -extraArgs @('-Zip', $tamperZip, '-Force', '-NoStart')
+    Assert ($tampered.code -ne 0) "tampered update: update.ps1 exited $($tampered.code); a bad checksum must refuse"
+    Assert ($tampered.text -match 'checksum mismatch') "tampered update: refusal did not name the checksum: $($tampered.text)"
+    Assert (Test-Path $markerFile) 'tampered update: the install was touched despite the bad checksum'
+    Remove-Item -Force $markerFile
+    Write-Host "tampered update: refused with 'checksum mismatch' and left the install untouched"
+
+    Stop-InstalledNodeProcesses $installDir
+    Start-Sleep -Seconds 2
+    Assert ((Get-InstalledNodeProcesses $installDir).Count -eq 0) 'update: the restarted app could not be stopped before the next step'
 
     # --- 2. autostart is a per-user Startup entry, not a scheduled task ------
     # The task was refused with `Toegang geweigerd` for an ordinary user (#163), so the
@@ -161,16 +269,51 @@ try {
     Stop-InstalledNodeProcesses $installDir
     Start-Sleep -Seconds 2
 
-    # --- 5. uninstall.ps1 removes the startup shim and the folders -----------
+    # --- 5. uninstall.ps1 keeps the user's data; -Purge deletes it -----------
+    # The defect this proves fixed (#186): the uninstaller used to remove all three
+    # per-user folders unconditionally. Write the data a configured user already has, so
+    # the assertions below can tell "the folders are gone" from "the user's property
+    # survived with its contents intact".
+    $dataLocal = Join-Path $env:LOCALAPPDATA 'PuzzleSolver'
+    $dataRoaming = Join-Path $env:APPDATA 'PuzzleSolver'
+    New-Item -ItemType Directory -Force -Path $dataLocal, $dataRoaming | Out-Null
+    $configText = "# written before the uninstall`n[storage]`nkeep_images = true"
+    $credentialsText = '{"pushbullet":"dpapi-ciphertext-marker"}'
+    $stateText = 'sqlite-marker'
+    # An example the user has edited: the reinstall below must keep it (#181).
+    $editedExample = $exampleText + "`n# user edit marker`n"
+    Set-Content -Path $exampleFile -Value $editedExample -NoNewline -Encoding utf8
+    Set-Content -Path (Join-Path $dataRoaming 'config.toml') -Value $configText -NoNewline -Encoding utf8
+    Set-Content -Path (Join-Path $dataRoaming 'credentials.json') -Value $credentialsText -NoNewline -Encoding utf8
+    Set-Content -Path (Join-Path $dataLocal 'state.db') -Value $stateText -NoNewline -Encoding utf8
+
+    # A reinstall over the configured tree: the same door as uninstall, so #186 asked
+    # whether install.ps1 discards an existing config. It must not.
+    $reinstall = Invoke-Installer (Join-Path $payload 'install.ps1') -extraArgs '-NoStart'
+    Assert ($reinstall.code -eq 0) "reinstall: install.ps1 exited $($reinstall.code): $($reinstall.text)"
+    Assert ((Get-Content (Join-Path $dataRoaming 'config.toml') -Raw) -ceq $configText) 'reinstall: config.toml was overwritten'
+    Assert ((Get-Content $exampleFile -Raw) -ceq $editedExample) 'reinstall: the user-edited example config was overwritten'
+
     # A throw inside uninstall.ps1 aborts this script (ErrorActionPreference = Stop), so
     # success is proved by the file assertions below rather than by $LASTEXITCODE.
     & (Join-Path $installDir 'uninstall.ps1')
 
     Assert (-not (Test-Path $startupFile)) "uninstall: the Startup shim still exists: $startupFile"
     Assert (-not (Test-Path $installDir)) "uninstall: install dir still exists: $installDir"
-    Assert (-not (Test-Path (Join-Path $env:LOCALAPPDATA 'PuzzleSolver'))) 'uninstall: logs/state dir still exists'
-    Assert (-not (Test-Path (Join-Path $env:APPDATA 'PuzzleSolver'))) 'uninstall: config dir still exists'
-    Write-Host 'uninstall: Startup shim and all three per-user folders are gone'
+    Assert (Test-Path $dataLocal) 'uninstall: the logs/state dir must survive a default uninstall'
+    Assert (Test-Path $dataRoaming) 'uninstall: the config dir must survive a default uninstall'
+    Assert ((Get-Content (Join-Path $dataRoaming 'config.toml') -Raw) -ceq $configText) 'uninstall: config.toml did not survive with its contents intact'
+    Assert ((Get-Content (Join-Path $dataRoaming 'credentials.json') -Raw) -ceq $credentialsText) 'uninstall: credentials.json did not survive with its contents intact'
+    Assert ((Get-Content (Join-Path $dataLocal 'state.db') -Raw) -ceq $stateText) 'uninstall: state.db did not survive with its contents intact'
+    Write-Host 'uninstall: program directory and Startup shim are gone; the user data survived intact'
+
+    # The installed copy went with the install dir, so the purge half uses the payload's
+    # copy. This also proves the default run above did not leak into it: -Purge is the
+    # only path that deletes the data (#186).
+    & (Join-Path $payload 'uninstall.ps1') -Purge
+    Assert (-not (Test-Path $dataLocal)) 'uninstall -Purge: the logs/state dir still exists'
+    Assert (-not (Test-Path $dataRoaming)) 'uninstall -Purge: the config dir still exists'
+    Write-Host 'uninstall: -Purge removed the data directories when explicitly asked'
 
     # --- 6. a failing child must be propagated, never printed as success ----
     # This is the check that was missing when the first real user saw "Installed" after
@@ -205,7 +348,7 @@ try {
         Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value @"
 ### Windows deployment
 
-install -> per-user Startup shim inspected -> packaged app starts under ``--headless`` -> ``PuzzleSolver.vbs`` launches -> uninstall: all passed in **${seconds}s**.
+install -> per-user Startup shim inspected -> packaged app starts under ``--headless`` -> ``PuzzleSolver.vbs`` launches -> uninstall keeps the user's data intact and ``-Purge`` removes it: all passed in **${seconds}s**.
 
 The failure path is proved too: a payload whose installer exits non-zero makes ``install.ps1`` exit non-zero and print no success line (#162).
 

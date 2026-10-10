@@ -71,7 +71,7 @@ test('the startup folder is the per-user Start Menu Startup folder', () => {
 const launcher = 'C:\\Users\\Andre de Vries\\AppData\\Local\\Programs\\PuzzleSolver\\PuzzleSolver.vbs';
 const startupDir = 'C:\\Users\\Andre de Vries\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup';
 
-test('the install plan writes the launcher and the Startup shim, and nothing else', () => {
+test('the install plan writes the launcher, the Startup shim and the example config', () => {
   const plan = buildInstallPlan({ installDir: 'C:\\Users\\Andre de Vries\\AppData\\Local\\Programs\\PuzzleSolver', startupDir });
   assert.equal(plan.startupPath, `${startupDir}\\${STARTUP_FILE}`);
   const launcherFile = plan.files.find((f) => f.role === 'launcher');
@@ -82,6 +82,15 @@ test('the install plan writes the launcher and the Startup shim, and nothing els
   assert.ok(startupFile.content.includes('WScript.Sleep 20000'), 'the startup shim carries the logon delay');
   assert.ok(startupFile.content.includes(launcherFile.path), 'the startup shim points at the launcher');
   assert.equal(LOGON_DELAY_SEC, 20);
+
+  // #181: the example config is part of the plan, lives beside where config.toml would
+  // be (not the install dir, which an update replaces), and is never a live config.toml.
+  const exampleFile = plan.files.find((f) => f.role === 'example-config');
+  assert.ok(exampleFile, 'the plan must write the example config');
+  assert.equal(plan.exampleConfigPath, exampleFile.path);
+  assert.ok(exampleFile.path.endsWith('config.toml.example'), `unexpected example path: ${exampleFile.path}`);
+  assert.ok(!/config\.toml$/.test(exampleFile.path), 'the example must not be named config.toml');
+  assert.equal(exampleFile.skipIfExists, true, "the example must never clobber a user's edited copy");
 });
 
 test('the install plan no longer registers a scheduled task', () => {
@@ -121,31 +130,104 @@ test('install.ps1 installs per-user, delegates to Node and checks the child exit
   assert.match(ps, /starting now/, 'the success text describes what happened, not what to do next');
 });
 
-test('uninstall.ps1 removes the startup shim and all three per-user folders', () => {
+test('install.ps1 reports the Mark-of-the-Web and clears it only under -Unblock (#176)', () => {
+  const ps = readFileSync(join(packaging, 'install.ps1'), 'utf8');
+  // Detection reads the Zone.Identifier alternate data stream, per file.
+  assert.match(ps, /-Stream Zone\.Identifier/, 'detection must read the alternate data stream');
+  assert.match(ps, /Mark-of-the-Web/, 'the report must name the mechanism');
+  assert.match(ps, /\[switch\]\$Unblock/, 'clearing the mark is opt-in');
+  assert.match(ps, /Unblock-File/, 'the opt-in path exists');
+
+  // The rule is "never cleared silently", so the clear must sit after the -Unblock
+  // check. Hoisting `Unblock-File` above the switch is exactly the regression this
+  // asserts against; the deploy job asserts the same thing on a real marked file.
+  const branchAt = ps.indexOf('if ($Unblock)');
+  const clearAt = ps.indexOf('Unblock-File');
+  assert.ok(branchAt >= 0, 'the -Unblock branch must exist');
+  assert.ok(clearAt > branchAt, 'Unblock-File must run only inside the -Unblock branch');
+  assert.ok(
+    !ps.slice(0, branchAt).includes('Unblock-File'),
+    'Unblock-File must not run before the -Unblock check'
+  );
+
+  // Detection before the copy is load-bearing: -Unblock clears the source first, so the
+  // installed files are copied clean rather than being unblocked in place afterwards.
+  assert.ok(
+    ps.indexOf('Get-MarkedFile') < ps.indexOf('Copy-Item -Recurse'),
+    'detection must run before the payload is copied'
+  );
+});
+
+test('run-deploy.ps1 exercises the Mark-of-the-Web report on a marked payload file (#176)', () => {
+  const ps = readFileSync(join(packaging, 'run-deploy.ps1'), 'utf8');
+  assert.match(ps, /-Stream Zone\.Identifier/, 'the deploy test must create the mark it checks');
+  assert.match(ps, /motw:/, 'the MotW check must be present');
+  // It must prove the ordinary run leaves the mark alone, and that -Unblock clears it.
+  assert.match(ps, /only -Unblock may do that/, 'the ordinary run must be asserted not to clear the mark');
+  assert.match(ps, /-extraArgs @\('-NoStart', '-Unblock'\)/, 'the opt-in path must be exercised');
+  assert.match(ps, /cleared the download mark/, 'the opt-in run must be asserted to say what it did');
+});
+
+test('uninstall.ps1 keeps the user data unless -Purge asks for it (#186)', () => {
   const ps = readFileSync(join(packaging, 'uninstall.ps1'), 'utf8');
   assert.match(ps, /deploy\\uninstall\.js/, 'the startup shim is removed through the Node runner');
   assert.ok(ps.includes(STARTUP_FILE), 'the damaged-install fallback must name the same shim file');
   assert.match(ps, /Start Menu\\Programs\\Startup/, 'the fallback must use the per-user Startup folder');
-  assert.match(ps, /Programs\\PuzzleSolver/);
-  assert.match(ps, /Join-Path \$env:LOCALAPPDATA 'PuzzleSolver'/, 'logs/state must go');
-  assert.match(ps, /Join-Path \$env:APPDATA 'PuzzleSolver'/, 'config/credentials must go');
+  assert.match(ps, /Programs\\PuzzleSolver/, 'the installer-created program folder is removed');
   assert.match(ps, /Remove-Item -Recurse -Force/);
+
+  // The defect: the default path removed the data folders too. They must be absent
+  // from the default removal list and reachable only through -Purge.
+  assert.match(ps, /\[switch\]\$Purge/, 'a purge switch is how deletion is asked for');
+  assert.match(ps, /\$Targets = @\(\$InstallDir\)/, 'the default target list must be the install dir alone');
+  assert.match(ps, /if \(\$Purge\) \{ \$Targets \+= \$DataTargets \}/, 'the data folders are added only under -Purge');
+  assert.match(ps, /Join-Path \$env:LOCALAPPDATA 'PuzzleSolver'/, 'the logs/state dir is named');
+  assert.match(ps, /Join-Path \$env:APPDATA 'PuzzleSolver'/, 'the config/credentials dir is named');
+  // The reason a reviewer must not "fix" this back: the credentials are already
+  // useless to any other account, so deleting them protects nobody.
+  assert.match(ps, /CurrentUser/, 'the DPAPI rationale must stay next to the deletion logic');
 });
 
 test('every packaged file is tracked in git (no generated artefact left untracked)', () => {
-  for (const file of [LAUNCHER_FILE, 'install.ps1', 'uninstall.ps1']) {
+  for (const file of [LAUNCHER_FILE, 'install.ps1', 'uninstall.ps1', 'update.ps1']) {
     assert.ok(existsSync(join(packaging, file)), `${file} is missing from packaging/`);
   }
 });
 
-test('runInstall writes the launcher and the Startup shim, and runs nothing', () => {
+test('update.ps1 verifies the download, stops through the lock and replaces the tree (#168)', () => {
+  const ps = readFileSync(join(packaging, 'update.ps1'), 'utf8');
+  // No network of its own: the whole point of the offline updater.
+  assert.ok(!/Invoke-WebRequest|Invoke-RestMethod|DownloadFile|github\.com/i.test(ps), 'the updater must not fetch anything');
+  // The sidecar is the only integrity signal; a mismatch refuses before extraction.
+  assert.match(ps, /Get-FileHash -Algorithm SHA256/);
+  assert.match(ps, /checksum mismatch/);
+  assert.ok(ps.indexOf('checksum mismatch') < ps.indexOf('Expand-Archive'), 'the checksum must be checked before extraction');
+  // Stop and replace both go through the app's own Node modules, not taskkill.
+  assert.match(ps, /deploy\\stop\.js/);
+  assert.match(ps, /deploy\\update\.js/);
+  assert.ok(!/taskkill|Stop-Process/i.test(ps), 'a forced kill would lose an in-flight solve');
+  // The version gate and the replace (self-excluded) run before any shim is recreated.
+  assert.match(ps, /'check'/);
+  assert.match(ps, /'apply'/);
+  assert.match(ps, /--self/);
+  assert.match(ps, /deploy\\install\.js/);
+  assert.match(ps, /-NoStart/);
+  // One MOTW rule, both scripts (#176): detect and report, never silently unblock.
+  assert.match(ps, /Zone\.Identifier/);
+  assert.match(ps, /\[switch\]\$Unblock/);
+});
+
+test('runInstall writes the launcher, the Startup shim and the example config, and runs nothing', () => {
   const writes = [];
   const mkdirs = [];
+  const example = 'C:\\Users\\Andre\\AppData\\Roaming\\PuzzleSolver\\config.toml.example';
   const result = runInstall({
     installDir: 'C:\\Programs\\PuzzleSolver',
     startupDir: 'C:\\Users\\Andre\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup',
+    exampleConfigPath: example,
     writeFile: (path, content, enc) => writes.push({ path, content, enc }),
     mkdir: (path) => mkdirs.push(path),
+    fileExists: () => false,
     log: { log() {} },
   });
 
@@ -156,7 +238,30 @@ test('runInstall writes the launcher and the Startup shim, and runs nothing', ()
   const startupShim = writes.find((w) => w.path.endsWith('PuzzleSolver-startup.vbs'));
   assert.ok(startupShim && startupShim.content.includes('WScript.Sleep 20000'), 'the Startup shim is written with the delay');
   assert.ok(startupShim.content.includes(result.launcherPath), 'the Startup shim points at the launcher');
-  assert.equal(writes.length, 2, 'the install writes files and starts nothing');
+  const exampleFile = writes.find((w) => w.path === example);
+  assert.ok(exampleFile && exampleFile.content.includes('poll_interval_sec = 60'), 'the example config is written');
+  assert.equal(writes.length, 3, 'the install writes files and starts nothing');
+  assert.equal(result.exampleConfigPath, example);
+});
+
+test('runInstall keeps a user-edited example config on reinstall (#181)', () => {
+  const writes = [];
+  const example = 'C:\\Users\\Andre\\AppData\\Roaming\\PuzzleSolver\\config.toml.example';
+  const result = runInstall({
+    installDir: 'C:\\Programs\\PuzzleSolver',
+    startupDir: 'C:\\S',
+    exampleConfigPath: example,
+    writeFile: (path, content, enc) => writes.push({ path, content, enc }),
+    mkdir: () => {},
+    // The example exists (the user edited it); the two generated shims do not.
+    fileExists: (path) => path === example,
+    log: { log() {} },
+  });
+
+  assert.equal(writes.some((w) => w.path === example), false, 'an edited example must survive a reinstall');
+  assert.deepEqual(result.skipped, [example]);
+  // The generated shims are still refreshed, which is the difference the flag encodes.
+  assert.equal(writes.length, 2);
 });
 
 test('runInstall lets a write failure propagate instead of reporting success', () => {

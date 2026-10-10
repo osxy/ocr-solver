@@ -100,7 +100,7 @@ async function main() {
   copyFileSync(join(root, 'package-lock.json'), join(payload, 'package-lock.json'));
 
   // The installer half: path/launch glue the app's own deploy modules invoke.
-  for (const name of ['install.ps1', 'uninstall.ps1', 'PuzzleSolver.vbs']) {
+  for (const name of ['install.ps1', 'uninstall.ps1', 'update.ps1', 'PuzzleSolver.vbs']) {
     copyFileSync(join(root, 'packaging', name), join(payload, name));
   }
 
