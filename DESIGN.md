@@ -1308,24 +1308,29 @@ captchasolver/
 
 ## 10. Testing
 
-**Working now — 760 tests (754 pass, 6 skip), none needing a network or an API key:**
+**Working now — the offline suite, none of it needing a network or an API key:**
 
-1. **Offline unit (37):** Dutch number words and compounds including diaereses, all four
+> The counts are deliberately *not* here. A hand-maintained breakdown drifted repeatedly
+> (760 here against 799 in the suite), and AGENTS.md §10 forbids hand-maintaining a test
+> count in a document: `npm test` prints its own. What each suite covers is what belongs
+> here.
+
+1. **Offline unit:** Dutch number words and compounds including diaereses, all four
    operators, precedence, division by zero; transcript normalisation and every repair rule;
    puzzle classification, parsing and offline solving for all three classes; the validator
    gate including the empty-answer trap.
-2. **Model client (11):** JSON extraction from bare/fenced/prose replies, request shape,
+2. **Model client:** JSON extraction from bare/fenced/prose replies, request shape,
    retry-on-429 vs immediate failure on 401, falling back when `response_format` is
    unsupported, non-JSON HTTP bodies, key redaction, vision message construction.
-3. **Reasoner (19):** strict class holding, the structural list check, the arithmetic
+3. **Reasoner:** strict class holding, the structural list check, the arithmetic
    overrule, majority voting including the lone-survivor and two-way-split cases, sample
    counts and temperatures per class, store recording.
-4. **Tier arbitration (12):** end to end through the pipeline with scripted OCR and a scripted
+4. **Tier arbitration:** end to end through the pipeline with scripted OCR and a scripted
    model — a confident offline answer making zero model calls, model rescue of an unknown
    puzzle, agreement upgrading an uncorroborated answer, disagreement triggering vision, an
    unresolvable three-way split reporting unresolved, a dead provider preserving the offline
    answer, and OCR producing nothing at all.
-5. **State and prompts (10)** and **corpus end-to-end (4):** the real images through real
+5. **State and prompts** and **corpus end-to-end:** the real images through real
    preprocessing, real Tesseract and the real solver, asserting the final answer
    (`2`, `hoofd`, `7`), the class, the parsed word list, confidence, and a transcript ≥90%
    similar to expected. Runs in ~4 s.
@@ -1334,7 +1339,7 @@ The corpus end-to-end test doubles as the regression guard for the offline tiers
 scripted-model tests cover the model tiers — which matters, because **the model tiers have not
 been exercised against a real provider** (no API key was available while building them).
 
-6. **Live model smoke test (opt-in, 6 tests):** `tests/live-model.test.js`, skipped unless
+6. **Live model smoke test (opt-in):** `tests/live-model.test.js`, skipped unless
    `LLM_API_KEY` is set. Asserts a real text model answers the `needs-model` fixture, that the
    reply honours the JSON contract, that the vision tier reads the preprocessed image when OCR
    yields nothing, that a confident offline answer still costs zero model calls, that the API

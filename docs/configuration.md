@@ -13,7 +13,12 @@ value (wrong type, unknown enum, negative interval) fails loudly and names the k
 `DEFAULTS` in [`src/config.js`](../src/config.js) is the full schema; `DESIGN.md` §4.13
 explains the defaults.
 
-## Every option, with its default
+## Every `config.toml` key, with its default
+
+This is **every key that can live in `config.toml`**, with its default. The three
+secret-shaped settings (`pushbullet.token`, `llm.api_key`, `http.token`) and
+`web_ui.password` are not config keys and live in the credential store — see
+[Secrets](#secrets-go-in-the-credential-store-or-in-the-environment) below.
 
 ```toml
 [pushbullet]
@@ -29,10 +34,19 @@ llm_base_url = "https://api.openai.com/v1"
 self_consistency_n = 3          # samples for the voting classes (ordinal-pick, unknown)
 breaker_threshold = 3           # consecutive model failures before a tier is skipped
 breaker_cooldown_sec = 600
+cost_tier = ""                  # auto-router band; "" sends none (see openrouter.md)
+allowed_models = []             # auto-router allowlist, wildcards; [] = no restriction
+excluded_models = []            # auto-router denylist, wildcards
+[ocr]
+languages = ["nld"]             # Tesseract traineddata; restart-bound (the worker is built once)
+min_confidence = 0              # drop a transcript below this Tesseract confidence (live)
+variants = ["adaptive_25_020", "adaptive_25_020_c8", "adaptive_15_020"]  # preprocessing runs (live)
 [reply]
 enabled = true
+strategy = "note-push"          # note-push | sms-thread | clipboard+notify
 require_confidence = true       # only send answers every tier agreed on
 title = "Antwoord"
+prefix = ""                     # optional text before every answer
 unresolved_title = "Puzzel niet opgelost"
 unresolved_text = """
 Deze puzzel kon niet automatisch worden opgelost, dus er is geen antwoord gegeven.
@@ -45,6 +59,10 @@ retain_days = 7
 log_images = false              # opt-in reference to an UNRESOLVED image only
 keep_images = false             # opt-in bounded review copy of EVERY solve's image
 max_images = 200                # count cap when keep_images = true (age = retain_days)
+[ui]
+tray = true                     # show the tray icon in desktop mode
+notify_on_unresolved = true     # desktop notification for a puzzle left unresolved
+stats_recent_solves = 5         # recent solves listed on the statistics page
 [image]
 max_width = 2000                # the shared gate rejects wider images as a 413
 max_pixels = 1000000            # ~14x the largest corpus puzzle; bounds buildVariants
