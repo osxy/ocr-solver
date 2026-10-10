@@ -166,6 +166,8 @@ test('the required payload includes the app, the Windows sharp binary, the train
       REQUIRED_PAYLOAD.includes('app/src/ui/icons/tray-grey.ico'),
     'the Windows tray icons must be required in the payload'
   );
+  // #168: update.ps1 travels with the installed copy so it can update itself.
+  assert.ok(REQUIRED_PAYLOAD.includes('update.ps1'), 'the updater must ship in the payload');
   assert.ok(!REQUIRED_PAYLOAD.some((entry) => entry.includes('config/')), 'config/ must not ship');
   assert.ok(FORBIDDEN_PAYLOAD.includes('config/llm.env'));
   assert.ok(FORBIDDEN_PAYLOAD.includes('credentials.json'));
@@ -295,6 +297,13 @@ test('run-deploy.ps1 asserts every deployment surface and throws on the first mi
     'config.toml',
     'credentials.json',
     'must survive a default uninstall',
+    // #168: the updater is exercised against the artifact, with a graceful stop and a
+    // replace that must drop a planted stale file, and a tampered sidecar that refuses.
+    'update.ps1',
+    'checksum verified',
+    'checksum mismatch',
+    'stopped gracefully',
+    'stale-marker.txt',
   ]) {
     assert.ok(script.includes(marker), `run-deploy.ps1 no longer checks ${marker}`);
   }

@@ -45,7 +45,7 @@ import { defaultWebSettingsDialog, defaultWebSetupDialog } from './ui/web-config
 import { createShutdownHandler, planRestart } from './deploy/restart.js';
 import { WEB_UI_CREDENTIAL_SETTING, webUiAdmitsNonLoopback } from './ui/access.js';
 import { storeReport, loadReportCache, defaultAccuracyCachePath } from './accuracy.js';
-import { AlreadyRunningError, acquireInstanceLock, instanceLockPathForStatePath, resolveInstanceLockPath } from './instance.js';
+import { AlreadyRunningError, acquireInstanceLock, instanceLockPathForStatePath, resolveInstanceLockPath, watchStopRequests } from './instance.js';
 
 /**
  * No token could be resolved and there was no dialog to ask for one. The CLI turns
@@ -961,7 +961,18 @@ async function runLockedApp(options, preLock) {
   process.once('SIGINT', () => void shutdown('SIGINT'));
   process.once('SIGTERM', () => void shutdown('SIGTERM'));
 
+  // #168: the updater asks the running app to stop through a request beside the lock,
+  // so it is replaced only after the ordinary graceful shutdown (an in-flight solve is
+  // not lost to a forced kill). The watcher is unref'ed and stops itself once the lock
+  // is released, so it can neither keep the process alive nor act on a stale request.
+  const stopWatcher = watchStopRequests({
+    lockPath: preLock.lockPath,
+    pid: process.pid,
+    onStop: () => void shutdown('update'),
+  });
+
   await app.start();
   app.tray = tray;
+  app.stopWatcher = stopWatcher;
   return app;
 }

@@ -168,6 +168,68 @@ try {
     Assert (-not (Get-Item -LiteralPath $markedFile -Stream Zone.Identifier -ErrorAction SilentlyContinue)) 'motw: -Unblock did not clear the mark'
     Write-Host 'motw: -Unblock cleared the mark and the installer said so'
 
+    # --- 1d. update.ps1 stops the app gracefully and replaces, never merges ----
+    # This is the seam #212 and #168 share: the updater must know an app is running
+    # (the lock, whose record now carries a start identity) and must stop it through
+    # that same mechanism rather than a forced kill that loses an in-flight solve.
+    # A file the new payload does not carry is planted so a merge would keep it.
+    $startedForUpdate = Invoke-Installer (Join-Path $payload 'install.ps1')
+    Assert ($startedForUpdate.code -eq 0) "update setup: install.ps1 exited $($startedForUpdate.code): $($startedForUpdate.text)"
+    $beforeUpdate = Wait-ForInstalledNodeProcess $installDir 60
+    Assert ($beforeUpdate.Count -gt 0) 'update: the app must be running before the update is exercised'
+    $oldPids = @($beforeUpdate | ForEach-Object { $_.ProcessId })
+    Assert (Test-Path (Join-Path $payload 'update.ps1')) 'update: the payload must carry update.ps1 so an install can update itself'
+    # The lock must record a start identity, not just a pid (#212); the updater reads it
+    # to decide whether a holder is really running before asking it to stop. The new app
+    # replaces 1b's stale record once `runApp` acquires the lock, so wait for the record
+    # to name the running app rather than racing its startup.
+    $lockPath = Join-Path $env:LOCALAPPDATA 'PuzzleSolver\instance.lock'
+    $lock = $null
+    $lockDeadline = (Get-Date).AddSeconds(30)
+    while (-not $lock -and (Get-Date) -lt $lockDeadline) {
+        if (Test-Path $lockPath) {
+            try { $candidate = Get-Content $lockPath -Raw | ConvertFrom-Json } catch { $candidate = $null }
+            if ($candidate -and ($candidate.pid -in $oldPids)) { $lock = $candidate }
+        }
+        if (-not $lock) { Start-Sleep -Milliseconds 200 }
+    }
+    Assert ($lock) "update: the instance lock at $lockPath never named the running app (pid $($oldPids -join ', '))"
+    Write-Host "update: app running as pid(s) $($oldPids -join ', '); applying update.ps1"
+
+    $staleFile = Join-Path $installDir 'node_modules\stale-marker.txt'
+    Set-Content -Path $staleFile -Value 'stale' -Encoding utf8
+
+    $updated = Invoke-Installer (Join-Path $payload 'update.ps1') -extraArgs @('-Zip', $Zip, '-Force')
+    Assert ($updated.code -eq 0) "update.ps1 exited $($updated.code): $($updated.text)"
+    Assert ($updated.text -match 'checksum verified') "update.ps1 did not verify the shipped sidecar: $($updated.text)"
+    Assert ($updated.text -match 'stopped gracefully') "update.ps1 did not stop the app gracefully: $($updated.text)"
+    Assert ($updated.text -match 'replaced the install') "update.ps1 did not replace the install: $($updated.text)"
+    Assert (-not (Test-Path $staleFile)) 'update: a stale file survived; the install was merged, not replaced'
+    $survivors = @(Get-InstalledNodeProcesses $installDir | Where-Object { $oldPids -contains $_.ProcessId })
+    Assert ($survivors.Count -eq 0) "update: the old app (pid $($oldPids -join ', ')) is still running"
+    $afterUpdate = Wait-ForInstalledNodeProcess $installDir 60
+    Assert ($afterUpdate.Count -gt 0) 'update: the new app was not started'
+    Write-Host 'update: checksum verified, app stopped gracefully, install replaced, new app started'
+
+    # A tampered sidecar must refuse before a single byte is replaced.
+    $tamperZip = Join-Path $root 'tampered.zip'
+    Copy-Item -Force $Zip $tamperZip
+    $sidecarText = Get-Content "$Zip.sha256" -Raw
+    $flipped = if ($sidecarText.Substring(0, 1) -eq '0') { '1' } else { '0' }
+    Set-Content -Path "$tamperZip.sha256" -Value ($flipped + $sidecarText.Substring(1)) -NoNewline -Encoding ascii
+    $markerFile = Join-Path $installDir 'node.exe.unverified-marker'
+    Set-Content -Path $markerFile -Value 'untouched' -NoNewline -Encoding utf8
+    $tampered = Invoke-Installer (Join-Path $payload 'update.ps1') -extraArgs @('-Zip', $tamperZip, '-Force', '-NoStart')
+    Assert ($tampered.code -ne 0) "tampered update: update.ps1 exited $($tampered.code); a bad checksum must refuse"
+    Assert ($tampered.text -match 'checksum mismatch') "tampered update: refusal did not name the checksum: $($tampered.text)"
+    Assert (Test-Path $markerFile) 'tampered update: the install was touched despite the bad checksum'
+    Remove-Item -Force $markerFile
+    Write-Host "tampered update: refused with 'checksum mismatch' and left the install untouched"
+
+    Stop-InstalledNodeProcesses $installDir
+    Start-Sleep -Seconds 2
+    Assert ((Get-InstalledNodeProcesses $installDir).Count -eq 0) 'update: the restarted app could not be stopped before the next step'
+
     # --- 2. autostart is a per-user Startup entry, not a scheduled task ------
     # The task was refused with `Toegang geweigerd` for an ordinary user (#163), so the
     # mechanism is a file any user can write. Assert its path and its two load-bearing

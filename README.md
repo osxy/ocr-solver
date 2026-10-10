@@ -100,6 +100,22 @@ starts nothing. Nothing is registered in Task Scheduler or `HKLM`.
 > interactive desktop and remain unverified. See
 > [Known limitations](#known-limitations).
 
+### Upgrade an install
+
+Download the newer ZIP and its `.sha256` the same way, verify the checksum, then from
+the newly extracted folder run `update.ps1` and point it at the archive:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\update.ps1 -Zip <the-newer-zip>
+```
+
+`update.ps1` has **no network access**: it applies the files you already downloaded. It
+re-verifies the `.sha256` when the sidecar is present, refuses a payload older than the
+installed one, asks the running app to stop gracefully, replaces the install tree (so a
+stale file cannot shadow the new one), and starts the new app. Your settings, credentials
+and history live in `%APPDATA%\PuzzleSolver` and `%LOCALAPPDATA%\PuzzleSolver` and are
+never touched.
+
 ## Run it
 
 ### First run: the app asks
