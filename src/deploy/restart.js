@@ -157,8 +157,11 @@ export async function drainSolves(core, { timeoutMs = DEFAULT_DRAIN_TIMEOUT_MS, 
 
   let timer = null;
   const timeout = new Promise((resolve) => {
+    // Deliberately *not* `unref()`ed: the timer is the only thing that can settle the
+    // race when the lock never drains, and an unref'd timer lets the event loop drain
+    // first (observed on Node 22.13.0, where the node:test runner then cancelled the
+    // subtest). It is always cleared once the race settles, so it never lingers.
     timer = setTimeout(() => resolve('timeout'), timeoutMs);
-    timer.unref?.();
   });
   // A rejected lock promise still means "nothing is running any more" for our purpose.
   const outcome = await Promise.race([idle.then(() => 'idle', () => 'idle'), timeout]);
