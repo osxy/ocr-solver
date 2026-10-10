@@ -58,7 +58,22 @@ max_body_bytes = 5242880        # 5 MiB, the same cap as a Pushbullet image
 max_queue = 8                   # requests running/waiting at once; over this is a 503
 allow_image_url = false         # off: image_url makes the server fetch a caller URL (SSRF)
 image_url_hosts = []            # when on: the only hosts image_url may name (default deny)
+[web_ui]
+bind = "127.0.0.1"             # loopback only; read remote-access.md before widening
+port = 0                        # 0 = ephemeral, loopback only; set for remote access
+allowed_cidrs = []              # blank = loopback only; a non-loopback range needs web_ui.password
+allowed_hosts = []              # extra Host names; default deny
 ```
+
+There is **no `web_ui.enabled` key.** The web UI has no on/off switch, and `http.enabled`
+controls the [HTTP solve endpoint](./http-api.md) only — the two are separate
+servers with separate bind, port and credential (see
+[the web UI](../README.md#the-web-ui) and
+[Exposing the web UI beyond loopback](./remote-access.md)). The UI is started on demand
+by the tray's **Settings** item or `node src/cli.js config edit --gui`, and closes when
+the session ends; the automatic first-run prompt is tray-only. `web_ui.password` is a
+secret, not a config key, and gates a non-loopback bind (the option list above stops at
+the keys that can live in `config.toml`).
 
 ## Secrets go in the credential store, or in the environment
 

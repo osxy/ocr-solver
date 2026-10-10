@@ -209,6 +209,22 @@ reach them from another machine, read
 [Exposing the web UI beyond loopback](./docs/remote-access.md) first — it is a security
 decision, and it requires a credential.
 
+**The web UI and the [HTTP ingress](#solve-over-http) are two different servers.**
+`http.enabled` belongs to the second one only: setting it `false` never disables the web
+UI, and the web UI has no enable flag at all.
+
+| | HTTP ingress (`http.*`) | Web UI (`web_ui.*`) |
+|---|---|---|
+| What it is | the `POST /v1/solve` endpoint | the settings / solve / statistics UI |
+| Default | `enabled = false`, deliberately | no `enabled` key exists; nothing gates it |
+| Bind / port | `http.bind` : `http.port` (`8765`) | `web_ui.bind` : `web_ui.port` (`0` = ephemeral loopback) |
+| Authentication | a bearer token, required | loopback only; `web_ui.password` for a non-loopback bind |
+
+The web UI is not "always listening" either: it starts on demand — the tray's
+**Settings** item, or `node src/cli.js config edit --gui` — serves that session, and
+closes when you save or cancel. The automatic first-run prompt belongs to the tray;
+`--headless` never shows it.
+
 ### Solve over HTTP
 
 Turn on `[http]` and store the bearer token the way the other secrets are stored — the

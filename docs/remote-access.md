@@ -1,5 +1,17 @@
 # Exposing the web UI beyond loopback (read this before doing it)
 
+This page is about the **web UI** server, not the HTTP [solve endpoint](./http-api.md).
+The two are independent listeners: `http.enabled` never disables the web UI, and the web
+UI has no enable flag of its own, so this page's `web_ui.*` settings are the only ones
+that affect it.
+
+| | HTTP ingress (`http.*`) | Web UI (`web_ui.*`) |
+|---|---|---|
+| What it is | the `POST /v1/solve` endpoint | the settings / solve / statistics UI |
+| Default | `enabled = false`, deliberately | no `enabled` key exists; nothing gates it |
+| Bind / port | `http.bind` : `http.port` (`8765`) | `web_ui.bind` : `web_ui.port` (`0` = ephemeral loopback) |
+| Authentication | a bearer token, required | loopback only; `web_ui.password` for a non-loopback bind |
+
 By default the web UI binds `127.0.0.1` and only loopback may reach it. That is the
 recommended setting. If you genuinely need it from another machine, two things must be
 configured together, in `config.toml`:
