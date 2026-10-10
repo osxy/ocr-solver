@@ -55,10 +55,22 @@ test('the same version is refused unless -Force, and an unreadable version is ne
   assert.equal(decideUpdate({ installedVersion: '0.45.2', incomingVersion: '0.45.2' }).allowed, false);
   assert.equal(decideUpdate({ installedVersion: '0.45.2', incomingVersion: '0.45.2', force: true }).allowed, true);
   assert.equal(decideUpdate({ installedVersion: '0.45.2', incomingVersion: 'not-a-version' }).allowed, false);
+  // -Force repairs an install too broken to report a version, but that is not the same
+  // as allowing anything: the older branch below stays closed to it.
+  assert.equal(
+    decideUpdate({ installedVersion: '0.45.2', incomingVersion: 'not-a-version', force: true }).allowed,
+    true
+  );
   assert.equal(
     decideUpdate({ installedVersion: '0.45.2', incomingVersion: 'not-a-version', force: true }).reason,
     'unreadable-version'
   );
+});
+
+test('-Force never installs an older payload, even though it repairs the same version (#223)', () => {
+  const downgrade = decideUpdate({ installedVersion: '0.46.0', incomingVersion: '0.45.2', force: true });
+  assert.equal(downgrade.allowed, false, 'a downgrade is silent and worse than refusing; -Force must not reach it');
+  assert.equal(downgrade.reason, 'older');
 });
 
 test('the check CLI exits 0 for a newer payload and non-zero for an older one', (t) => {
@@ -75,6 +87,19 @@ test('the check CLI exits 0 for a newer payload and non-zero for an older one', 
   writePackage(source, '0.45.0');
   assert.equal(runCli(['check', '--install', install, '--source', source], { log }), 3, 'an older payload must block');
   assert.match(lines.at(-1), /refusing to update \(older\)/);
+  // `update.ps1` forwards -Force into this same check, so the exit code must stay 3: a
+  // downgrade is refused however the user reached it (#223).
+  assert.equal(
+    runCli(['check', '--install', install, '--source', source, '--force'], { log }),
+    3,
+    '-Force must not let an older payload through'
+  );
+  assert.match(lines.at(-1), /refusing to update \(older\)/);
+
+  // The repair path -Force exists for still works: the same version passes.
+  writePackage(source, '0.45.2');
+  assert.equal(runCli(['check', '--install', install, '--source', source, '--force'], { log }), 0);
+  assert.match(lines.at(-1), /update allowed \(same-version\)/);
 });
 
 // ---------------------------------------------------------------------------
