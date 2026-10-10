@@ -7,14 +7,17 @@
  * known limitations, and pointers. Everything else belongs in DESIGN.md or docs/ (the
  * rule is written down in AGENTS.md §10). The ratchet:
  *
- *   1. a length budget, so a milestone cannot append its mode and its evidence here;
+ *   1. a length budget for the README and for AGENTS.md - the two files every reader and
+ *      every agent turn pays for - so a milestone cannot append its mode and its evidence
+ *      here;
  *   2. every relative link and anchor resolves, so moving detail to docs/ cannot leave
  *      a silently dead pointer behind;
  *   3. every code fence in the README and in AGENTS.md is closed, so a stray marker
  *      cannot turn the tail of the file into a wall of grey monospace;
  *   4. `## License` is the terminal section, so material appended after it is visible
  *      even when it is not another heading;
- *   5. every docs/*.md page is linked from the README, so a page cannot be added and
+ *   5. every docs/*.md page is linked from the README - except the contributor playbook,
+ *      which is linked from AGENTS.md where its reader is - so a page cannot be added and
  *      then forgotten;
  *   6. a page that describes configuration also mentions the settings editor, so the
  *      file is not the only route a page shows;
@@ -25,9 +28,10 @@
  *   9. no tracked markdown file carries unresolved conflict markers, so a merge artefact
  *      cannot be committed and then read as prose.
  *
- * The budget numbers are deliberately stated here and in AGENTS.md §10. When the README
- * legitimately grows, raise them in one deliberate commit and say why in the message -
- * do not delete the assertion.
+ * The budget numbers are deliberately stated here: AGENTS.md is itself under a budget, so a
+ * number copied into its prose would be one more thing to go stale. When a budget legitimately
+ * grows, raise it in one deliberate commit and say why in the message - do not delete the
+ * assertion.
  *
  * WHAT GUARDS 3 AND 4 ARE NOT. They catch the symptom - an unclosed fence, a section
  * after the terminal one - not the cause. The doc that prompted them carried a subagent's
@@ -96,6 +100,12 @@ function keyPaths(node, prefix = '') {
 const MAX_LINES = 430;
 const MAX_WORDS = 3400;
 
+// AGENTS.md is loaded into the context of every agent turn, so each line is paid for on every
+// API call by every leg. Sized just above the compressed file (230 lines / 1674 words) so any
+// addition needs a deliberate trim or a deliberate, explained bump rather than silent growth.
+const AGENTS_MAX_LINES = 250;
+const AGENTS_MAX_WORDS = 1900;
+
 test('the README stays within its length budget', () => {
   const lines = readme.split('\n').length - 1; // wc -l semantics
   const words = readme.trim().split(/\s+/).length;
@@ -107,6 +117,20 @@ test('the README stays within its length budget', () => {
   assert.ok(
     words <= MAX_WORDS,
     `README is ${words} words; the budget is ${MAX_WORDS}. Move detail to DESIGN.md or docs/ before adding.`
+  );
+});
+
+test('AGENTS.md stays within its context budget', () => {
+  const lines = agents.split('\n').length - 1; // wc -l semantics
+  const words = agents.trim().split(/\s+/).length;
+
+  assert.ok(
+    lines <= AGENTS_MAX_LINES,
+    `AGENTS.md is ${lines} lines; the budget is ${AGENTS_MAX_LINES}. It is loaded into every agent turn, so move detail to DESIGN.md or docs/ before adding.`
+  );
+  assert.ok(
+    words <= AGENTS_MAX_WORDS,
+    `AGENTS.md is ${words} words; the budget is ${AGENTS_MAX_WORDS}. It is loaded into every agent turn, so move detail to DESIGN.md or docs/ before adding.`
   );
 });
 
@@ -319,6 +343,11 @@ test('every top-level docs page is linked from the README', () => {
 
   assert.ok(pages.length > 0, 'docs/ has no top-level .md pages; the test has lost its subject');
   for (const page of pages) {
+    // workflow.md is the contributor playbook, linked from AGENTS.md, where its reader is. A
+    // reader of the README's front door is not a contributor, and a link there would spend the
+    // README's own budget on material it deliberately does not own (AGENTS.md §10). Exempting
+    // it explicitly keeps the rule intact for every other page.
+    if (page === 'workflow.md') continue;
     assert.ok(
       readme.includes(`./docs/${page}`),
       `docs/${page} is not linked from the README, so a reader never reaches it`
