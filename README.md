@@ -283,11 +283,10 @@ and no `systray2`), or set `ui.tray = false`. The error itself names `--headless
 `systray2` cannot be loaded or its export shape is one the adapter does not recognize.
 
 **The HTTP ingress will not start.** With `[http] enabled = true` and no token the app
-refuses to start, naming `HTTP_AUTH_TOKEN` and `http_auth_token`. A `401` from a running
-server means the `Authorization: Bearer ...` header is missing or does not match. A
-`422` is not an error: either the puzzle was read but no tier produced a validated answer,
-or one did and `reply.require_confidence` withheld it as uncorroborated. In both cases
-`answer` is `null` - the same invariant as the Pushbullet path. See
+refuses to start, naming `HTTP_AUTH_TOKEN` and `http_auth_token`. A `401` means the
+`Authorization: Bearer ...` header is missing or does not match. A `422` is not an error:
+it is the validation invariant, either no tier produced a validated answer or
+`reply.require_confidence` withheld it. See
 [the HTTP API](./docs/http-api.md#status-codes-are-honest-not-approximate) for every
 status code.
 
@@ -302,14 +301,12 @@ with backoff while the 60 s poll is the second path; (4) the hourly answer budge
 answer; both are editable in the settings editor; (5) a model tier needs a
 key, and `offline_only = true` disables the model tiers entirely.
 
-**A setting changed but nothing happened.** The editor and `config set` print which
-changes apply live and which need a restart; the list is in
-[configuration](./docs/configuration.md#some-settings-need-a-restart). The models, the
-offline switches, the reply wording, the poll interval, `ocr.languages`, the breaker knobs,
-the HTTP ingress and all three secrets are read at startup, so restart the service (Quit
-and relaunch, or use the tray's **Restart** item). If a hand-edited `config.toml` now blocks
-startup, the loader names the offending key; the editor keeps the previous file as
-`config.toml.bak`, so copying that back is the way out.
+**A setting changed but nothing happened.** The editor and `config set` tag each change
+`[live]` or `[restart]`; the restart set is in
+[configuration](./docs/configuration.md#some-settings-need-a-restart). For those, restart
+the service (Quit and relaunch, or use the tray's **Restart** item). If a hand-edited
+`config.toml` now blocks startup, the loader names the offending key; the editor keeps the
+previous file as `config.toml.bak`, so copying that back is the way out.
 
 ### Where things live
 
@@ -350,25 +347,16 @@ the Startup shim
 ## Known limitations
 
 - **Pre-release.** 0.45.2 is a pre-release: expect rough edges and no stability promise.
-  The **Pushbullet ingress has never run against the real Pushbullet service** — no
-  account or token exists (issue #3) — so the app's primary path is exercised against
-  fakes rather than observed end to end.
-- **The native tray widget, the notification toast and the browser hand-off remain
-  unverified on Windows.** The packaged `node.exe`, the app, `sharp`'s win32-x64 binary
-  and the traineddata are smoke-tested on `windows-latest` by the package job, and the
-  deploy job executes `install.ps1` (with and without `-NoStart`), observes the app it
-  starts, inspects the per-user Startup shim, runs the packaged app's `--headless`
-  start-and-refuse, checks `PuzzleSolver.vbs` launching a process, runs `uninstall.ps1`,
-  and proves a failing installer exits non-zero without printing success.
-  What a runner cannot provide is an interactive desktop: `systray2` needs a window
-  station, so the **native tray widget** and the **notification toast** are still
-  unverified, as is the browser hand-off for the settings UI (issue #56, #169). The runner is
-  an administrator, so the **unprivileged install path** (issue #163) has
-  still never been exercised. The **DPAPI credential round trip** is executed on the
-  runner: a plaintext file is migrated and removed by one process, and a second `node`
-  process decrypts it from disk. What DPAPI cannot protect is a process running as the
-  same user (see [First run](#first-run-the-app-asks)). `--headless` remains the
-  supported fallback for an unattended machine.
+  The **Pushbullet ingress has never run against the real Pushbullet service**, so the
+  app's primary path is exercised against fakes rather than observed end to end (see
+  [Status](#status)).
+- **The native tray widget, the notification toast, the browser hand-off and the
+  unprivileged install path remain unverified on Windows.** The packaged runtime, the app,
+  `sharp` and the traineddata are smoke-tested on `windows-latest`, and the installer,
+  Startup shim, launcher and uninstaller are executed there, but a CI runner has no
+  interactive desktop and runs as an administrator. `--headless` remains the supported
+  fallback for an unattended machine; the mechanisms and what *is* asserted are in
+  [DESIGN.md](./DESIGN.md) §11.
 - **A second start exits without listening.** The app takes a lock beside `state.db`, so a
   double-click (or the installer on a machine already running) refuses instead of starting
   a second listener that would answer every puzzle twice.
@@ -378,15 +366,6 @@ the Startup shim
   be `Secure`. On an untrusted network, use a TLS-terminating reverse proxy; the password
   is not a substitute for one. See
   [Exposing the web UI beyond loopback](./docs/remote-access.md).
-- **The settings and first-run UI opens in the default browser; the browser hand-off
-  itself is not exercised on Windows.** The HTTP server, the one-time link token, the
-  `Host` check, the form post and the save path are exercised on Linux in
-  `tests/web-config.test.js`; the one seam not checked here is the hand-off to a real
-  browser. On Windows a URL uses the shell's protocol handler (`rundll32
-  url.dll,FileProtocolHandler`), never `explorer.exe`, which opened its own folder for a URL
-  with a query string (issue #169). A failed hand-off still reaches a person: a terminal, or
-  on a hidden first run the message box and the one-session file above. `config edit` (or
-  `node src/cli.js config edit`) remains the editor for a headless machine.
 - **Synthetic accuracy is not real accuracy.** Of the 287 corpus items, 281 are
   **synthetic** images and text from our own generator — which refuses to write an image
   the pipeline cannot read — 3 are real images, and 3 more are noisy transcripts derived
