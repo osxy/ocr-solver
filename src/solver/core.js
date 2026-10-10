@@ -125,8 +125,19 @@ export function createSolveCore({
     });
   }
 
+  /**
+   * Resolve when the shared lock has drained. A restart calls this after quiescing
+   * the ingresses, so it waits for the solve already in flight rather than dropping it
+   * (#128, hazard 4). It is the current tail, and because no new work can be queued
+   * while the ingresses are down, the tail is the last one.
+   */
+  function whenIdle() {
+    return lock;
+  }
+
   return {
     solve,
+    whenIdle,
     acquireSlot,
     releaseSlot,
     get queueSize() {

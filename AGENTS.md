@@ -74,6 +74,12 @@ cycle (issue #106). A milestone branch keeps unreleased state off `main` entirel
 - Pull requests merged into the milestone branch close their issues, so milestone progress is visible
   **before** the release exists.
 
+**Creating the milestone branch is the one exception to the hook.** The `pre-push` hook refuses
+`milestone/*` from a clone, deliberately — work reaches the milestone through a pull request. The
+branch itself is not work, so it is created with the API (`POST /repos/:owner/:repo/git/refs`)
+instead of by pushing; from then on every change branches off it and is pushed normally, and only
+the release merge into `main` is a separate, deliberate pull request.
+
 **v0.4 is the last milestone done the old way.** It branches off `main` and bumps `package.json`
 there, because it was already in flight when this rule was written. Do not "fix" `main` during v0.4.
 The rule applies from the next milestone onward.

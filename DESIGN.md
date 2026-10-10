@@ -536,11 +536,13 @@ records a durable file reference for puzzles that ended unresolved.
 ### 4.14 UI & logging ✅ M3
 
 - Tray via `systray2`, notifications via `node-notifier`; `--headless` skips both.
-- Menu: **Status / Accuracy / Pause / Solve last image / Open log / Open config / Settings / Quit**.
-  "Solve last image" re-runs the pipeline on the newest image — essential for tuning without a live
-  push. "Accuracy" reports the live recorded-traffic rate plus the cached offline-corpus number, and
-  the same summary is appended to the status text and tray tooltip (M4). "Settings" opens the
-  editor below (issue #27), as a loopback web UI since #56.
+- Menu: **Status / Accuracy / Pause / Solve last image / Open log / Open config / Settings /
+  Restart / Quit**. "Solve last image" re-runs the pipeline on the newest image — essential for
+  tuning without a live push. "Accuracy" reports the live recorded-traffic rate plus the cached
+  offline-corpus number, and the same summary is appended to the status text and tray tooltip
+  (M4). "Settings" opens the editor below (issue #27), as a loopback web UI since #56; when a save
+  reports that a setting needs a restart, that editor offers **Restart now** and the **Restart**
+  item performs the same graceful restart (#128, §11).
 - First run: a small setup dialog (token, key, **Test connection**), a loopback web UI since #56.
 - Rotating log at `%LOCALAPPDATA%\PuzzleSolver\logs\app.log` (5 MB × 3).
 
@@ -1418,6 +1420,24 @@ and the `schtasks /Create|/Delete` argument lists; `src/deploy/launcher.js` buil
 shim. Both are asserted as literal text, with a path that contains spaces. The shim is
 location-independent (everything derives from `WScript.ScriptFullName`), which is why the
 checked-in `packaging/PuzzleSolver.vbs` can be asserted byte-for-byte against the generator.
+
+**Requested restarts are explicit, never `RestartOnFailure` (issue #128).** The task's
+`<RestartOnFailure>` fires on a **non-zero** exit after `PT1M`, so it is crash recovery with a
+delay and a retry count, not a restart API. A deliberate restart (`src/deploy/restart.js`)
+quiesces the ingresses, drains the in-flight solve on the shared core lock, calls `app.stop()` so
+the HTTP port and the SQLite file are released *before* the successor starts, launches exactly one
+successor through the `wscript` shim (`wscript.exe "<PuzzleSolver.vbs>"`, which keeps the console
+hidden) and exits **0** — so the scheduler never sees a failure and never starts a second process.
+The launcher exports its own path as `PUZZLESOLVER_LAUNCHER`; when neither that marker nor a shim
+beside the bundled `node.exe` exists (a shell run, a dev checkout, `config edit`), the app prints
+the exact command instead of pretending. `process.execPath` re-exec was rejected: it loses the
+hidden window and replays an argv that is not necessarily the task's configured mode. `schtasks
+/End` + `/Run` was rejected: `/End` hard-terminates the running instance and cannot run the
+graceful drain. `RestartOnFailure` is never used intentionally. The decision is a pure function
+(`planRestart`) with injected `fileExists`/`spawn`, asserted offline in `tests/restart.test.js`,
+including that a restart exits `0` and that an in-flight solve delays the release. The settings
+done page offers `Restart now` (responding to the browser before the process goes down) and the
+tray has a **Restart** item; both route through the same `createShutdownHandler`.
 
 Install layout: `packaging/install.ps1` locates `%LOCALAPPDATA%\Programs\PuzzleSolver`, copies
 the payload, then hands off to `app/src/deploy/install.js` (run by the bundled `node.exe`) to
