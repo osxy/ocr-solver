@@ -1,8 +1,10 @@
-# CI: the offline suite, on pushes to main or a milestone branch and on PRs to either.
+# CI: the offline suite, on pushes to main or a milestone branch and on PRs to those or a
+# hotfix branch.
 #
 # A feature or fix branch gets CI through its pull request, not on every push: the run
-# is identical, a PR into main or a milestone branch triggers it, and restricting the
-# push trigger drops a redundant run per commit while nudging the PR open sooner.
+# is identical, a PR into main, a milestone branch or a hotfix integration branch triggers
+# it, and restricting the push trigger drops a redundant run per commit while nudging the
+# PR open sooner.
 #
 # No secrets are configured. The live model tests in tests/live-model.test.js skip
 # themselves when LLM_API_KEY is absent, so a fork's pull request runs green rather
@@ -18,7 +20,7 @@ on:
   push:
     branches: [main, 'milestone/**']
   pull_request:
-    branches: [main, 'milestone/**']
+    branches: [main, 'milestone/**', 'hotfix/**']
   # Callable from the Windows package workflow so there is one Node matrix and no
   # second copy of the offline suite to keep in sync. Adding this does not change what
   # runs on push or pull_request.
