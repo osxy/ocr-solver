@@ -23,6 +23,7 @@ import { homedir as osHomedir } from 'node:os';
 import { join } from 'node:path';
 import { parse as parseToml } from 'smol-toml';
 import { VARIANTS } from './imaging/preprocess.js';
+import { OcrLanguageUnavailableError, resolveOcrLanguages } from './ocr/languages.js';
 import { DEFAULT_MAX_PIXELS, DEFAULT_MAX_WIDTH } from './imaging/limits.js';
 import { COST_TIERS } from './model/client.js';
 import { HISTORY_MODES } from './pushbullet/listener.js';
@@ -372,6 +373,21 @@ function requireCidrList(config, section, key) {
   }
 }
 
+function requireOcrLanguages(config, section, key) {
+  requireStringArray(config, section, key, { nonEmpty: true });
+  // Availability is checked here, where every other bad value is refused: an OCR
+  // language with no bundled traineddata cannot work offline, so accepting it would
+  // save a value the app then fails to start with. The resolver names the language and
+  // the package to install (issue #143), and it is the same resolution the worker
+  // performs, so the loader cannot disagree with what actually loads.
+  try {
+    resolveOcrLanguages(config[section][key]);
+  } catch (err) {
+    if (err instanceof OcrLanguageUnavailableError) throw new ConfigError(`${section}.${key}: ${err.message}`);
+    throw err;
+  }
+}
+
 function requireVariants(config, section, key) {
   const value = config[section][key];
   requireStringArray(config, section, key, { nonEmpty: true });
@@ -422,7 +438,7 @@ export function validateConfig(raw = {}) {
   requireNumber(config, 'solver', 'breaker_threshold', { min: 1, integer: true });
   requireNumber(config, 'solver', 'breaker_cooldown_sec', { min: 0 });
 
-  requireStringArray(config, 'ocr', 'languages', { nonEmpty: true });
+  requireOcrLanguages(config, 'ocr', 'languages');
   requireNumber(config, 'ocr', 'min_confidence', { min: 0, max: 100 });
   requireVariants(config, 'ocr', 'variants');
 

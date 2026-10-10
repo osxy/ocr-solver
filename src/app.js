@@ -443,7 +443,10 @@ export async function createApp({
   // An HTTP-only deployment has none at all - that is the point of the ingress seam:
   // the same core runs with no Pushbullet account anywhere in the process.
   const client = providedClient ?? (pushbulletToken ? createClient({ token: pushbulletToken }) : null);
-  const worker = providedWorker ?? (await createWorker());
+  // #143: the configured OCR languages are resolved when the worker is built, which is
+  // why the setting is `[restart]`. A language with no bundled traineddata is refused by
+  // `createOcrWorker` by name rather than silently loading `nld`.
+  const worker = providedWorker ?? (await createWorker({ languages: config.ocr.languages }));
   const ownsWorker = !providedWorker;
 
   let reasoner = providedReasoner;

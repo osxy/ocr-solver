@@ -1,8 +1,10 @@
 /**
  * Tesseract OCR wrapper.
  *
- * Fully offline: the `@tesseract.js-data/nld` package ships the Dutch traineddata
- * inside node_modules, so no CDN download happens at runtime.
+ * Fully offline: the traineddata is read from the installed
+ * `@tesseract.js-data/<code>` package inside node_modules, so no CDN download happens
+ * at runtime. Which languages are usable, and what happens when one is not, lives in
+ * `./languages.js` (issue #143).
  *
  * Note on confidence: Tesseract reports high confidence for EMPTY output. Measured
  * on the corpus, one variant returned 95% confidence with a blank transcript. Any
@@ -10,7 +12,7 @@
  * trusting `confidence`. `rankResults` below enforces that.
  */
 import { createWorker } from 'tesseract.js';
-import nld from '@tesseract.js-data/nld';
+import { DEFAULT_OCR_LANGUAGE, resolveOcrLanguages } from './languages.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -47,17 +49,24 @@ export function defaultCachePath() {
 }
 
 export async function createOcrWorker({
-  lang = nld.code,
-  langPath = nld.langPath,
+  // The configured `ocr.languages` (issue #143). It defaults to the bundled `nld`, but
+  // a configured language is resolved against installed packages and a missing one is
+  // refused by name rather than quietly replaced with `nld`.
+  languages = [DEFAULT_OCR_LANGUAGE],
   cachePath = defaultCachePath(),
   cacheMethod = 'none',
+  // Injection seams for the tests: resolution and tesseract.js's own factory, so the
+  // language that reaches `createWorker` can be asserted without a real worker.
+  resolveLanguages = resolveOcrLanguages,
+  createWorkerImpl = createWorker,
 } = {}) {
+  const { lang, langPath, gzip } = resolveLanguages(languages);
   // `cacheMethod: 'none'` loads the bundled `.gz` straight into Tesseract's in-memory
   // filesystem and skips the shared on-disk cache entirely. The disk cache is not just
   // redundant here: its non-atomic write is what made two parallel workers read a
-  // truncated `nld.traineddata` and hang (issue #110). Do not set this back to
+  // truncated `.traineddata` and hang (issue #110). Do not set this back to
   // 'write'/'refresh' without first making the cache write atomic.
-  const worker = await createWorker(lang, 1, { langPath, cachePath, gzip: true, cacheMethod });
+  const worker = await createWorkerImpl(lang, 1, { langPath, cachePath, gzip, cacheMethod });
   // Silence "Invalid resolution 25 dpi" warnings and pin the engine.
   await worker.setParameters({ user_defined_dpi: '300', preserve_interword_spaces: '1' });
   return worker;
