@@ -189,9 +189,32 @@ test('uninstall.ps1 keeps the user data unless -Purge asks for it (#186)', () =>
 });
 
 test('every packaged file is tracked in git (no generated artefact left untracked)', () => {
-  for (const file of [LAUNCHER_FILE, 'install.ps1', 'uninstall.ps1']) {
+  for (const file of [LAUNCHER_FILE, 'install.ps1', 'uninstall.ps1', 'update.ps1']) {
     assert.ok(existsSync(join(packaging, file)), `${file} is missing from packaging/`);
   }
+});
+
+test('update.ps1 verifies the download, stops through the lock and replaces the tree (#168)', () => {
+  const ps = readFileSync(join(packaging, 'update.ps1'), 'utf8');
+  // No network of its own: the whole point of the offline updater.
+  assert.ok(!/Invoke-WebRequest|Invoke-RestMethod|DownloadFile|github\.com/i.test(ps), 'the updater must not fetch anything');
+  // The sidecar is the only integrity signal; a mismatch refuses before extraction.
+  assert.match(ps, /Get-FileHash -Algorithm SHA256/);
+  assert.match(ps, /checksum mismatch/);
+  assert.ok(ps.indexOf('checksum mismatch') < ps.indexOf('Expand-Archive'), 'the checksum must be checked before extraction');
+  // Stop and replace both go through the app's own Node modules, not taskkill.
+  assert.match(ps, /deploy\\stop\.js/);
+  assert.match(ps, /deploy\\update\.js/);
+  assert.ok(!/taskkill|Stop-Process/i.test(ps), 'a forced kill would lose an in-flight solve');
+  // The version gate and the replace (self-excluded) run before any shim is recreated.
+  assert.match(ps, /'check'/);
+  assert.match(ps, /'apply'/);
+  assert.match(ps, /--self/);
+  assert.match(ps, /deploy\\install\.js/);
+  assert.match(ps, /-NoStart/);
+  // One MOTW rule, both scripts (#176): detect and report, never silently unblock.
+  assert.match(ps, /Zone\.Identifier/);
+  assert.match(ps, /\[switch\]\$Unblock/);
 });
 
 test('runInstall writes the launcher, the Startup shim and the example config, and runs nothing', () => {

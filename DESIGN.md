@@ -1658,10 +1658,31 @@ is alive-but-not-ours) or when the file is unreadable or truncated. A process ki
 cleanup - the restart work makes this ordinary - therefore does not block the next start. The
 stale removal is guarded by the same `wx` create, so two processes that both find a stale lock
 cannot both take it. The refused start exits cleanly with a sentence (`AlreadyRunningError`),
-not a stack trace. Known gap: pid reuse can make a stale lock look live; the realistic trigger
-is a reboot, and the heartbeat or cross-platform start-time probe that would close it has not
-yet been worth its cost. `tests/instance.test.js` covers the refusal and every stale shape, and
+not a stack trace. **A pid is not an identity (#212).** `process.kill(pid, 0)` answers
+"is some process using this pid", not "is it the one that took the lock" - and pid 1 always
+answers yes, so a lock left by a crashed container (where the app is usually pid 1) refused
+every restart, permanently. On Linux the lock now records the holder's `/proc/<pid>/stat`
+start ticks and the kernel boot id beside the pid; a holder is live only when both still
+match, so a recreated PID namespace and a reboot both read as stale. The probe is
+best-effort: where `/proc` is absent (Windows) it returns `null` and the check falls back to
+the pid, keeping the documented pid-reuse gap there. `tests/instance.test.js` covers the
+refusal, every stale shape, and the pid-1 container case (mutation-proved), and
 `tests/app.test.js` starts the same state path twice and asserts the second starts no listener.
+
+**Stopping a running app for an update (#168).** The updater cannot replace a running
+`node.exe` and must not force-kill it (that loses an in-flight solve), so the lock seam
+gained a stop half: `requestInstanceStop` writes a request file beside the lock and waits,
+bounded, for the holder to go; the app watches for it in `runApp` and routes it through the
+same graceful shutdown as SIGINT/SIGTERM, the tray Quit or a restart. `src/deploy/stop.js` is
+the client `update.ps1` invokes before it replaces anything. `packaging/update.ps1` applies
+the user-downloaded release with **no network of its own** - it re-verifies the `.sha256`
+when present (the binary is unsigned, so that is the only integrity signal), refuses an older
+payload, replaces the install tree rather than merging (`applyUpdate` clears it first, so a
+stale `node_modules` cannot shadow the new one), re-creates the launcher and Startup shim,
+and starts the new app. The user's two data directories are never named. The version and
+replace rules are pure and tested offline in `tests/update.test.js`; the checksum,
+`Expand-Archive` and start are exercised only by the deploy job on `windows-latest`, which
+also plants a stale file that must not survive and a tampered sidecar that must refuse.
 
 **Unverifiable on the Linux development host:** `wscript` execution, the `_ps1` scripts end to
 end, Explorer opening a log, and the actual tray widget. Every one of those has a testable seam

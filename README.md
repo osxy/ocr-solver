@@ -100,6 +100,16 @@ starts nothing. Nothing is registered in Task Scheduler or `HKLM`.
 > interactive desktop and remain unverified. See
 > [Known limitations](#known-limitations).
 
+### Upgrade an install
+
+From the newly extracted folder, point `update.ps1` at the archive you downloaded and verified:
+```powershell
+powershell -ExecutionPolicy Bypass -File .\update.ps1 -Zip <the-newer-zip>
+```
+It has **no network access**: it applies the files you downloaded, re-verifies the
+`.sha256` when present, refuses an older payload, stops the running app gracefully,
+replaces the install tree (so a stale file cannot shadow the new one) and starts the new app.
+
 ## Run it
 
 ### First run: the app asks

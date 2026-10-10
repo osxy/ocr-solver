@@ -95,6 +95,7 @@ export const REQUIRED_PAYLOAD = [
   'app/src/ui/icons/tray-grey.png',
   'install.ps1',
   'uninstall.ps1',
+  'update.ps1',
   'PuzzleSolver.vbs',
 ];
 
