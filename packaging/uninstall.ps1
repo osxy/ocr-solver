@@ -1,17 +1,35 @@
 # PuzzleSolver uninstaller.
 #
 # Removes the per-user Startup-folder shim first (through app\src\deploy\uninstall.js,
-# which owns the filename and path), then the three per-user folders the app created:
+# which owns the filename and path), then the program folder the installer created:
 #
-#   %LOCALAPPDATA%\Programs\PuzzleSolver   the program itself
+#   %LOCALAPPDATA%\Programs\PuzzleSolver   the program itself - always removed
+#
+# The user's data folders are NOT removed by default:
+#
 #   %LOCALAPPDATA%\PuzzleSolver            logs and state.db
 #   %APPDATA%\PuzzleSolver                 config.toml and credentials.json
+#
+# That is the Windows convention: an uninstall removes the program, and application data
+# under %APPDATA%/%LOCALAPPDATA% outlives it, which is why a reinstall keeps your
+# settings and history. Deleting the data is `-Purge`, so it is something the user asks
+# for rather than something that happens to them (#186).
+#
+# There is no security argument for removing credentials.json: it is DPAPI-protected
+# with CurrentUser scope, so it is already useless to any other account on the machine.
+# Deleting it only costs the legitimate owner. Do not "fix" this back to deleting it.
 #
 # The directory removal lives here rather than in Node because a running node.exe
 # cannot delete its own folder on Windows.
 #
 # Executed on windows-latest since #59. What remains unverified is the *unprivileged*
 # path, because the runner is an administrator (issue #163).
+
+param(
+    # Also delete the user's data (settings, credentials, history, logs). Off by
+    # default: an uninstall removes the program, not the user's property.
+    [switch]$Purge
+)
 
 $ErrorActionPreference = 'Stop'
 
@@ -33,11 +51,15 @@ if (Test-Path $Node) {
 $StartupShim = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup\PuzzleSolver-startup.vbs'
 if (Test-Path $StartupShim) { Remove-Item -Force $StartupShim }
 
-$Targets = @(
-    $InstallDir,
+# The program folder is the installer's and is always removed. The data folders are the
+# user's, and the only way they reach the removal list is -Purge (#186).
+$DataTargets = @(
     (Join-Path $env:LOCALAPPDATA 'PuzzleSolver'),
     (Join-Path $env:APPDATA 'PuzzleSolver')
 )
+$Targets = @($InstallDir)
+if ($Purge) { $Targets += $DataTargets }
+
 foreach ($Target in $Targets) {
     if (Test-Path $Target) {
         Write-Host "Removing $Target"
@@ -45,4 +67,12 @@ foreach ($Target in $Targets) {
     }
 }
 
-Write-Host 'PuzzleSolver uninstalled.'
+if ($Purge) {
+    Write-Host 'PuzzleSolver uninstalled, and its data was purged (-Purge).'
+} else {
+    Write-Host 'PuzzleSolver uninstalled. Your settings and history were kept:'
+    foreach ($Data in $DataTargets) {
+        if (Test-Path $Data) { Write-Host "  $Data" }
+    }
+    Write-Host 'Re-run with -Purge to delete that data too.'
+}

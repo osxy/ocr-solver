@@ -340,11 +340,12 @@ copy of each solve is kept for the recent-solves page, pruned with `storage.reta
 powershell -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\Programs\PuzzleSolver\uninstall.ps1"
 ```
 
-It removes the per-user Startup entry first, then the install folder and the two per-user
-data folders. Manually: delete
-`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\PuzzleSolver-startup.vbs`, then
-delete `%LOCALAPPDATA%\Programs\PuzzleSolver`, `%LOCALAPPDATA%\PuzzleSolver` and
-`%APPDATA%\PuzzleSolver`.
+It removes the per-user Startup entry and the install folder. Your data
+(`%LOCALAPPDATA%\PuzzleSolver`, `%APPDATA%\PuzzleSolver`: settings, DPAPI credentials,
+history) is **kept by default**; `uninstall.ps1 -Purge` deletes it too. Manually: delete
+the Startup shim
+`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\PuzzleSolver-startup.vbs` and
+`%LOCALAPPDATA%\Programs\PuzzleSolver`; the data only if you mean it.
 
 ## Known limitations
 
