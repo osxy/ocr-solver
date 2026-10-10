@@ -52,6 +52,8 @@ import { DEFAULT_MAX_HEIGHT, DEFAULT_MIN_HEIGHT } from '../imaging/limits.js';
 import { percent, storeRecentSolves, storeStats } from '../accuracy.js';
 import { createAuthThrottle } from '../http/throttle.js';
 import { openPath } from './open-path.js';
+import { clearHandoffLink, defaultHandoffDir, writeHandoffLink } from './handoff.js';
+import { showMessageBox } from './message-box.js';
 import { createSetupSettingsController, getSetting, parseSettingValue, serializeSettingValue } from './settings.js';
 import {
   addressAllowed,
@@ -1742,9 +1744,16 @@ export function createWebSettingsServer({
  * always stopped on the way out - save, cancel, timeout, or a start failure.
  *
  * A failed start is returned as `{ saved: false, failed: true, detail }` rather than
- * thrown, so the tray can report it and keep running. The URL contains the one-time
- * token, so it is only ever written to `output` (a caller-supplied stream, normally a
- * terminal) and never to the log.
+ * thrown, so the tray can report it and keep running.
+ *
+ * **The hand-off is best-effort, and the URL always reaches a person (#169).** A
+ * launched opener is not a browser that appeared — `openPath` resolves on `spawn`, not on
+ * a window — so `output` (a terminal) gets the link **whether or not** the launch looked
+ * like it worked, and a hidden session (`output` null, the launcher's window style 0)
+ * records it to a one-time file and raises a Windows message box (always on first run,
+ * where there is no tray yet; on a reported failure otherwise). The URL carries a
+ * short-lived one-time token, so none of those is the rotating log: the terminal is a
+ * person reading now, and the file lives exactly as long as the session.
  */
 export async function openWebSettingsDialog({
   controller,
@@ -1753,6 +1762,16 @@ export async function openWebSettingsDialog({
   logger = null,
   openBrowser = openPath,
   output = null,
+  // Shown when there is no terminal: injected so the offline tests can assert the URL
+  // reached a person without launching a dialog. Defaults to a native Windows box.
+  notifyUser = showMessageBox,
+  // Where the one-time link file goes; injected in tests. `null` derives the data dir.
+  handoffDir = null,
+  handoffFs = undefined,
+  // First run (no config, no tray yet) is the case with *no* other surface, so the
+  // dialog is raised even when the launch looked successful. For the tray's Settings
+  // item the tray itself is the surface, so only a reported failure raises it.
+  alwaysNotifyHandoff = false,
   timeoutMs = DEFAULT_SESSION_TIMEOUT_MS,
   launchTokenTtlMs = DEFAULT_LAUNCH_TOKEN_TTL_MS,
   createServerImpl,
@@ -1797,23 +1816,63 @@ export async function openWebSettingsDialog({
     return { saved: false, failed: true, detail };
   }
 
+  let handoffPath = null;
   try {
-    let opened = { opened: false };
+    let handoff = { launched: false };
     try {
-      opened = (await openBrowser(server.url)) ?? { opened: false };
+      handoff = (await openBrowser(server.url)) ?? { launched: false };
     } catch (err) {
       logger?.warn?.(`could not open a browser: ${err?.message ?? err}`);
     }
-    if (!opened?.opened) {
-      // Actionable, but the URL is a bearer of a short-lived one-time token, so it
-      // goes to the terminal (a person) and never to the rotating log.
-      output?.write?.(`Open the settings UI in a browser: ${server.url}\n`);
-      logger?.warn?.('could not open a browser for the settings web UI; open the link printed on the terminal');
+    if (typeof output?.write === 'function') {
+      // Printed whether or not a handler was launched: `launched` only means a process
+      // started, and the spawn-on-success signal is exactly what hid the wrong window
+      // (issue #169). A terminal is a person, and a person reading the link is the
+      // fallback, so it must not be gated on a signal that cannot mean "a browser opened".
+      output.write(`Open the settings UI in a browser: ${server.url}\n`);
+    } else {
+      // No terminal (the launcher's hidden window): the link goes to a one-time file
+      // that lives only while this session does, and to a real dialog the user can read.
+      // The rotating log is never an option: the URL is a bearer of a one-time token.
+      const record = writeHandoffLink(server.url, {
+        dir: handoffDir ?? defaultHandoffDir(),
+        ...(handoffFs ? { fs: handoffFs } : {}),
+      });
+      handoffPath = record.written ? record.path : null;
+      // Expected on the hidden-launcher path, so not a warning; a file that cannot be
+      // written *is* one, because then the message box is the only surface left.
+      if (record.written) logger?.info?.(`no terminal for the settings web UI link; recorded it for this session at ${record.path}`);
+      else logger?.warn?.('no terminal for the settings web UI link, and the one-session link file could not be written');
+      // First run always raises the dialog: a launched handler is not a browser that
+      // appeared, and a first run has no tray yet to fall back to. A tray Settings open
+      // only raises it when the launch actually failed, so the common case stays quiet.
+      if (alwaysNotifyHandoff || !handoff?.launched) {
+        try {
+          await notifyUser(buildHandoffMessage(server.url, record));
+        } catch (err) {
+          logger?.warn?.(`could not show the settings hand-off message: ${err?.message ?? err}`);
+        }
+      }
     }
+    if (!handoff?.launched) logger?.debug?.('the browser hand-off did not report a launched handler');
     return await server.waitForOutcome();
   } finally {
+    // The token is dead once the session is over, so the record goes with it; a session
+    // that never settles is still bounded by the launch-token TTL and the session timeout.
+    clearHandoffLink(handoffPath, handoffFs ? { fs: handoffFs } : {});
     await server.stop();
   }
+}
+
+/**
+ * The message a person reads when there was no terminal. It names the file as well, so a
+ * dialog dismissed or never seen still leaves a durable pointer that respects the
+ * token's short life.
+ */
+function buildHandoffMessage(url, record = {}) {
+  const lines = ['PuzzleSolver: open this link in a browser to configure it.', '', url];
+  if (record?.written) lines.push('', `This link is also saved for this session at: ${record.path}`);
+  return lines.join('\n');
 }
 
 /** The tray/default settings editor as a browser UI, over a real settings editor. */
@@ -1823,5 +1882,11 @@ export async function defaultWebSettingsDialog({ editor, ...rest } = {}) {
 
 /** First-run setup as a browser UI, over the `createSetup` logic. */
 export async function defaultWebSetupDialog({ setup, secrets = null, ...rest } = {}) {
-  return openWebSettingsDialog({ controller: createSetupSettingsController({ setup, secrets }), ...rest });
+  // First run is the hidden, no-tray case from #169: always raise the hand-off dialog,
+  // because there is no other surface a stuck user could be looking at.
+  return openWebSettingsDialog({
+    controller: createSetupSettingsController({ setup, secrets }),
+    alwaysNotifyHandoff: true,
+    ...rest,
+  });
 }

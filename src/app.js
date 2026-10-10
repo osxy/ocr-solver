@@ -204,6 +204,9 @@ export async function createApp({
   // `setupDialog`: injected so the UI is out of the assembly logic, and defaulted by
   // `runApp` rather than here so a library caller gets no prompt.
   settingsDialog = null,
+  // A terminal to print the one-time settings link to (#169). `null` means there is no
+  // terminal - the launcher's hidden window - and the UI records the link instead.
+  output = null,
   // Where the offline-corpus report cache lives, for the statistics page (#64).
   // `null` means derive it from the store path, exactly like the tray does.
   accuracyCachePath = null,
@@ -377,6 +380,7 @@ export async function createApp({
           credentialPath,
           credentialStore: secrets.store,
           openBrowser,
+          output,
           webUi: config.web_ui,
           credentialVerifier: secrets.web_ui?.value ?? null,
         });
@@ -765,6 +769,7 @@ export async function createApp({
         secrets,
         logger,
         openBrowser,
+        output,
         // #67: the new settings, security-relevant first, so the web shell can show
         // them without re-reading the store.
         settingsReview: review,
@@ -895,6 +900,9 @@ async function runLockedApp(options, preLock) {
     // terminal editor is still reachable through `config edit`.
     setupDialog: options.setupDialog ?? defaultWebSetupDialog,
     settingsDialog: options.settingsDialog ?? defaultWebSettingsDialog,
+    // A TTY is the only case where printing the one-time link reaches a person; a piped
+    // or absent stdout (the launcher's window style 0) must not be mistaken for one.
+    output: options.output ?? (process.stdout.isTTY ? process.stdout : null),
     // The settings UI may request a restart; this is the one path that performs it.
     onRestart: options.onRestart ?? (() => shutdown?.('restart')),
   });
