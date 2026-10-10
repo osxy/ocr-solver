@@ -340,6 +340,10 @@ ${DARK_VARS}
   }
   tbody tr:hover { background: var(--panel-hover); }
   th { white-space: nowrap; font-family: var(--font-mono); font-size: 0.85em; }
+  /* The registry's human label is the row heading; the id stays visible beneath it as
+     the row's identity. Both are rendered, so a label cannot drift from its id (#139). */
+  .setting-label { display: block; font-family: var(--font-sans); font-weight: 600; white-space: normal; }
+  .setting-id { display: block; background: none; border: 0; padding: 0; color: var(--fg-muted); font-weight: 400; }
   td.num, th.num { text-align: right; }
 
   input[type=text], input[type=password], select, textarea {
@@ -671,7 +675,7 @@ export function renderSettingsPage({ items, session, theme = null, configPath = 
     const pending = item.pending ? ' (pending)' : '';
     const isNew = item.isNew ? ' <span class="new">[new]</span>' : '';
     const security = item.securityRelevant ? ' <span class="new">[security]</span>' : '';
-    return `<tr><th>${escapeHtml(item.id)}</th><td>${renderField(item)}</td>` +
+    return `<tr><th scope="row"><span class="setting-label">${escapeHtml(item.label ?? item.id)}</span><code class="setting-id">${escapeHtml(item.id)}</code></th><td>${renderField(item)}</td>` +
       `<td class="display">${escapeHtml(item.display)}${pending} <span class="tag tag-${tag}">[${tag}]</span>${isNew}${security}</td><td>${probe}</td></tr>`;
   };
 

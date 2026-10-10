@@ -34,7 +34,8 @@ $Deploy = Join-Path $InstallDir 'app\src\deploy\install.js'
 if (-not (Test-Path $Node)) { throw "node.exe is missing from $InstallDir" }
 if (-not (Test-Path $Deploy)) { throw "app is missing from $InstallDir" }
 
-# Writes PuzzleSolver.vbs and the per-user Startup-folder shim.
+# Writes PuzzleSolver.vbs, the per-user Startup-folder shim, and the commented example
+# config beside where config.toml lives (#181). A user's edited example is kept.
 #
 # `$ErrorActionPreference = 'Stop'` does not cover a native child's exit code - a
 # non-zero exit from node.exe is not a PowerShell error - so it must be checked

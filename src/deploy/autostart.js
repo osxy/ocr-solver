@@ -24,6 +24,7 @@
  * The plan is data - the files to write and where - so the deploy logic is asserted on
  * Linux even though only a Windows runner can create the files for real.
  */
+import { buildExampleConfig, defaultExampleConfigPath } from '../config-example.js';
 import {
   buildLauncherVbs,
   buildStartupVbs,
@@ -47,6 +48,7 @@ export const LOGON_DELAY_SEC = 20;
  * @param {string} [options.launcherPath]
  * @param {string} [options.startupDir]
  * @param {string} [options.startupPath] explicit startup-shim path (tests)
+ * @param {string} [options.exampleConfigPath] explicit example-config path (tests)
  * @param {number} [options.delaySec]
  */
 export function buildInstallPlan({
@@ -54,17 +56,26 @@ export function buildInstallPlan({
   launcherPath = null,
   startupDir = null,
   startupPath = null,
+  exampleConfigPath = null,
   delaySec = LOGON_DELAY_SEC,
 } = {}) {
   if (!installDir) throw new Error('buildInstallPlan needs an installDir');
   const launcher = launcherPath ?? `${installDir}\\${LAUNCHER_FILE}`;
   const startup = startupPath ?? `${startupDir ?? defaultStartupDir()}\\${STARTUP_FILE}`;
+  // #181: the commented example sits in the config directory, beside where config.toml
+  // would be. `defaultConfigPath` is the same rule the app loads by, so the file a user
+  // copies from is where the file they copy to lives - and the install directory, which
+  // is replaced on update, is deliberately not used.
+  const example = exampleConfigPath ?? defaultExampleConfigPath({ platform: 'win32' });
   return {
     target: 'win32',
     startupPath: startup,
+    exampleConfigPath: example,
     files: [
       { role: 'launcher', path: launcher, content: buildLauncherVbs() },
       { role: 'startup', path: startup, content: buildStartupVbs({ launcherPath: launcher, delaySec }) },
+      // A user's edited copy is never overwritten on reinstall or update (#181).
+      { role: 'example-config', path: example, content: buildExampleConfig(), skipIfExists: true },
     ],
   };
 }

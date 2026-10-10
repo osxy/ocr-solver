@@ -213,6 +213,8 @@ test('a real editor still renders every descriptor with a theme applied', async 
   const html = await first.text();
   assert.match(html, /<html lang="en" data-theme="dark">/);
   for (const setting of SETTINGS) {
-    assert.ok(html.includes(`<th>${setting.id}</th>`), `${setting.id} must still render`);
+    // The id is rendered as the row's identity beneath the label (#139).
+    assert.ok(html.includes(`<code class="setting-id">${setting.id}</code>`), `${setting.id} must still render`);
+    assert.ok(html.includes(`<span class="setting-label">${setting.label}</span>`), `${setting.id}'s label must still render`);
   }
 });

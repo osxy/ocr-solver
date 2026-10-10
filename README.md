@@ -190,8 +190,10 @@ editor for a terminal — see
 starts with no config at all, and the file is for the advanced settings. It is
 `%APPDATA%\PuzzleSolver\config.toml` on Windows or
 `${XDG_CONFIG_HOME:-~/.config}/PuzzleSolver/config.toml` elsewhere; `--config <path>`
-(or `$PUZZLESOLVER_CONFIG`) overrides it. An unknown key warns and is ignored; a *bad*
-value fails loudly and names the key. Secrets are **not** config keys: a key whose name
+(or `$PUZZLESOLVER_CONFIG`) overrides it. A commented `config.toml.example` is installed
+beside it, generated from `DEFAULTS` and the settings registry; every line is commented,
+so copying it over `config.toml` pins no default. An unknown key warns and is ignored; a
+*bad* value fails loudly and names the key. Secrets are **not** config keys: a key whose name
 looks like one (`*token*`, `*key*`, `*secret*`, `*password*`) is rejected at load, because
 a config file ends up in backups and support threads. Every key with its default, and an
 annotated `config.toml` block, are in

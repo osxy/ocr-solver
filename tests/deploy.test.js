@@ -71,7 +71,7 @@ test('the startup folder is the per-user Start Menu Startup folder', () => {
 const launcher = 'C:\\Users\\Andre de Vries\\AppData\\Local\\Programs\\PuzzleSolver\\PuzzleSolver.vbs';
 const startupDir = 'C:\\Users\\Andre de Vries\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup';
 
-test('the install plan writes the launcher and the Startup shim, and nothing else', () => {
+test('the install plan writes the launcher, the Startup shim and the example config', () => {
   const plan = buildInstallPlan({ installDir: 'C:\\Users\\Andre de Vries\\AppData\\Local\\Programs\\PuzzleSolver', startupDir });
   assert.equal(plan.startupPath, `${startupDir}\\${STARTUP_FILE}`);
   const launcherFile = plan.files.find((f) => f.role === 'launcher');
@@ -82,6 +82,15 @@ test('the install plan writes the launcher and the Startup shim, and nothing els
   assert.ok(startupFile.content.includes('WScript.Sleep 20000'), 'the startup shim carries the logon delay');
   assert.ok(startupFile.content.includes(launcherFile.path), 'the startup shim points at the launcher');
   assert.equal(LOGON_DELAY_SEC, 20);
+
+  // #181: the example config is part of the plan, lives beside where config.toml would
+  // be (not the install dir, which an update replaces), and is never a live config.toml.
+  const exampleFile = plan.files.find((f) => f.role === 'example-config');
+  assert.ok(exampleFile, 'the plan must write the example config');
+  assert.equal(plan.exampleConfigPath, exampleFile.path);
+  assert.ok(exampleFile.path.endsWith('config.toml.example'), `unexpected example path: ${exampleFile.path}`);
+  assert.ok(!/config\.toml$/.test(exampleFile.path), 'the example must not be named config.toml');
+  assert.equal(exampleFile.skipIfExists, true, "the example must never clobber a user's edited copy");
 });
 
 test('the install plan no longer registers a scheduled task', () => {
@@ -147,14 +156,17 @@ test('every packaged file is tracked in git (no generated artefact left untracke
   }
 });
 
-test('runInstall writes the launcher and the Startup shim, and runs nothing', () => {
+test('runInstall writes the launcher, the Startup shim and the example config, and runs nothing', () => {
   const writes = [];
   const mkdirs = [];
+  const example = 'C:\\Users\\Andre\\AppData\\Roaming\\PuzzleSolver\\config.toml.example';
   const result = runInstall({
     installDir: 'C:\\Programs\\PuzzleSolver',
     startupDir: 'C:\\Users\\Andre\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup',
+    exampleConfigPath: example,
     writeFile: (path, content, enc) => writes.push({ path, content, enc }),
     mkdir: (path) => mkdirs.push(path),
+    fileExists: () => false,
     log: { log() {} },
   });
 
@@ -165,7 +177,30 @@ test('runInstall writes the launcher and the Startup shim, and runs nothing', ()
   const startupShim = writes.find((w) => w.path.endsWith('PuzzleSolver-startup.vbs'));
   assert.ok(startupShim && startupShim.content.includes('WScript.Sleep 20000'), 'the Startup shim is written with the delay');
   assert.ok(startupShim.content.includes(result.launcherPath), 'the Startup shim points at the launcher');
-  assert.equal(writes.length, 2, 'the install writes files and starts nothing');
+  const exampleFile = writes.find((w) => w.path === example);
+  assert.ok(exampleFile && exampleFile.content.includes('poll_interval_sec = 60'), 'the example config is written');
+  assert.equal(writes.length, 3, 'the install writes files and starts nothing');
+  assert.equal(result.exampleConfigPath, example);
+});
+
+test('runInstall keeps a user-edited example config on reinstall (#181)', () => {
+  const writes = [];
+  const example = 'C:\\Users\\Andre\\AppData\\Roaming\\PuzzleSolver\\config.toml.example';
+  const result = runInstall({
+    installDir: 'C:\\Programs\\PuzzleSolver',
+    startupDir: 'C:\\S',
+    exampleConfigPath: example,
+    writeFile: (path, content, enc) => writes.push({ path, content, enc }),
+    mkdir: () => {},
+    // The example exists (the user edited it); the two generated shims do not.
+    fileExists: (path) => path === example,
+    log: { log() {} },
+  });
+
+  assert.equal(writes.some((w) => w.path === example), false, 'an edited example must survive a reinstall');
+  assert.deepEqual(result.skipped, [example]);
+  // The generated shims are still refreshed, which is the difference the flag encodes.
+  assert.equal(writes.length, 2);
 });
 
 test('runInstall lets a write failure propagate instead of reporting success', () => {

@@ -574,6 +574,19 @@ refused by name rather than silently read as `nld` (#143). `ui.tray` /
 defaults to `false`; it never writes image bytes anywhere (that is refused at the sinks), it only
 records a durable file reference for puzzles that ended unresolved.
 
+**The example config is generated, commented and never live (#181).** The installer writes
+`config.toml.example` beside where `config.toml` lives (`defaultExampleConfigPath` in
+`src/config-example.js`), derived from `DEFAULTS` and the settings registry rather than
+hand-written — documentation outliving its code is this repository's most repeated defect. Every
+line is commented out, so even a careless `cp config.toml.example config.toml` pins no default: a
+live complete file would freeze this version's defaults, and a later release changing one would
+silently have no effect. `runInstall` honours a `skipIfExists` flag on that entry, so a user's
+edited copy survives a reinstall or an update while the generated shims are refreshed. It names
+the secret ids and routes them to the credential store (`config set` or the settings editor),
+because the loader rejects secret-shaped keys and the shipped file must not contradict the
+app's own refusal. All of it is asserted offline by `tests/config-example.test.js`, and on
+Windows by `packaging/run-deploy.ps1` (the unprivileged install path stays unexercised, #163).
+
 ### 4.14 UI & logging ✅ M3
 
 - Tray via `systray2`, notifications via `node-notifier`; `--headless` skips both.
@@ -770,6 +783,15 @@ panel-coloured placeholder so it does not reflow. `prefers-reduced-motion` colla
 transitions to nothing. The token layer could not be a build step: there is no bundler, and the
 CSP (`default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; form-action 'self';
 base-uri 'none'`) still forbids scripts and external assets.
+
+**The settings row heading is the registry's label, not the raw id (#139).** Every descriptor
+carried a hand-written `label` and nothing rendered it: the row printed `item.id`. The decision is
+to render both — the human label is the heading, the id sits beneath it — because the id is the
+row's identity, its anchor key and its submitted value (`name="v:section.key"`, the `test_id` the
+**Test connection** button posts), so it cannot be dropped. The terminal editor shows the same
+pair. `tests/web-config.test.js` asserts every descriptor's label reaches the page and
+`tests/settings.test.js` asserts no descriptor has an empty one, so a label can no longer drift
+from its id in silence.
 
 **Screenshots are captured over HTTP, with the real CSP in force (issue #111).**
 `scripts/screenshots.mjs` used to write the fetched HTML to a `file://` document and inline
