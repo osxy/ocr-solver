@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@tesseract.js-data/nld": "^1.0.0",
-    "node-notifier": "^10.0.1",
+    "node-notifier": "^11.0.0",
     "sharp": "^0.35.5",
     "smol-toml": "^1.9.1",
     "systray2": "^2.1.4",
