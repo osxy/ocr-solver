@@ -60,9 +60,8 @@ export function bundledLanguage(code) {
   }
 }
 
-/** Why `code` cannot be used offline, or `null` when it can. */
-export function describeUnavailableLanguage(code) {
-  if (bundledLanguage(code)) return null;
+/** The refusal sentence for `code`; naming the language, the offline rule and the install. */
+function unavailableMessage(code) {
   return (
     `"${code}" has no bundled traineddata: PuzzleSolver only uses OCR data installed under ` +
     `node_modules and never downloads it at runtime, so "${code}" cannot be used offline. ` +
@@ -89,7 +88,7 @@ export function resolveOcrLanguages(codes = [DEFAULT_OCR_LANGUAGE], { load = bun
 
   const packages = requested.map((code) => {
     const pkg = load(code);
-    if (!pkg) throw new OcrLanguageUnavailableError(code, describeUnavailableLanguage(code));
+    if (!pkg) throw new OcrLanguageUnavailableError(code, unavailableMessage(code));
     return { ...pkg, requested: code };
   });
 

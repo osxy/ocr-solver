@@ -556,7 +556,9 @@ fixed by the implementation and its tests:
 A missing config file is not an error: every value has a working default, so the app starts with
 no config at all. A *bad* value (unknown enum, negative or non-numeric interval, unknown OCR
 variant, a secret-looking key) throws and names the key; an unknown key from a newer version only
-warns. `ocr.languages` is validated but the bundled traineddata is `nld` only, and `ui.tray` /
+warns. `ocr.languages` is validated against the languages whose `@tesseract.js-data/<code>`
+package is installed — only `nld` ships — and a language with no bundled traineddata is
+refused by name rather than silently read as `nld` (#143). `ui.tray` /
 `ui.notify_on_unresolved` are accepted and stored as the M3 seam.
 
 **M2 leg 3 additions.** `solver.breaker_threshold` / `solver.breaker_cooldown_sec` parameterise
@@ -661,7 +663,9 @@ path, and `ui.notify_on_unresolved` (`handlePush`). The HTTP gate's image limits
 request rather than captured at server construction for exactly this reason (#35), so the
 `[live]` label is true on both ingresses. Everything else — models, base URL, `offline_only`,
 `escalate_to_vision`, `self_consistency_n`, the breaker knobs, the whole `http.*` block,
-`ocr.languages`, the reply switch/wording/budgets, poll interval, `history_mode`, `retain_days`,
+`ocr.languages` (resolved against the installed `@tesseract.js-data/*` packages when the
+worker is built; an unbundled language is refused by name rather than falling back to
+`nld`, #143), the reply switch/wording/budgets, poll interval, `history_mode`, `retain_days`,
 `ui.tray` and all three secrets — is captured when the Tesseract worker, listener, reasoner,
 responder or HTTP server is built, so the editor says "restart" rather than appearing to save
 something that silently does nothing. The live ones are copied into the live config by
