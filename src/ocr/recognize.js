@@ -11,7 +11,6 @@
  */
 import { createWorker } from 'tesseract.js';
 import nld from '@tesseract.js-data/nld';
-import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -23,12 +22,20 @@ export const PSM = {
 };
 
 /**
- * Where Tesseract should cache the decompressed traineddata.
+ * Where Tesseract *would* cache the decompressed traineddata.
  *
- * tesseract.js defaults this to the current working directory, which drops a 23 MB
- * `nld.traineddata` next to whatever directory the app happened to be launched from,
- * and fails outright when that directory is read-only (Program Files). Always point
- * it at a real per-user cache directory instead.
+ * The bundled data makes a disk cache unnecessary and unsafe. `@tesseract.js-data/nld`
+ * ships `nld.traineddata.gz` inside `node_modules`, and reading + gunzipping it costs
+ * the same as reading the 23 MB decompressed file (~0.4 s, measured). tesseract.js
+ * writes that cache with a truncating `fs.writeFile`, so two workers sharing the path
+ * can read a half-written file, fail to initialise, and hang the caller (tesseract.js
+ * leaves the promise it returns unsettled after an initialisation failure).
+ * `createOcrWorker` therefore passes `cacheMethod: 'none'` and never reads or writes
+ * this path — issue #110. It is kept so the regression test can name a location and
+ * assert nothing is ever written there.
+ *
+ * tesseract.js's own default is the current working directory, which is worse still:
+ * it drops a 23 MB file next to wherever the app was launched from.
  */
 export function defaultCachePath() {
   if (process.env.PUZZLESOLVER_CACHE_DIR) return process.env.PUZZLESOLVER_CACHE_DIR;
@@ -43,9 +50,14 @@ export async function createOcrWorker({
   lang = nld.code,
   langPath = nld.langPath,
   cachePath = defaultCachePath(),
+  cacheMethod = 'none',
 } = {}) {
-  mkdirSync(cachePath, { recursive: true });
-  const worker = await createWorker(lang, 1, { langPath, cachePath, gzip: true });
+  // `cacheMethod: 'none'` loads the bundled `.gz` straight into Tesseract's in-memory
+  // filesystem and skips the shared on-disk cache entirely. The disk cache is not just
+  // redundant here: its non-atomic write is what made two parallel workers read a
+  // truncated `nld.traineddata` and hang (issue #110). Do not set this back to
+  // 'write'/'refresh' without first making the cache write atomic.
+  const worker = await createWorker(lang, 1, { langPath, cachePath, gzip: true, cacheMethod });
   // Silence "Invalid resolution 25 dpi" warnings and pin the engine.
   await worker.setParameters({ user_defined_dpi: '300', preserve_interword_spaces: '1' });
   return worker;
