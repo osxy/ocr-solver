@@ -101,6 +101,10 @@ test('every setting the issue names is editable', () => {
     // Two settings the #27 list omitted; the editor must not be a partial view (#35).
     'reply.strategy',
     'reply.min_interval_sec',
+    // #133: the primary answer budget was in DEFAULTS and the docs but absent from
+    // the registry, so the editor could not set it while its acknowledgement sibling
+    // could. Listed here so the omission cannot recur.
+    'reply.max_per_hour',
     'reply.require_confidence',
     'reply.title',
     'reply.prefix',
@@ -347,7 +351,10 @@ test('#35: every new non-secret setting round-trips through the real loader', as
     ['solver.tier0', 'false'],
     ['solver.breaker_threshold', '5'],
     ['solver.breaker_cooldown_sec', '120'],
-    ['ocr.languages', 'nld, eng'],
+    // #143: only a language with bundled traineddata is a valid value, and only `nld`
+    // ships. An installed-and-configured `eng` would round-trip the same way; the
+    // refusal of an unbundled one is asserted in tests/ocr-languages.test.js.
+    ['ocr.languages', 'nld'],
     ['ocr.min_confidence', '42'],
     ['image.max_width', '1234'],
     ['image.max_pixels', '7654321'],
@@ -372,7 +379,7 @@ test('#35: every new non-secret setting round-trips through the real loader', as
   assert.equal(config.solver.tier0, false);
   assert.equal(config.solver.breaker_threshold, 5);
   assert.equal(config.solver.breaker_cooldown_sec, 120);
-  assert.deepEqual(config.ocr.languages, ['nld', 'eng']);
+  assert.deepEqual(config.ocr.languages, ['nld']);
   assert.equal(config.ocr.min_confidence, 42);
   assert.equal(config.image.max_width, 1234);
   assert.equal(config.image.max_pixels, 7654321);
@@ -413,11 +420,35 @@ test('#35: the HTTP token has no connection to test', async (t) => {
   await assert.rejects(() => editor.test('http.token'), /no connection to test/);
 });
 
-test('the editor refuses an empty or whitespace-bearing secret', (t) => {
+test('the editor refuses an empty secret, and internal whitespace in a pasted token', (t) => {
   const { editor } = makeEditor(t);
   assert.throws(() => editor.set('pushbullet.token', '   '), SettingValueError);
   assert.throws(() => editor.set('pushbullet.token', 'o.abc def'), /whitespace/);
   assert.throws(() => editor.set('llm.api_key', 'sk-a\nb'), /whitespace/);
+  // #147: the rule stays for every secret that is pasted, including the HTTP token.
+  assert.throws(() => editor.set('http.token', 'a long token value here'), /whitespace/);
+});
+
+test('#147: the web UI passphrase may contain spaces, and keeps the ends trimmed', async (t) => {
+  const { editor, secretsWrites } = makeEditor(t);
+  // The exact value the documented command in `docs/remote-access.md` sets.
+  editor.set('web_ui.password', '  a long passphrase  ');
+  await editor.save();
+  const stored = secretsWrites[0].web_ui;
+  assert.match(stored, /^scrypt\$/);
+  // Interior spaces are part of the credential; only the ends are trimmed, so the
+  // passphrase without the surrounding whitespace is what logs in.
+  assert.equal(verifyWebUiPassword('a long passphrase', stored), true);
+  assert.equal(verifyWebUiPassword('  a long passphrase  ', stored), false, 'the ends are trimmed before hashing');
+  assert.equal(stored.includes('a long passphrase'), false, 'the passphrase itself is never stored');
+});
+
+test('#147: a tab or line break is still not a passphrase character', (t) => {
+  const { editor } = makeEditor(t);
+  // A space is the one whitespace a human types into a passphrase; the login form's
+  // single-line field cannot reproduce a tab or a newline, so they stay refused.
+  assert.throws(() => editor.set('web_ui.password', 'a\tpassphrase'), /whitespace/);
+  assert.throws(() => editor.set('web_ui.password', 'a\npassphrase'), /whitespace/);
 });
 
 // ---------------------------------------------------------------------------
@@ -514,8 +545,9 @@ test('only settings the running process re-reads are marked live', () => {
     'ui.notify_on_unresolved',
   ]);
   // `ocr.languages` is restart-bound even though it sits next to ocr.min_confidence:
-  // the Tesseract worker is created once at startup, and the bundled traineddata is
-  // `nld` only. The HTTP ingress and the breaker knobs are captured at construction.
+  // the Tesseract worker is created once at startup and is now built from this list
+  // (#143), and the bundled traineddata is `nld` only. The HTTP ingress and the breaker
+  // knobs are captured at construction.
   assert.equal(getSetting('ocr.languages').restart, true);
   assert.equal(getSetting('http.bind').restart, true);
   assert.equal(getSetting('http.port').restart, true);
@@ -723,9 +755,12 @@ test('#69: a new setting is inserted at the end of its section', async (t) => {
 });
 
 test('#69: a multi-line array value refuses instead of being collapsed', async (t) => {
-  const text = '[ocr]\nlanguages = [\n  "nld",\n  "eng",\n]\n';
+  // #143: `ocr.languages` must be an installed language, so the multi-line fixture is
+  // single-element. The test is about the writer refusing a multi-line array, not about
+  // the value.
+  const text = '[ocr]\nlanguages = [\n  "nld",\n]\n';
   const { editor, path } = editorOverConfig(t, text);
-  editor.set('ocr.languages', 'nld, eng');
+  editor.set('ocr.languages', 'nld');
   await assert.rejects(() => editor.save(), ConfigEditError);
   assert.equal(readFileSync(path, 'utf8'), text, 'a refused edit writes nothing');
   assert.equal(existsSync(`${path}.bak`), false, 'a refused edit takes no backup');

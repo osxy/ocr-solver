@@ -35,7 +35,7 @@ pages under [`docs/`](./docs/):
 
 ## Status
 
-**0.4.0 — a pre-release.** The offline solver, model tiers, Pushbullet listener and
+**0.45.0 — a pre-release.** The offline solver, model tiers, Pushbullet listener and
 reply path are implemented and tested. The packaged Windows app, the installer, the
 scheduled task and the launcher are executed on `windows-latest` in CI, and a fresh
 `node` process decrypts Windows secrets through DPAPI there; the native tray widget and
@@ -46,7 +46,7 @@ The **Pushbullet ingress — reading a real push, fetching its image, solving it
 replying — has never been executed against the real Pushbullet service**, because no
 account or token exists (tracked and blocked as
 [issue #3](https://github.com/osxy/ocr-solver/issues/3)). That is the app's primary
-user-facing path, so **0.4.0 remains a pre-release**: the parts a runner can reach are
+user-facing path, so **0.45.0 remains a pre-release**: the parts a runner can reach are
 tested against fakes, but the main ingress is not *observed* end to end. Work is tracked
 in the [issue tracker](https://github.com/osxy/ocr-solver/issues); the design and its
 reasoning live in [DESIGN.md](./DESIGN.md).
@@ -55,20 +55,20 @@ reasoning live in [DESIGN.md](./DESIGN.md).
 
 Install from a **release**, not from source. From the
 [releases page](https://github.com/osxy/ocr-solver/releases) download
-`PuzzleSolver-0.4.0-win-x64.zip` and its `.sha256` checksum. The ZIP carries
+`PuzzleSolver-0.45.0-win-x64.zip` and its `.sha256` checksum. The ZIP carries
 its own pinned `node.exe`, so Node does not have to be installed.
 
 The binary is **unsigned**, so **Windows SmartScreen will warn on first run** and the
 SHA256 checksum is the only integrity signal. Verify it before extracting:
 
 ```powershell
-Get-FileHash .\PuzzleSolver-0.4.0-win-x64.zip -Algorithm SHA256
-Get-Content .\PuzzleSolver-0.4.0-win-x64.zip.sha256
+Get-FileHash .\PuzzleSolver-0.45.0-win-x64.zip -Algorithm SHA256
+Get-Content .\PuzzleSolver-0.45.0-win-x64.zip.sha256
 ```
 
 The two hashes must match. (On Linux or macOS:
-`sha256sum -c PuzzleSolver-0.4.0-win-x64.zip.sha256`.) If Windows flags the download,
-`Unblock-File .\PuzzleSolver-0.4.0-win-x64.zip` first.
+`sha256sum -c PuzzleSolver-0.45.0-win-x64.zip.sha256`.) If Windows flags the download,
+`Unblock-File .\PuzzleSolver-0.45.0-win-x64.zip` first.
 
 Then extract the ZIP and, from the extracted folder, run the installer:
 
@@ -119,7 +119,11 @@ The logon task starts the app at logon. To start it now, run the launcher
 | **Solve last image** | Re-runs the pipeline on the newest image in the inbox — tuning without a live push |
 | **Open log** / **Open config** | Opens `app.log` / `config.toml` |
 | **Settings** | Opens the settings editor in the browser (below) |
+| **Restart** | Restarts the service, draining an in-flight solve first |
 | **Quit** | Shuts down cleanly |
+
+When a saved setting needs a restart, the settings page offers **Restart now** instead of only
+naming the setting, and the **Restart** item does the same thing.
 
 The icon is **normal (coloured)** while the listener is in contact with Pushbullet, and
 turns **grey after 10 minutes with no contact** — no socket event and no completed poll.
@@ -198,7 +202,7 @@ bind = "127.0.0.1"             # never 0.0.0.0 unless you mean it; it warns if y
 ```
 
 Every key and its default is in
-[configuration](./docs/configuration.md#every-option-with-its-default);
+[configuration](./docs/configuration.md#every-configtoml-key-with-its-default);
 `DEFAULTS` in [`src/config.js`](./src/config.js) is the schema.
 
 ### The web UI
@@ -299,9 +303,10 @@ status code.
 to start; (2) `reply.enabled` is `true` and `reply.require_confidence` is not
 suppressing a merely validated answer; (3) the log and the listener state — a **grey
 tray icon** means the listener has been quiet for 10 minutes, and the stream reconnects
-with backoff while the 60 s poll is the second path; (4) the hourly cap (`max_per_hour`)
-has not been reached — answers and acknowledgements each have their own budget, so a
-burst of unsolvable puzzles can no longer starve a real answer; (5) a model tier needs a
+with backoff while the 60 s poll is the second path; (4) the hourly answer budget
+(`reply.max_per_hour`) has not been reached — acknowledgements have their own, looser cap
+(`reply.unresolved_max_per_hour`), so a burst of unsolvable puzzles cannot starve a real
+answer; both are editable in the settings editor; (5) a model tier needs a
 key, and `offline_only = true` disables the model tiers entirely.
 
 **A setting changed but nothing happened.** The editor and `config set` print which
@@ -352,7 +357,7 @@ folders. Manually: `schtasks /Delete /TN PuzzleSolver /F`, then delete
 
 ## Known limitations
 
-- **Pre-release.** 0.4.0 is a pre-release: expect rough edges and no stability promise.
+- **Pre-release.** 0.45.0 is a pre-release: expect rough edges and no stability promise.
   The **Pushbullet ingress has never run against the real Pushbullet service** — no
   account or token exists (issue #3) — so the app's primary path is exercised against
   fakes rather than observed end to end.
@@ -385,10 +390,12 @@ folders. Manually: `schtasks /Delete /TN PuzzleSolver /F`, then delete
   `node src/cli.js config edit`) remains the terminal editor for a headless machine.
 - **Synthetic accuracy is not real accuracy.** Of the 287 corpus items, 281 are
   **synthetic** images and text from our own generator — which refuses to write an image
-  the pipeline cannot read — so the synthetic figure is a **regression guard, not
-  real-world accuracy**. The only real evidence is 3/3 on the three real images. Run
-  `node src/cli.js accuracy` (or `npm run accuracy`) and read the provenance breakdown;
-  the measured detail is in [DESIGN.md](./DESIGN.md) §10.
+  the pipeline cannot read — 3 are real images, and 3 more are noisy transcripts derived
+  from those same three images, so the synthetic figure is a **regression guard, not
+  real-world accuracy** and the derived items are not independent evidence. The only real
+  evidence is 3/3 on the three real images. Run `node src/cli.js accuracy` (or
+  `npm run accuracy`) and read the provenance breakdown; the measured detail is in
+  [DESIGN.md](./DESIGN.md) §10.
 - **No form typing, no image grids.** It reads an image and replies; it does not act in
   a browser.
 

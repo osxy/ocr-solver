@@ -1,8 +1,13 @@
-# README screenshots
+# Screenshots
 
-The images in this directory are embedded in the top-level [`README.md`](../../README.md).
-They show the loopback web UI, which is otherwise invisible until someone installs and
-runs the app.
+The images in this directory document the loopback web UI, which is otherwise invisible
+until someone installs and runs the app. They are embedded in the [`docs/`](../) pages
+that describe each mode: the settings captures (light and dark) in
+[`configuration.md`](../configuration.md), the sign-in page in
+[`remote-access.md`](../remote-access.md), the solve page in
+[`solve-page.md`](../solve-page.md), and both statistics captures in
+[`statistics-page.md`](../statistics-page.md). The top-level
+[`README.md`](../../README.md) embeds none of them; it links here.
 
 | File | Page it shows |
 |---|---|
@@ -118,8 +123,10 @@ list in `src/ui/settings.js` — **re-run `npm run screenshots` and commit the r
 A reviewer should open the changed images before merging, because there is no automated
 guard: a browser is deliberately absent from the offline suite.
 
-Current cost in the repository: six PNGs, about **1.1 MiB** (1,181,827 bytes) total (the
-two settings captures are the largest at roughly 355 KiB each; the topic grouping added height rather
-than width). They are committed as PNGs because the
-UI is text and flat colour, which compresses well; keep them under ~500 KiB each by
-adjusting `CAPTURE_WIDTH` in `scripts/screenshots.mjs` rather than by lowering quality.
+Current cost in the repository: six PNGs, about **1.14 MiB** (1,191,000 bytes) total
+(the two settings captures are the largest, at roughly 356 KiB and 358 KiB; the topic
+grouping added height rather than width). The exact total moves by a few dozen bytes on
+any regeneration, because `solve.png` records that run's real duration. They are
+committed as PNGs because the UI is text and flat colour, which compresses well; keep
+them under ~500 KiB each by adjusting `CAPTURE_WIDTH` in `scripts/screenshots.mjs`
+rather than by lowering quality.

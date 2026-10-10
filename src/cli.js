@@ -313,13 +313,15 @@ async function main() {
   warnIfVisionIsRouted(opts);
 
   const store = opts.store ? openStore({ path: opts.store }) : null;
-  const worker = await createOcrWorker();
-  // #78: the model path reads the same config the service does. Only loaded when a
-  // real model client is built, so an offline `cli.js corpus` and the `--fake-model`
-  // demo neither depend on config.toml.
-  const reasonerConfig = opts.useModel && !opts.fakeModel
-    ? loadConfig({ explicitPath: opts.config, env: process.env }).config
-    : null;
+  // #143: the same `ocr.languages` the service uses, resolved when the worker is built.
+  // The config is loaded even for an offline corpus run (with no config file the
+  // defaults give the bundled `nld`); a language with no bundled traineddata is refused
+  // by `createOcrWorker` by name rather than silently reading as Dutch.
+  const solveConfig = loadConfig({ explicitPath: opts.config, env: process.env }).config;
+  const worker = await createOcrWorker({ languages: solveConfig.ocr.languages });
+  // #78: the model path reads the same config the service does. Only built when a real
+  // model client is requested, so the `--fake-model` demo does not need a key.
+  const reasonerConfig = opts.useModel && !opts.fakeModel ? solveConfig : null;
   const results = [];
 
   try {

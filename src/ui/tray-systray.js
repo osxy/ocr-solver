@@ -40,6 +40,10 @@ export async function startTray({
   // credential provider; this adapter only forwards the click.
   openSettings = null,
   notify = null,
+  // #128: the Restart item. `restart` performs the process restart; `restartPlan`
+  // decides whether the item can do anything here. Forwarded verbatim.
+  restart = null,
+  restartPlan = null,
   quit = null,
   accuracyProvider = null,
   loadSystray = () => import('systray2'),
@@ -71,6 +75,8 @@ export async function startTray({
     paths: { log: app?.logger?.path ?? null, config: app?.configPath ?? null },
     openPath,
     openSettings,
+    restart,
+    restartPlan,
     quit,
     notify: (options) => notifier?.notify?.(options),
     accuracyProvider,

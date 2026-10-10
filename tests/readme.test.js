@@ -3,7 +3,7 @@
  *
  * The README is the front door: what it is, install, run, the failures people hit, the
  * known limitations, and pointers. Everything else belongs in DESIGN.md or docs/ (the
- * rule is written down in AGENTS.md §10). These six tests are the ratchet:
+ * rule is written down in AGENTS.md §10). These seven tests are the ratchet:
  *
  *   1. a length budget, so a milestone cannot append its mode and its evidence here;
  *   2. every relative link and anchor resolves, so moving detail to docs/ cannot leave
@@ -15,7 +15,11 @@
  *   5. every docs/*.md page is linked from the README, so a page cannot be added and
  *      then forgotten;
  *   6. a page that describes configuration also mentions the settings editor, so the
- *      file is not the only route a page shows.
+ *      file is not the only route a page shows;
+ *   7. every `section.key` the docs' TOML blocks show exists in the settings registry,
+ *      so a page cannot document a setting the editor cannot set;
+ *   8. every setting in the registry is documented in the configuration reference, the
+ *      reverse of 7, so a registry key the docs never show cannot hide (#138).
  *
  * The budget numbers are deliberately stated here and in AGENTS.md §10. When the README
  * legitimately grows, raise them in one deliberate commit and say why in the message -
@@ -34,10 +38,51 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync, statSync, readdirSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
+import { parse as parseToml } from 'smol-toml';
+import { SETTINGS } from '../src/ui/settings.js';
+import { DEFAULTS } from '../src/config.js';
 
 const repoRoot = join(import.meta.dirname, '..');
 const readmePath = join(repoRoot, 'README.md');
 const readme = readFileSync(readmePath, 'utf8');
+
+/**
+ * README.md plus every top-level docs page, as `{ name, text }`. Shared by the prose
+ * guard and the registry cross-check so the two cannot disagree about what "a page"
+ * means.
+ */
+function loadDocPages() {
+  const docsDir = join(repoRoot, 'docs');
+  return [
+    { name: 'README.md', text: readme },
+    ...readdirSync(docsDir, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.endsWith('.md'))
+      .map((entry) => ({
+        name: `docs/${entry.name}`,
+        text: readFileSync(join(docsDir, entry.name), 'utf8'),
+      })),
+  ];
+}
+
+/** The body of every ```toml fenced block in a page, in file order. */
+function tomlBlocks(text) {
+  return [...text.matchAll(/^```toml\b[^\n]*\n([\s\S]*?)^```/gm)].map((match) => match[1]);
+}
+
+/** Every nested `section.key` path in a parsed TOML object; arrays and scalars are leaves. */
+function keyPaths(node, prefix = '') {
+  const paths = [];
+  if (node == null || typeof node !== 'object' || Array.isArray(node)) return paths;
+  for (const [key, value] of Object.entries(node)) {
+    const path = prefix ? `${prefix}.${key}` : key;
+    if (value != null && typeof value === 'object' && !Array.isArray(value)) {
+      paths.push(...keyPaths(value, path));
+    } else {
+      paths.push(path);
+    }
+  }
+  return paths;
+}
 
 // Stated budget. Sized just above the file at the second rewrite (414 lines / 3207
 // words) so that any addition needs a deliberate trim or a deliberate, explained bump.
@@ -223,30 +268,18 @@ test('every top-level docs page is linked from the README', () => {
  * sentence, and this check passed it. A green run means the mention exists, nothing
  * more; the reader still has to read the page.
  *
- * WHY THERE IS NO REGISTRY CROSS-CHECK HERE (tried, not clean). The stronger check
- * would enumerate the `section.key` entries the docs show and assert each one exists in
- * `SETTINGS` in `src/ui/settings.js`, so a page cannot document a setting the editor
- * cannot set. It is not here because the docs' `config.toml` blocks immediately surface
- * one real, pre-existing gap: `reply.max_per_hour` is in `DEFAULTS` and in
- * `docs/configuration.md`, but is absent from `SETTINGS`, so `config set reply.max_per_hour`
- * is rejected as an unknown key - a documented setting the web UI cannot set, exactly
- * the inconsistency the check exists to catch. Fixing that is not a docs-or-tests change.
- * The inline `section.key` half is also prose-sensitive: `docs/configuration.md` writes
- * "There is no `web_ui.enabled` key", which a regex cannot tell from a real key. Until
- * the registry is complete, the guard stays at the mention the rule asks for; a
- * weakened cross-check with an allowlist would hide the very gap it should report.
+ * THE REGISTRY CROSS-CHECK IS THE NEXT TEST. The stronger half of this rule - every
+ * `section.key` the docs' TOML blocks show exists in `SETTINGS` - was withheld when
+ * this one landed because its first run found a real gap (`reply.max_per_hour` was in
+ * `DEFAULTS` and in `docs/configuration.md` but absent from `SETTINGS`, so
+ * `config set reply.max_per_hour` was rejected as an unknown key). An allowlisted
+ * cross-check would have hidden exactly the inconsistency it exists to catch; #133
+ * closed the gap and ships the check. It reads only TOML blocks, so a key named in
+ * prose (`docs/configuration.md` says "There is no `web_ui.enabled` key") is not
+ * mistaken for one being documented.
  */
 test('a page that describes configuration also says the settings editor can change it', () => {
-  const docsDir = join(repoRoot, 'docs');
-  const pages = [
-    { name: 'README.md', text: readme },
-    ...readdirSync(docsDir, { withFileTypes: true })
-      .filter((entry) => entry.isFile() && entry.name.endsWith('.md'))
-      .map((entry) => ({
-        name: `docs/${entry.name}`,
-        text: readFileSync(join(docsDir, entry.name), 'utf8'),
-      })),
-  ];
+  const pages = loadDocPages();
 
   assert.ok(pages.length > 0, 'no pages to check; the test has lost its subject');
 
@@ -280,5 +313,174 @@ test('a page that describes configuration also says the settings editor can chan
   assert.ok(
     configurationPages > 0,
     'no page describes configuration; the test has lost its subject'
+  );
+});
+
+/**
+ * The stronger half of the rule: not just that a configuration page mentions the
+ * editor, but that every `section.key` a TOML block shows is a setting the registry
+ * actually has. A documented setting the editor cannot set is precisely the
+ * inconsistency the rule exists to prevent (this check found `reply.max_per_hour`,
+ * #133), and it also catches a typo'd key in a doc, which the prose guard cannot.
+ *
+ * It reads the blocks with the same parser the app uses, so a key in prose is not
+ * mistaken for a documented key, and a section-less fragment (openrouter.md shows a
+ * bare `llm_vision_model = ...` as an alternative) names no `section.key` and is
+ * skipped rather than misattributed to whatever section preceded it.
+ *
+ * WHAT THIS GUARD IS NOT. It checks that the key is in the registry, not that its
+ * documented default, type or comment is right: a page can show `max_per_hour = 9999`
+ * with a wrong comment and pass. A green run means the key is settable, nothing more.
+ */
+test('every config key the docs show exists in the settings registry', () => {
+  const pages = loadDocPages();
+  assert.ok(pages.length > 0, 'no pages to check; the test has lost its subject');
+
+  const ids = new Set(SETTINGS.map((setting) => setting.id));
+  let documentedKeys = 0;
+
+  for (const page of pages) {
+    for (const block of tomlBlocks(page.text)) {
+      let parsed;
+      try {
+        parsed = parseToml(block);
+      } catch {
+        // An illustrative block may not stand alone as valid TOML (a fragment, a
+        // placeholder). It cannot be a registry key, so it is not this guard's subject.
+        continue;
+      }
+      for (const path of keyPaths(parsed)) {
+        if (!path.includes('.')) continue; // a section-less fragment names no section.key
+        documentedKeys += 1;
+        assert.ok(
+          ids.has(path),
+          `${page.name} documents "${path}", but no such setting exists in SETTINGS (src/ui/settings.js), so the editor and \`config set\` cannot change it.`
+        );
+      }
+    }
+  }
+
+  assert.ok(documentedKeys > 0, 'no docs show a section.key; the test has lost its subject');
+});
+
+/**
+ * The mirror of the guard above: not just that a documented key is settable, but that
+ * every settable key is documented somewhere a reader will look. #133's check runs only
+ * one way, so a registry key the docs never show is invisible to it - which is how
+ * `[ocr]` and `[ui]` came to be omitted from a list headed "Every option" (#138).
+ *
+ * The canonical reference (`docs/configuration.md`, the block under "Every ... key") is
+ * held to the strong form, and against both sources of truth: **every leaf key in
+ * `DEFAULTS`** (a key can be validated and defaulted without a registry descriptor) and
+ * **every non-secret `SETTINGS` entry** must appear there as a `section.key`, with a
+ * default - not merely be named in prose elsewhere. A secret has no `path` by design (it
+ * lives in the credential store), so the strong form cannot apply; each is instead
+ * required to be named by its literal id in the docs, which is how the page explains
+ * where it goes.
+ *
+ * WHAT THIS GUARD IS NOT. It checks that the key is listed, not that its default or
+ * comment is right - a wrong default passes. And "documented" is satisfied by the id
+ * appearing as a `section.key` in the canonical block, not by the surrounding prose
+ * making sense. A green run means a reader can find the key and a value; the reader
+ * still has to read the line.
+ */
+test('every setting in the registry is documented in the configuration reference', () => {
+  const pages = loadDocPages();
+  const configurationPath = join(repoRoot, 'docs', 'configuration.md');
+  assert.ok(existsSync(configurationPath), 'docs/configuration.md is missing; the test cannot find its subject');
+  const configuration = readFileSync(configurationPath, 'utf8');
+
+  // The canonical block: the first TOML block after the "Every ... key" heading.
+  const heading = configuration.match(/^##\s+Every\b[^\n]*\n/m);
+  assert.ok(heading, 'docs/configuration.md has no "Every ... key" heading; the test has lost its subject');
+  const block = tomlBlocks(configuration.slice(heading.index))[0];
+  assert.ok(block, 'the "Every ... key" heading is not followed by a TOML block; the test has lost its subject');
+
+  const canonical = new Set(keyPaths(parseToml(block)));
+  const prose = pages.map((page) => page.text).join('\n');
+
+  const schemaKeys = keyPaths(DEFAULTS);
+  assert.ok(schemaKeys.length > 0, 'DEFAULTS is empty; the test has lost its subject');
+
+  for (const key of schemaKeys) {
+    assert.ok(
+      canonical.has(key),
+      `"${key}" is in DEFAULTS (src/config.js), but docs/configuration.md's "Every ... key" block does not list it, so a reader cannot find its default. A key can be defaulted and validated without a registry descriptor, which is why this direction is checked against DEFAULTS rather than SETTINGS alone.`
+    );
+  }
+
+  assert.ok(SETTINGS.length > 0, 'SETTINGS is empty; the test has lost its subject');
+
+  for (const setting of SETTINGS) {
+    if (setting.path) {
+      assert.ok(
+        canonical.has(setting.id),
+        `"${setting.id}" is a config.toml setting (it has a path in SETTINGS), but docs/configuration.md's "Every ... key" block does not list it, so a reader cannot find its default.`
+      );
+    } else {
+      assert.ok(
+        prose.includes(setting.id),
+        `"${setting.id}" is a secret with no config.toml path, and no docs page names it, so a reader cannot find where it goes.`
+      );
+    }
+  }
+});
+
+/** Backticked tokens inside a bullet body, in order. */
+function backticks(text) {
+  return [...text.matchAll(/`([^`]+)`/g)].map((match) => match[1]);
+}
+
+/**
+ * The prose enumeration of `[live]` / `[restart]` settings, checked against the same
+ * registry the two key-existence guards use. Those guards read fenced TOML blocks and
+ * key *existence* only, so a setting missing from this enumeration is outside their
+ * reach by construction - which is how `storage.max_images` (restart: true, captured at
+ * `src/app.js` build time) and the auto-router policy came to be absent from the page
+ * whose section title is the enumeration (issue #152).
+ *
+ * The **live** list must match the `restart: false` set exactly, because it is short and
+ * every entry is a full `section.key`. The **restart** list may group a whole block as
+ * `section.*`, so coverage is what is asserted there: every `restart: true` setting is
+ * named by id or covered by its block wildcard, and no live setting is listed as
+ * restart-bound. The reverse (a setting named in neither list) is already caught by the
+ * exact live check.
+ */
+test("the configuration reference's restart enumeration matches the registry", () => {
+  const configuration = readFileSync(join(repoRoot, 'docs', 'configuration.md'), 'utf8');
+  const section = configuration.slice(configuration.indexOf('## Some settings need a restart'));
+  assert.ok(section.length > 0, 'docs/configuration.md has no restart section; the test has lost its subject');
+
+  const liveMatch = section.match(/^- \*\*live\*\* — ([\s\S]*?)(?=^- \*\*restart\*\*)/m);
+  const restartMatch = section.match(/^- \*\*restart\*\* — ([\s\S]*?)\n\n/m);
+  assert.ok(liveMatch, 'the restart section has no `**live**` bullet; the test has lost its subject');
+  assert.ok(restartMatch, 'the restart section has no `**restart**` bullet; the test has lost its subject');
+
+  const byId = new Map(SETTINGS.map((setting) => [setting.id, setting]));
+  const expectedLive = SETTINGS.filter((setting) => setting.path && !setting.restart).map((setting) => setting.id);
+  const liveTokens = new Set(backticks(liveMatch[1]));
+
+  assert.deepEqual(
+    [...liveTokens].sort(),
+    [...expectedLive].sort(),
+    'the `[live]` enumeration must list exactly the settings the registry tags `restart: false`'
+  );
+
+  const restartTokens = new Set(backticks(restartMatch[1]));
+  const covered = (setting) =>
+    restartTokens.has(setting.id) || (setting.path && restartTokens.has(`${setting.path[0]}.*`));
+  const missing = SETTINGS.filter((setting) => setting.restart && !covered(setting)).map((setting) => setting.id);
+
+  assert.deepEqual(
+    missing,
+    [],
+    `the \`[restart]\` enumeration omits settings the registry tags restart-bound: ${missing.join(', ')}`
+  );
+
+  const misplaced = [...restartTokens].filter((token) => byId.get(token)?.path && !byId.get(token).restart);
+  assert.deepEqual(
+    misplaced,
+    [],
+    `the \`[restart]\` enumeration lists settings the registry says apply live: ${misplaced.join(', ')}`
   );
 });

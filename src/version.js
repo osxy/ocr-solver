@@ -11,7 +11,7 @@
  * review flow compares them per setting rather than per release, so a user who skips
  * `0.1.0 -> 0.3.0` still sees the `0.2.0` additions (issue #67).
  */
-export const APP_VERSION = '0.4.0';
+export const APP_VERSION = '0.45.0';
 
 /** A `major.minor.patch` tuple, or `null` for anything else. */
 export function parseVersion(value) {
@@ -34,10 +34,4 @@ export function compareVersions(a, b) {
     if (left[i] !== right[i]) return left[i] < right[i] ? -1 : 1;
   }
   return 0;
-}
-
-/** `true` when `version` is a valid version strictly newer than `than`. */
-export function isNewerVersion(version, than) {
-  const result = compareVersions(version, than);
-  return result != null && result > 0;
 }

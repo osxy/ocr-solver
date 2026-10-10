@@ -975,10 +975,32 @@ export function renderLoginPage({ error = null, theme = null, configPath = null,
 }
 
 function renderDonePage(result, options = {}) {
+  // `restartPlan` and `session` are page-building inputs, not `page()` options; pull
+  // them out before the rest is spread so they cannot leak into the document attributes.
+  const { restartPlan = null, session = null, ...pageOptions } = options;
   const changed = (result.changed ?? []).map((id) => `<li><code>${escapeHtml(id)}</code></li>`).join('');
-  const restart = (result.restartRequired ?? []).length
-    ? `<p>Restart the service for: ${result.restartRequired.map((id) => `<code>${escapeHtml(id)}</code>`).join(', ')}</p>`
-    : '';
+  const restartIds = (result.restartRequired ?? []).map((id) => `<code>${escapeHtml(id)}</code>`).join(', ');
+  let restart = '';
+  if (restartIds) {
+    const intro = `<p>Restart the service for: ${restartIds}</p>`;
+    if (restartPlan?.restartable) {
+      // The offer is a real POST, not prose. The service responds first and restarts
+      // afterwards, so the page that asks for it is the page that survives to say so
+      // (hazard 3). "Not now" leaves the server up for nothing, so it closes it.
+      const sessionField =
+        session == null ? '' : `<input type="hidden" name="session" value="${escapeHtml(session)}">`;
+      restart =
+        intro +
+        `<form method="post" action="/restart">${sessionField}<button class="primary" type="submit">Restart now</button></form>` +
+        `<form method="post" action="/dismiss">${sessionField}<button type="submit">Not now</button></form>`;
+    } else if (restartPlan?.display) {
+      // Hazard 6: where no self-restart applies, print the exact command instead of a
+      // button that cannot work.
+      restart = intro + `<p>Restart it with:</p><p><code>${escapeHtml(restartPlan.display)}</code></p>`;
+    } else {
+      restart = intro;
+    }
+  }
   const live = (result.live ?? []).length
     ? `<p>Applied live: ${result.live.map((id) => `<code>${escapeHtml(id)}</code>`).join(', ')}</p>`
     : '';
@@ -989,8 +1011,8 @@ function renderDonePage(result, options = {}) {
     restart +
     live +
     backup +
-    '<p>You can close this tab.</p>';
-  return page({ body, ...options });
+    (restartPlan?.restartable && restartIds ? '' : '<p>You can close this tab.</p>');
+  return page({ body, ...pageOptions });
 }
 
 function parseForm(form, item) {
@@ -1113,6 +1135,11 @@ export function createWebSettingsServer({
   // the statistics page renders no thumbnails, exactly like the solve page without a
   // core. Reads are by row id; the path always comes from the database.
   imageStore = null,
+  // #128: the restart decision from `src/deploy/restart.js`. `null` means this server
+  // cannot restart the service (e.g. `config edit --gui`, a separate process), so the
+  // done page prints no button. When the plan is restartable, a save that needs a
+  // restart keeps the session open for `/restart` or `/dismiss`.
+  restartPlan = null,
 } = {}) {
   if (!controller || typeof controller.list !== 'function' || typeof controller.save !== 'function') {
     throw new Error('createWebSettingsServer needs a settings controller (list/save)');
@@ -1161,6 +1188,11 @@ export function createWebSettingsServer({
   let stopped = false;
   let settled = false;
   let timeoutTimer = null;
+  // Set by `/save` when the changes need a restart and one is available; the outcome
+  // is not settled until `/restart`, `/dismiss` or the timeout decides. Always carries
+  // `saved: true`, so a save is never reported as a cancellation just because the
+  // restart decision is still open.
+  let savedResult = null;
   let resolveOutcome;
   let httpModulePromise = null;
   const loginThrottle = createAuthThrottle({ now });
@@ -1576,9 +1608,44 @@ export function createWebSettingsServer({
         if (result.failed) {
           return send(res, 400, renderSettingsPage({ ...view(theme), session: sessionToken, error: result.detail ?? 'nothing was saved' }));
         }
+        // A save that needs a restart, on a service that can restart itself, keeps the
+        // session open so "Restart now" has somewhere to land. The config is already
+        // written; the outcome is settled by `/restart`, `/dismiss` or the timeout.
+        if (result.saved === true && (result.restartRequired ?? []).length > 0 && restartPlan?.restartable === true) {
+          savedResult = result;
+          send(res, 200, renderDonePage(result, { ...view(theme), session: sessionToken, restartPlan }));
+          return undefined;
+        }
         finish(result);
-        send(res, result.saved ? 200 : 200, result.saved ? renderDonePage(result, view(theme)) : messagePage('No changes', 'Nothing was changed, so nothing was saved.', { ...view(theme), tone: 'notice' }));
+        send(res, result.saved ? 200 : 200, result.saved ? renderDonePage(result, { ...view(theme), restartPlan }) : messagePage('No changes', 'Nothing was changed, so nothing was saved.', { ...view(theme), tone: 'notice' }));
         res.on('finish', () => void stop());
+        return undefined;
+      }
+
+      // #128: the restart offer's two answers, only live while a restart-requiring
+      // save is pending. The response is sent before the outcome is settled, so the
+      // browser has the page before the process tears the server down (hazard 3).
+      if (method === 'POST' && (url.pathname === '/restart' || url.pathname === '/dismiss')) {
+        const body = await readBodyCapped(req, WEB_UI_MAX_BODY_BYTES);
+        const form = new URLSearchParams(body.toString('utf8'));
+        if (!sessionValid(form.get('session') ?? '', remote)) {
+          return send(res, 403, messagePage('Session expired', 'Reopen Settings to get a fresh session.', { theme: cookieTheme }));
+        }
+        if (!savedResult || restartPlan?.restartable !== true) {
+          return send(res, 404, messagePage('Not found', 'There is no restart offer on this session.', { theme: cookieTheme }));
+        }
+        const restarting = url.pathname === '/restart';
+        send(
+          res,
+          200,
+          restarting
+            ? page({ body: statePage('ok', 'Restarting…', 'The service is restarting. This page can be closed.'), ...view(theme) })
+            : page({ body: statePage('notice', 'Not restarted', 'Your changes are saved. They take effect the next time the service starts.'), ...view(theme) })
+        );
+        res.on('finish', () => {
+          finish({ ...savedResult, restarted: restarting });
+          void stop();
+        });
         return undefined;
       }
 
@@ -1615,7 +1682,13 @@ export function createWebSettingsServer({
         launchToken = { token: randomToken(), issuedAt: now(), used: false };
         timeoutTimer = setTimeout(() => {
           logger?.warn?.('the settings web UI timed out; closing it');
-          finish({ saved: false, cancelled: true, detail: 'the settings web UI timed out' });
+          // A save waiting on the restart offer is still a successful save: report it
+          // as saved-and-not-restarted, not as a cancellation.
+          finish(
+            savedResult
+              ? { ...savedResult, restarted: false, detail: 'the restart offer timed out' }
+              : { saved: false, cancelled: true, detail: 'the settings web UI timed out' }
+          );
           void stop();
         }, timeoutMs);
         timeoutTimer.unref?.();
@@ -1691,6 +1764,9 @@ export async function openWebSettingsDialog({
   store = null,
   imageStore = null,
   corpusReport = null,
+  // #128: forwarded to the server. The service passes its own plan; every other
+  // caller omits it and the done page simply names the settings, as before.
+  restartPlan = null,
 } = {}) {
   let server;
   try {
@@ -1711,6 +1787,7 @@ export async function openWebSettingsDialog({
       store,
       imageStore,
       corpusReport,
+      restartPlan,
     });
     await server.start();
   } catch (err) {

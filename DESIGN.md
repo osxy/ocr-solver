@@ -3,8 +3,15 @@
 A small Windows background app that watches Pushbullet for incoming puzzle images,
 reads the image, solves the puzzle, and answers back on Pushbullet.
 
-Status: **M1 complete** (offline solver + model reasoner tiers, verified live).
+Status: **v0.45.0 released** (offline solver + model reasoner tiers, verified live; the
+Pushbullet listener, image fetcher and responder are built and tested offline, but the
+live Pushbullet ingress has never run against the real service — issue #3).
 Decisions confirmed — see §13.
+
+Component headers carry a **✅ built** marker once the component exists and its offline
+tests pass, followed by the milestone that built it; a parenthetical names any work still
+outstanding. The earlier **⬜ M2** marker meant "not built"; four shipped components
+carried it long after they were built.
 
 **This document is the architecture reference.** It records what was decided and *why* — the
 measurements, the rejected alternatives, the traps — and deliberately stays readable as a whole.
@@ -173,11 +180,43 @@ Cost is trivial: integral image + union-find over 36k pixels, well under 10 ms p
 
 - `tesseract.js` with the `nld` traineddata **bundled in `node_modules`** via
   `@tesseract.js-data/nld` — no CDN fetch, fully offline.
+- The bundled data is loaded straight into Tesseract's **in-memory** filesystem with
+  `cacheMethod: 'none'`; no on-disk traineddata cache is ever written. The disk cache
+  was the cause of the CI flake in issue #110, and it bought nothing: reading and
+  gunzipping `nld.traineddata.gz` costs the same as reading the 23 MB decompressed file
+  (~0.4 s, four runs each).
 - Runs every preprocessing variant at PSM 6 (uniform block) and PSM 7 (single line).
 - `rankResults()` **demotes empty transcripts below every non-empty one regardless of
-  reported confidence**, and `bestResult()` adds a small bonus for transcripts that
-  contain real Dutch question words, because a slightly lower-confidence full sentence
-  is far more useful than a high-confidence fragment.
+  reported confidence**, then orders the survivors by reported confidence. It is the
+  only ranking the pipeline applies (`src/solver/pipeline.js` calls it and nothing else),
+  so there is no length- or dictionary-based re-scoring: a higher-confidence fragment
+  outranks a lower-confidence full sentence.
+
+#### The #110 corpus flake
+
+The failure was `tests/corpus.test.js` cancelled at its 60 s timeout with
+`Error opening data file ./nld.traineddata` / `Tesseract couldn't load any languages!`,
+on a commit that had passed the same job twice. The cause was **not** a path resolved
+against the working directory, although the error names a relative path: that `./` is
+Tesseract's in-memory filesystem root, and `@tesseract.js-data/nld`'s `langPath` is
+absolute (a worker created from `/` loads fine — measured).
+
+The cause is a **shared writable cache**. Every test file runs in its own process, all
+of them use one `~/.cache/PuzzleSolver/tessdata` path, and tesseract.js writes the
+decompressed `nld.traineddata` there with a truncating `fs.writeFile`. A process that
+reads while another writes gets a short file: 5552 of 5564 concurrent reads were short
+in a direct measurement. Tesseract then fails to open the language, and because
+`createWorker` leaves its promise unsettled after an initialisation rejection, the caller
+hangs to its timeout — the same leaked worker thread is also the 15-minute job hang.
+A truncated cached file reproduces the exact CI symptom under `node --test`
+(`# fail 0 / # cancelled 1`).
+
+Reproduction, old code, corpus test files together under CPU load with a fresh cache:
+**6 runs, 1 failure** (run 3, `cancelled 1`, the process then hung to the 180 s shell
+cap). With the fix: **18 of 19 runs clean**; the one non-zero run was not captured and
+could not be reproduced (10/10 clean on the confirming batch). The guard is
+`tests/ocr-worker.test.js`; reverting `cacheMethod: 'none'` turns it red with
+`actual: [ 'nld.traineddata' ]` in under a second.
 
 ### 4.3 Repair — `src/solver/transcript.js` ✅ built
 
@@ -326,7 +365,7 @@ applies to the next puzzle without a restart, with built-in fallbacks for packag
 > the corpus puzzles (`hond blauw kat`, `peer arm fiets`, `negen min vier`). Using the corpus
 > puzzles as examples would inflate measured accuracy on the only test set available.
 
-### 4.9 Listener — `src/pushbullet/listener.js` ⬜ M2
+### 4.9 Listener — `src/pushbullet/listener.js` ✅ built (M2, live Pushbullet verification outstanding — issue #3)
 
 Pushbullet has **no webhooks**. Two mechanisms, used together:
 
@@ -340,13 +379,13 @@ Pushbullet has **no webhooks**. Two mechanisms, used together:
 Keeps a persisted watermark, deduplicates by push `iden`, reconnects with exponential backoff
 and jitter, and (by default) ignores pre-existing history rather than answering a backlog.
 
-### 4.10 Image fetcher — `src/pushbullet/files.js` ⬜ M2
+### 4.10 Image fetcher — `src/pushbullet/files.js` ✅ built (M2, live Pushbullet verification outstanding — issue #3)
 
 `file_url` is a pre-signed S3 URL, so a plain `fetch` works. Verifies magic bytes and that
 Pillow-equivalent decoding succeeds, enforces a size cap, saves to
 `%LOCALAPPDATA%\PuzzleSolver\inbox\<iden>.<ext>`, and prunes by age (default 7 days).
 
-### 4.11 Responder — `src/pushbullet/respond.js` ⬜ M2
+### 4.11 Responder — `src/pushbullet/respond.js` ✅ built (M2, live Pushbullet verification outstanding — issue #3)
 
 **Delivery path confirmed: the puzzle arrives as a file push from another user or device, and
 a new note push back is an acceptable answer.** The Pushbullet API offers a true threaded reply
@@ -431,7 +470,7 @@ CREATE TABLE kv (k TEXT PRIMARY KEY, v TEXT);   -- watermark, schema_version
 `attempts` records **every** OCR variant and every model answer, so a failure can be
 replayed offline from the corpus instead of guessed at.
 
-### 4.13 Config & secrets ⬜ M2
+### 4.13 Config & secrets ✅ built (M2)
 
 `%APPDATA%\PuzzleSolver\config.toml`:
 
@@ -525,7 +564,9 @@ fixed by the implementation and its tests:
 A missing config file is not an error: every value has a working default, so the app starts with
 no config at all. A *bad* value (unknown enum, negative or non-numeric interval, unknown OCR
 variant, a secret-looking key) throws and names the key; an unknown key from a newer version only
-warns. `ocr.languages` is validated but the bundled traineddata is `nld` only, and `ui.tray` /
+warns. `ocr.languages` is validated against the languages whose `@tesseract.js-data/<code>`
+package is installed — only `nld` ships — and a language with no bundled traineddata is
+refused by name rather than silently read as `nld` (#143). `ui.tray` /
 `ui.notify_on_unresolved` are accepted and stored as the M3 seam.
 
 **M2 leg 3 additions.** `solver.breaker_threshold` / `solver.breaker_cooldown_sec` parameterise
@@ -536,11 +577,13 @@ records a durable file reference for puzzles that ended unresolved.
 ### 4.14 UI & logging ✅ M3
 
 - Tray via `systray2`, notifications via `node-notifier`; `--headless` skips both.
-- Menu: **Status / Accuracy / Pause / Solve last image / Open log / Open config / Settings / Quit**.
-  "Solve last image" re-runs the pipeline on the newest image — essential for tuning without a live
-  push. "Accuracy" reports the live recorded-traffic rate plus the cached offline-corpus number, and
-  the same summary is appended to the status text and tray tooltip (M4). "Settings" opens the
-  editor below (issue #27), as a loopback web UI since #56.
+- Menu: **Status / Accuracy / Pause / Solve last image / Open log / Open config / Settings /
+  Restart / Quit**. "Solve last image" re-runs the pipeline on the newest image — essential for
+  tuning without a live push. "Accuracy" reports the live recorded-traffic rate plus the cached
+  offline-corpus number, and the same summary is appended to the status text and tray tooltip
+  (M4). "Settings" opens the editor below (issue #27), as a loopback web UI since #56; when a save
+  reports that a setting needs a restart, that editor offers **Restart now** and the **Restart**
+  item performs the same graceful restart (#128, §11).
 - First run: a small setup dialog (token, key, **Test connection**), a loopback web UI since #56.
 - Rotating log at `%LOCALAPPDATA%\PuzzleSolver\logs\app.log` (5 MB × 3).
 
@@ -580,9 +623,15 @@ path testable on Linux without `systray2` or a display; the native tray widget r
 changing anything meant hand-editing TOML, and the token was not even in that file. The editor
 is `src/ui/settings.js` (schema + logic), `src/ui/settings-dialog.js` (the terminal prompt) and
 `src/config-cli.js` (`config list|get|set|edit`), not a third prompt implementation:
-`createSettingsEditor` builds on `src/ui/setup.js` — the same `hasInternalWhitespace` check and
-the same **Test connection** probes (through `createSetup`'s `testConnection`), so first-run and
-settings cannot drift.
+`createSettingsEditor` builds on `src/ui/setup.js` — the same **Test connection** probes
+(through `createSetup`'s `testConnection`) and, for a pasted token, the same
+`hasInternalWhitespace` check, so first-run and settings cannot drift. The whitespace rule is
+per-descriptor, because its reason is about pasting rather than about values: a token or key
+from a browser or shell carries a stray newline, so `pushbullet.token`, `llm.api_key` and
+`http.token` still refuse internal whitespace. **The web UI passphrase is the exception
+(#147)** — it is the one secret a human composes rather than pastes, so `allowInternalSpaces`
+drops only the space from the check; a tab or line break still fails, because the login form's
+single-line password field cannot reproduce it. Ends are trimmed for every secret.
 
 The two failure modes the issue names are handled by construction rather than by care:
 
@@ -628,8 +677,11 @@ path, and `ui.notify_on_unresolved` (`handlePush`). The HTTP gate's image limits
 request rather than captured at server construction for exactly this reason (#35), so the
 `[live]` label is true on both ingresses. Everything else — models, base URL, `offline_only`,
 `escalate_to_vision`, `self_consistency_n`, the breaker knobs, the whole `http.*` block,
-`ocr.languages`, the reply switch/wording/budgets, poll interval, `history_mode`, `retain_days`,
-`ui.tray` and all three secrets — is captured when the Tesseract worker, listener, reasoner,
+`ocr.languages` (resolved against the installed `@tesseract.js-data/*` packages when the
+worker is built; an unbundled language is refused by name rather than falling back to
+`nld`, #143), the reply switch/wording/budgets, the auto-router policy (`cost_tier`,
+`allowed_models`, `excluded_models`), poll interval, `history_mode`, `retain_days`,
+`max_images`, `ui.tray` and all four secrets — is captured when the Tesseract worker, listener, reasoner,
 responder or HTTP server is built, so the editor says "restart" rather than appearing to save
 something that silently does nothing. The live ones are copied into the live config by
 `applyLiveSettings` after a successful save.
@@ -680,7 +732,8 @@ GUI. First-run uses the same descriptors through `createSetupSettingsController`
 drift either.
 
 **The theme is a cookie plus a server-side render, and CSS owns the OS default (issue #99).**
-The served CSP is `default-src 'none'; img-src 'self'; style-src 'unsafe-inline'` — it
+The served CSP is `default-src 'none'; img-src 'self'; style-src 'unsafe-inline';
+form-action 'self'; base-uri 'none'` — it
 forbids scripts and external assets. (`img-src 'self'` is the minimal widening for the
 statistics page's review copies: `img-src` falls back to `default-src`, so without the
 directive the `default-src 'none'` forbade every same-origin `/images/<id>` thumbnail,
@@ -715,7 +768,8 @@ paragraphs. There is no client-side loading state to design: every page is serve
 there is no script; the only asynchronous paint is a lazy thumbnail, which uses a sized
 panel-coloured placeholder so it does not reflow. `prefers-reduced-motion` collapses the
 transitions to nothing. The token layer could not be a build step: there is no bundler, and the
-CSP (`default-src 'none'; img-src 'self'`) still forbids scripts and external assets.
+CSP (`default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; form-action 'self';
+base-uri 'none'`) still forbids scripts and external assets.
 
 **Screenshots are captured over HTTP, with the real CSP in force (issue #111).**
 `scripts/screenshots.mjs` used to write the fetched HTML to a `file://` document and inline
@@ -1058,7 +1112,7 @@ dependencies.
 | HTTP client | built-in `fetch` | — |
 | Imaging | `sharp` (libvips) | integral-image work done directly on raw pixels; native, prebuilt for Windows x64 |
 | OCR | `tesseract.js` + `@tesseract.js-data/nld` | WASM, offline, bundled traineddata, per-word confidence |
-| Model | `openai` SDK against any OpenAI-compatible base URL | swap providers by config |
+| Model | built-in `fetch` (hand-rolled OpenAI-compatible client, §4.7) | no vendor SDK to track or audit; swap providers by config |
 | State | `node:sqlite` | built in, no dependency |
 | Config | `smol-toml` | tiny pure-JS TOML parser |
 | Tray | `systray2` + `node-notifier` | no Electron; ~200 MB saved; both declared, both imported lazily (M3) |
@@ -1306,24 +1360,29 @@ captchasolver/
 
 ## 10. Testing
 
-**Working now — 760 tests (754 pass, 6 skip), none needing a network or an API key:**
+**Working now — the offline suite, none of it needing a network or an API key:**
 
-1. **Offline unit (37):** Dutch number words and compounds including diaereses, all four
+> The counts are deliberately *not* here. A hand-maintained breakdown drifted repeatedly
+> (760 here against 799 in the suite), and AGENTS.md §10 forbids hand-maintaining a test
+> count in a document: `npm test` prints its own. What each suite covers is what belongs
+> here.
+
+1. **Offline unit:** Dutch number words and compounds including diaereses, all four
    operators, precedence, division by zero; transcript normalisation and every repair rule;
    puzzle classification, parsing and offline solving for all three classes; the validator
    gate including the empty-answer trap.
-2. **Model client (11):** JSON extraction from bare/fenced/prose replies, request shape,
+2. **Model client:** JSON extraction from bare/fenced/prose replies, request shape,
    retry-on-429 vs immediate failure on 401, falling back when `response_format` is
    unsupported, non-JSON HTTP bodies, key redaction, vision message construction.
-3. **Reasoner (19):** strict class holding, the structural list check, the arithmetic
+3. **Reasoner:** strict class holding, the structural list check, the arithmetic
    overrule, majority voting including the lone-survivor and two-way-split cases, sample
    counts and temperatures per class, store recording.
-4. **Tier arbitration (12):** end to end through the pipeline with scripted OCR and a scripted
+4. **Tier arbitration:** end to end through the pipeline with scripted OCR and a scripted
    model — a confident offline answer making zero model calls, model rescue of an unknown
    puzzle, agreement upgrading an uncorroborated answer, disagreement triggering vision, an
    unresolvable three-way split reporting unresolved, a dead provider preserving the offline
    answer, and OCR producing nothing at all.
-5. **State and prompts (10)** and **corpus end-to-end (4):** the real images through real
+5. **State and prompts** and **corpus end-to-end:** the real images through real
    preprocessing, real Tesseract and the real solver, asserting the final answer
    (`2`, `hoofd`, `7`), the class, the parsed word list, confidence, and a transcript ≥90%
    similar to expected. Runs in ~4 s.
@@ -1332,7 +1391,7 @@ The corpus end-to-end test doubles as the regression guard for the offline tiers
 scripted-model tests cover the model tiers — which matters, because **the model tiers have not
 been exercised against a real provider** (no API key was available while building them).
 
-6. **Live model smoke test (opt-in, 6 tests):** `tests/live-model.test.js`, skipped unless
+6. **Live model smoke test (opt-in):** `tests/live-model.test.js`, skipped unless
    `LLM_API_KEY` is set. Asserts a real text model answers the `needs-model` fixture, that the
    reply honours the JSON contract, that the vision tier reads the preprocessed image when OCR
    yields nothing, that a confident offline answer still costs zero model calls, that the API
@@ -1418,6 +1477,24 @@ and the `schtasks /Create|/Delete` argument lists; `src/deploy/launcher.js` buil
 shim. Both are asserted as literal text, with a path that contains spaces. The shim is
 location-independent (everything derives from `WScript.ScriptFullName`), which is why the
 checked-in `packaging/PuzzleSolver.vbs` can be asserted byte-for-byte against the generator.
+
+**Requested restarts are explicit, never `RestartOnFailure` (issue #128).** The task's
+`<RestartOnFailure>` fires on a **non-zero** exit after `PT1M`, so it is crash recovery with a
+delay and a retry count, not a restart API. A deliberate restart (`src/deploy/restart.js`)
+quiesces the ingresses, drains the in-flight solve on the shared core lock, calls `app.stop()` so
+the HTTP port and the SQLite file are released *before* the successor starts, launches exactly one
+successor through the `wscript` shim (`wscript.exe "<PuzzleSolver.vbs>"`, which keeps the console
+hidden) and exits **0** — so the scheduler never sees a failure and never starts a second process.
+The launcher exports its own path as `PUZZLESOLVER_LAUNCHER`; when neither that marker nor a shim
+beside the bundled `node.exe` exists (a shell run, a dev checkout, `config edit`), the app prints
+the exact command instead of pretending. `process.execPath` re-exec was rejected: it loses the
+hidden window and replays an argv that is not necessarily the task's configured mode. `schtasks
+/End` + `/Run` was rejected: `/End` hard-terminates the running instance and cannot run the
+graceful drain. `RestartOnFailure` is never used intentionally. The decision is a pure function
+(`planRestart`) with injected `fileExists`/`spawn`, asserted offline in `tests/restart.test.js`,
+including that a restart exits `0` and that an in-flight solve delays the release. The settings
+done page offers `Restart now` (responding to the browser before the process goes down) and the
+tray has a **Restart** item; both route through the same `createShutdownHandler`.
 
 Install layout: `packaging/install.ps1` locates `%LOCALAPPDATA%\Programs\PuzzleSolver`, copies
 the payload, then hands off to `app/src/deploy/install.js` (run by the bundled `node.exe`) to
