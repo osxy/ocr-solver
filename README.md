@@ -143,12 +143,14 @@ For an unattended machine, or when the tray cannot start:
 `--headless` skips the tray and every notification, and it **never opens the setup page**,
 so the token has to reach it another way:
 
+- `node src/cli.js config set pushbullet.token <value>`, or the tray's **Settings**
+  editor (`config edit --gui`) — both write the credential store directly, never
+  `config.toml`;
+- `--token <value>` sets it for one run only;
 - a **persistent** environment variable — `setx PUSHBULLET_TOKEN "o.xxxxxxxx"`, or System
   Properties → Environment Variables — which the app sees when it starts at the next logon. A
   session `$env:PUSHBULLET_TOKEN = "…"` does **not** count: it dies with the shell that
-  set it, and the task never sees it;
-- `--token <value>`, or `node src/cli.js config edit` in a terminal, which writes the
-  credential store directly.
+  set it, and the task never sees it.
 
 With none of these the service refuses to start rather than run tokenless.
 `ui.tray = false` in the config disables the tray for the launcher too.

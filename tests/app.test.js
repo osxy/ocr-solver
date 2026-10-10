@@ -496,7 +496,7 @@ test('tray-mode startup with no token and no dialog provider refuses instead of 
   );
 });
 
-test('headless startup with no token names the environment variable and the credential-store file', async (t) => {
+test('headless startup with no token names `config set` and not the plaintext file (#172)', async (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'puzzlesolver-app-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   let dialogCalls = 0;
@@ -517,8 +517,9 @@ test('headless startup with no token names the environment variable and the cred
       ),
     (err) => {
       assert.equal(err.name, 'MissingTokenError');
+      assert.match(err.message, /config set pushbullet\.token/, 'the message must lead with the command that writes the store');
       assert.match(err.message, /PUSHBULLET_TOKEN/);
-      assert.match(err.message, /credentials\.json/, 'the message must name the credential-store file');
+      assert.doesNotMatch(err.message, /credentials\.json/, 'the plaintext migration file must not be presented as a route');
       return true;
     }
   );
@@ -540,8 +541,8 @@ test('a cancelled first-run dialog exits cleanly and leaves no half-configuratio
       ),
     (err) => {
       assert.equal(err.name, 'SetupCancelledError');
-      assert.match(err.message, /pushbullet_token/);
-      assert.match(err.message, /PUSHBULLET_TOKEN/);
+      assert.match(err.message, /config set pushbullet\.token/, 'a cancelled dialog must still name the command that works');
+      assert.doesNotMatch(err.message, /credentials\.json/);
       return true;
     }
   );

@@ -510,10 +510,16 @@ test('a secret-looking key is rejected, nested or not', () => {
   }
 });
 
-test('the secret rejection says where secrets do belong', () => {
+test('the secret rejection says where secrets do belong (#172)', () => {
   assert.throws(
     () => validateConfig({ pushbullet: { token: 'o.abcdef' } }),
-    /PUSHBULLET_TOKEN|credential store|environment/i
+    (err) =>
+      err instanceof ConfigError &&
+      /config set/.test(err.message) &&
+      /credential store/i.test(err.message) &&
+      /PUSHBULLET_TOKEN/.test(err.message) &&
+      /setx/i.test(err.message) &&
+      !/credentials\.json/.test(err.message)
   );
 });
 

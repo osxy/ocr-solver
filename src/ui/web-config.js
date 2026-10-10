@@ -1160,7 +1160,8 @@ export function createWebSettingsServer({
   if (exposesRemote && !credentialVerifier) {
     throw new Error(
       `web_ui.allowed_cidrs admits addresses beyond loopback but no web UI credential is configured. ` +
-        `Set ${WEB_UI_CREDENTIAL_SETTING} (stored as a scrypt verifier in the credential store) or the web UI will not start.`
+        `Run \`node src/cli.js config set ${WEB_UI_CREDENTIAL_SETTING} <password>\` ` +
+          '(stored as a scrypt verifier in the credential store, never config.toml) or the web UI will not start.'
     );
   }
   // #85: an ephemeral port is fine on loopback (the URL is opened locally), but a

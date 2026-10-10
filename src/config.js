@@ -244,8 +244,10 @@ function checkSecrets(raw) {
   walkKeys(raw, (key, path) => {
     if (SECRET_KEY_PATTERN.test(key)) {
       throw new ConfigError(
-        `config key "${path}" looks like a secret. Secrets are never stored in config.toml; ` +
-          'set PUSHBULLET_TOKEN / LLM_API_KEY in the environment or put them in the credential store.'
+        `config key "${path}" looks like a secret. Secrets are never stored in config.toml; put ` +
+          'them in the credential store with `node src/cli.js config set <id> <value>` (e.g. ' +
+          'pushbullet.token, llm.api_key), or use the settings editor. Environment variables ' +
+          'such as PUSHBULLET_TOKEN must be persistent (setx / System Properties) to reach a logon task.'
       );
     }
   });

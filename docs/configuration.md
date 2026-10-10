@@ -117,10 +117,6 @@ setx PUSHBULLET_TOKEN "o.xxxxxxxx"
 setx LLM_API_KEY       "sk-xxxxxxxx"
 ```
 
-```json
-{ "pushbullet_token": "o.xxxxxxxx", "llm_api_key": "sk-xxxxxxxx" }
-```
-
 The Pushbullet token is required *unless* the HTTP ingress is enabled, in which case
 the app can run without a Pushbullet account at all. In tray mode a missing Pushbullet
 token opens the first-run prompt (token, optional model key, **Test connection**) and
@@ -134,12 +130,9 @@ endpoint. Like the other two it goes in the credential store — the settings ed
 **HTTP bearer token** row, or `node src/cli.js config set http.token a-long-random-string`.
 An unattended run may set `HTTP_AUTH_TOKEN` in the environment instead, but that variable
 must be **persistent** (`setx` or System Properties, as above), not a session `$env:`
-assignment, or the app started at logon will not see it. A hand-written `credentials.json` with
-`http_auth_token` is migrated to DPAPI on the next start on Windows:
-
-```json
-{ "pushbullet_token": "o.xxxxxxxx", "llm_api_key": "sk-xxxxxxxx", "http_auth_token": "a-long-random-string" }
-```
+assignment, or the app started at logon will not see it. A legacy hand-written
+`credentials.json` with `http_auth_token` is still read once and migrated to DPAPI on the
+next start on Windows — that path exists for migration, not as the way to set the token.
 
 There is **no anonymous mode**: with `enabled = true` and no token the service refuses
 to start rather than listen unprotected. The token must be at least 16 characters and
