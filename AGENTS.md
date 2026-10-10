@@ -181,7 +181,7 @@ the old code. Behaviour that took live testing to find must not be able to come 
 ## 5. Tests
 
 ```bash
-npm test              # 758 tests (752 pass, 6 skip), fully offline: no network, no token, no key
+npm test              # 760 tests (754 pass, 6 skip), fully offline: no network, no token, no key
 npm run test:unit     # fast subset
 npm run test:corpus   # real images through real OCR, ~4s
 npm run test:live     # opt-in; skips itself unless LLM_API_KEY is set
@@ -317,3 +317,34 @@ indistinguishable from a hang (issue #37).
 # capped at the shell and by the script; a timeout is exit 2, never success
 timeout 30 node scripts/ci-status.mjs "$sha" --wait --timeout-sec 300
 ```
+
+---
+
+## 10. Documentation placement, and the README budget
+
+The README is a **front door**, not a manual. It has been rewritten twice for carrying
+repository trivia; this rule is what stops a third.
+
+**What each document owns:**
+
+| Document | Owns |
+|---|---|
+| **`README.md`** | what it is; install; verify the download; the secrets; run it — the common path; the failure modes people actually hit; known limitations; pointers |
+| **`DESIGN.md`** | how it works and why; measured findings; testing; the architecture reference |
+| **`docs/`** | one page per secondary mode (the HTTP API, the solve page, the statistics page, exposing the UI beyond loopback, configuration, OpenRouter) |
+| **`AGENTS.md`** | how to work on the repo |
+
+**The README has a stated length budget: 430 lines and 3,400 words**, enforced by
+`tests/readme.test.js` ("the README stays within its length budget"). If a change would
+cross it, move detail to `DESIGN.md` or `docs/` — do not raise the budget to make room
+without saying why in the commit message.
+
+**Every relative link and anchor in the README must resolve**, enforced by the same file
+("every relative link and anchor in the README resolves"). When a section moves to
+`docs/`, the README gets a link to its new home; a moved section with no link is as bad
+as a deletion.
+
+**Never hand-maintain a test count in a user-facing document.** `npm test` prints its
+own number; a count copied into prose goes stale faster than it can be re-measured (it
+was wrong three times in one session). Report the count when you are asked for it, from
+the run you actually did.
