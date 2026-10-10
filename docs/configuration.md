@@ -1,0 +1,212 @@
+# Configuration reference
+
+The [README](../README.md#configure-it) covers the common path: where the file lives, that a
+missing file is normal, and how the secrets are supplied. This page is the full reference.
+
+## The file
+
+`%APPDATA%\PuzzleSolver\config.toml` on Windows, or
+`${XDG_CONFIG_HOME:-~/.config}/PuzzleSolver/config.toml` elsewhere; `--config <path>`
+(or `$PUZZLESOLVER_CONFIG`) overrides it. An unknown key warns and is ignored; a *bad*
+value (wrong type, unknown enum, negative interval) fails loudly and names the key.
+
+`DEFAULTS` in [`src/config.js`](../src/config.js) is the full schema; `DESIGN.md` §4.13
+explains the defaults.
+
+## Every option, with its default
+
+```toml
+[pushbullet]
+poll_interval_sec = 60          # the stream is primary; this is the fallback poll
+history_mode = "ignore"         # "ignore" pre-existing pushes, or "watermark"
+[solver]
+tier0 = true                    # offline lexicon + arithmetic
+offline_only = false            # true = never call a model; no image leaves the machine
+escalate_to_vision = true
+llm_text_model = "gpt-4o-mini"
+llm_vision_model = "gpt-4o"
+llm_base_url = "https://api.openai.com/v1"
+self_consistency_n = 3          # samples for the voting classes (ordinal-pick, unknown)
+breaker_threshold = 3           # consecutive model failures before a tier is skipped
+breaker_cooldown_sec = 600
+[reply]
+enabled = true
+require_confidence = true       # only send answers every tier agreed on
+title = "Antwoord"
+unresolved_title = "Puzzel niet opgelost"
+unresolved_text = """
+Deze puzzel kon niet automatisch worden opgelost, dus er is geen antwoord gegeven.
+This puzzle could not be solved automatically, so no answer is given."""
+min_interval_sec = 3
+max_per_hour = 20               # answers per hour
+unresolved_max_per_hour = 60    # acknowledgements have their own, looser budget (#48)
+[storage]
+retain_days = 7
+log_images = false              # opt-in reference to an UNRESOLVED image only
+keep_images = false             # opt-in bounded review copy of EVERY solve's image
+max_images = 200                # count cap when keep_images = true (age = retain_days)
+[image]
+max_width = 2000                # the shared gate rejects wider images as a 413
+max_pixels = 1000000            # ~14x the largest corpus puzzle; bounds buildVariants
+[http]
+enabled = false                 # an HTTP endpoint that solves captchas is an oracle
+bind = "127.0.0.1"             # never 0.0.0.0 unless you mean it; it warns if you do
+port = 8765
+rate_limit_per_min = 20         # 0 disables the limit
+timeout_ms = 30000      # a solve past this is a 504; nothing is sent
+max_body_bytes = 5242880        # 5 MiB, the same cap as a Pushbullet image
+max_queue = 8                   # requests running/waiting at once; over this is a 503
+allow_image_url = false         # off: image_url makes the server fetch a caller URL (SSRF)
+image_url_hosts = []            # when on: the only hosts image_url may name (default deny)
+```
+
+## Secrets go in the environment or the credential store
+
+The Pushbullet token and the model key are **not** config keys. A config key whose name
+looks like a secret (`*token*`, `*key*`, `*secret*`, `*password*`) is rejected at load,
+because a config file ends up in backups and support threads. Set them in the
+environment:
+
+```powershell
+$env:PUSHBULLET_TOKEN = "o.xxxxxxxx"
+$env:LLM_API_KEY       = "sk-xxxxxxxx"
+```
+
+…or put them in the credential store. On Linux/macOS that is the file at
+`${XDG_CONFIG_HOME:-~/.config}/puzzlesolver/credentials.json`; on Windows it is the
+DPAPI-protected blob at `%APPDATA%\PuzzleSolver\credentials.dpapi`. A hand-written plaintext
+`%APPDATA%\PuzzleSolver\credentials.json` still works: it is migrated to DPAPI and removed
+on the next start.
+
+```json
+{ "pushbullet_token": "o.xxxxxxxx", "llm_api_key": "sk-xxxxxxxx" }
+```
+
+The Pushbullet token is required *unless* the HTTP ingress is enabled, in which case
+the app can run without a Pushbullet account at all. In tray mode a missing Pushbullet
+token opens the first-run prompt (token, optional model key, **Test connection**) and
+stores what you enter in the credential store; cancel it and nothing starts.
+`--headless` has no prompt, so a missing token exits non-zero naming both
+`PUSHBULLET_TOKEN` and the credential-store file. The model key is optional: with none,
+the app runs offline-only (Tier 0).
+
+When `[http] enabled = true`, a second secret is required: the bearer token for the
+HTTP endpoint. Set `HTTP_AUTH_TOKEN` in the environment, or add `http_auth_token` to the
+same credential store (a hand-written `credentials.json` is migrated to DPAPI on the next
+start on Windows):
+
+```json
+{ "pushbullet_token": "o.xxxxxxxx", "llm_api_key": "sk-xxxxxxxx", "http_auth_token": "a-long-random-string" }
+```
+
+There is **no anonymous mode**: with `enabled = true` and no token the service refuses
+to start rather than listen unprotected. The token must be at least 16 characters and
+not an obvious weak value (a short or dictionary token is rejected at startup, because
+a guessable key on a bound endpoint is an oracle). Generate one with
+`openssl rand -hex 24`.
+
+## How the secrets are protected
+
+**On Windows the secrets are DPAPI-protected.** `src/secrets.js` writes them through
+`[System.Security.Cryptography.ProtectedData]::Protect(..., 'CurrentUser')`, reached via the
+PowerShell that ships with Windows, so there is no npm dependency and no separate key to
+manage. A pre-existing plaintext `credentials.json` is read once, migrated and removed. If the
+protected call cannot be made, the app still starts on the file store and **says which store it
+used** — `config list` reports the source (`windows-dpapi` vs `file`) and the startup log names
+the chain. The round trip is executed on a real `windows-latest` runner by the deploy job
+(`packaging/run-dpapi.ps1`): one `node` process migrates and writes, then a **second, fresh
+process** decrypts the file from disk and asserts that `Unprotect` ran. The two processes are the
+point — a single process could return the value from its in-memory cache, and the check would pass
+with DPAPI never being called (issue #83).
+
+**What DPAPI does and does not protect.** At `CurrentUser` scope the blob is readable only by
+this account on this machine, and a copy taken elsewhere (a backup, a profile copy, another
+machine) cannot be decrypted. It does **not** protect against malware running as the same user:
+any process running as you can ask the OS to unprotect it. It raises the bar from "a readable
+plaintext file in your profile" to "the OS keyed to your account"; it is not a defence against a
+compromised account.
+
+## Change a setting with the editor
+
+The tray's **Settings** item opens an editor that lists the current values, validates
+every change, and routes it to the right store. On a desktop session it opens as a
+**loopback web UI in the default browser** (`config edit --gui` opens the same UI from a
+console); this is what makes configuration possible on the shipped Windows install, where
+the tray runs with the window hidden and has no console for a terminal prompt. The web UI
+binds `127.0.0.1` on an ephemeral port (`web_ui.port`, default `0`; set it for remote
+access — see [Exposing the web UI beyond loopback](./remote-access.md)), requires a
+single-use link token, validates the `Host` header, serves every response with
+`Cache-Control: no-store`, never renders a secret value, and closes its listener when you
+save or cancel. It is themed by a cookie and a server-side render, so an OS-dark visitor
+is dark on the first load and the **Light / Dark / Auto** toggle works with JavaScript
+disabled; every page shares the same frame. `--headless` has the same editor
+behind a command, so an unattended machine is not a second-class mode:
+
+```bash
+node src/cli.js config list                  # every editable setting and its current value
+node src/cli.js config get reply.title
+node src/cli.js config set solver.offline_only true
+node src/cli.js config edit                  # the guided editor over stdin
+node src/cli.js config edit --gui            # the same editor as a loopback web UI
+```
+
+![The PuzzleSolver settings page: every editable setting, grouped by topic (Pushbullet, Solver and models, Replies, …) with a Jump to list of anchors, a current value, a live or restart tag and a Test connection button for each secret.](./screenshots/settings.png)
+
+![The same settings page in the explicit dark theme, with a Light / Dark / Auto toggle in the header.](./screenshots/settings-dark.png)
+
+The ~50 rows are grouped by **topic** (the setting's `id` prefix) with a **Jump to** list
+of section anchors, because that is how someone actually finds one — a lifecycle split
+would make you hunt through two lists for "the reply text". Nothing is hidden behind a
+disclosure: every row is still on the page. Each row keeps its `[live]` / `[restart]`
+tag and the `[security]` marker, and each group's header counts how many of its rows
+need a restart, so the lifecycle information is not lost to the grouping.
+
+Secrets go to the credential store, never to `config.toml`. That covers all three of
+them: `config set pushbullet.token o.xxxxxxxx`, `config set llm.api_key sk-xxxxxxxx` and
+`config set http.token a-long-random-enough-token` each write the credential store (the DPAPI
+blob on Windows, `credentials.json` elsewhere) and leave
+the TOML file alone (or uncreated). A write **re-reads the store immediately before merging**
+(read-modify-write), so a `config set` from a second process while the tray service is running is
+not wiped by the service's next save (issue #84). Residual: two writers racing at the same instant
+still have a last-writer-wins window; that is narrow and documented rather than closed with a lock. The HTTP token is checked against the same strength
+rule the server enforces at startup, so the editor cannot store a token the app then
+refuses to start with. Everything else is checked with the same `validateConfig` the
+loader uses, then written **atomically** — a temp file renamed over the old one, with the
+previous file kept as `config.toml.bak`. Only values that differ from the built-in
+defaults are written, so the file stays an override rather than pinning every default. A
+save **edits the file in place**: it changes only the line for the setting you changed and
+leaves every comment, blank line, key order and spacing exactly as it was, so a
+hand-annotated `config.toml` is safe to keep editing by hand. A value the editor cannot
+locate safely — a value spanning more than one line, an array of tables — is refused with
+the reason and the file is left untouched, never silently rewritten. A rejected value
+names the setting and writes nothing at all, so the editor cannot leave a config that
+stops the app from starting.
+
+The editor covers the HTTP ingress too — `http.enabled`, `http.bind`, `http.port`,
+`http.rate_limit_per_min`, `http.timeout_ms`, `http.max_body_bytes`, `http.max_queue`,
+`http.allow_image_url`, `http.image_url_hosts` and
+`http.token` — so enabling the endpoint no longer means hand-editing TOML **and** writing
+the credential by some other route.
+
+## Some settings need a restart
+
+The editor marks each one `[live]` or `[restart]`, and the headless command prints which
+applies:
+
+- **live** — `storage.log_images`, `storage.keep_images`, `ui.notify_on_unresolved`,
+  `solver.tier0`, `ocr.variants`, `ocr.min_confidence`, `image.max_width` and
+  `image.max_pixels`. These
+  are re-read from the shared config object for every solve, push or HTTP request, so a
+  save takes effect without a restart.
+- **restart** — the models and base URL, `offline_only`, `escalate_to_vision`,
+  `self_consistency_n`, the breaker knobs (`breaker_threshold`, `breaker_cooldown_sec`),
+  the reply switch/wording/budgets, `poll_interval_sec`, `history_mode`, `ocr.languages`,
+  `storage.retain_days`, `ui.tray`, `ui.stats_recent_solves`, the whole `http.*` and `web_ui.*`
+  blocks, and **all
+  three secrets**,
+  because the listener, reasoner, responder or HTTP server capture them when they are
+  built. The running service keeps the old value until it is restarted; the editor says
+  so rather than appearing to save something that does nothing.
+
+`ocr.languages` is restart-bound even though it sits next to `ocr.min_confidence`: the
+Tesseract worker is created once at startup, and the bundled traineddata is `nld` only.
